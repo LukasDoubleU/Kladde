@@ -29,6 +29,9 @@ starts in a fraction of a second, and never loses what you typed.
 - Syntax highlighting for ~145 languages, detected by extension, file name and shebang line. Grammars load
   on demand; batch files and logs have built-in highlighters too.
 - Multiple cursors, column selection (`Alt`+drag), find and replace with regex, go to line, word wrap.
+- Line commands (duplicate, move, join, sort, comment, upper / lower case, …), all in the command palette and
+  all rebindable. Keyboard shortcut presets (Notepad++, VS Code), chords such as `Ctrl+K Ctrl+C` and a shortcut
+  editor in the command palette; see [Shortcuts](#shortcuts).
 - Format document or selection (`Shift+Alt+F`) picks the formatter from the tab's language: JSON (numbers and
   strings stay exactly as written; also *Minify JSON*), XML and SVG (own formatter, text, comments and CDATA
   untouched), SQL (sql-formatter, dialect from the language), JavaScript, TypeScript, JSX, TSX, CSS, SCSS,
@@ -141,7 +144,14 @@ Kladde refreshes an existing registration silently at the next start.
 | `Alt+Shift+W` | Reveal the file in Explorer |
 | `Ctrl+F` / `Ctrl+H` / `F3` | Find, replace, find next |
 | `Ctrl+G` | Go to line |
-| `Ctrl+D` | Delete the line (or all lines of the selection) |
+| `Ctrl+D` or `Ctrl+Shift+K` | Delete the line (or all lines of the selection) |
+| `Ctrl+Shift+D` / `Ctrl+Shift+L` | Select the next occurrence / all occurrences of the selection (`Ctrl+D` used to do this; it is "delete line" here) |
+| `Alt+Up` / `Alt+Down` | Move the line up / down |
+| `Shift+Alt+Up` / `Shift+Alt+Down` | Duplicate the line above / below |
+| `Ctrl+J` | Join the lines |
+| `Ctrl+/` / `Shift+Alt+A` | Toggle line comment / block comment |
+| `Ctrl+]` / `Ctrl+[` | Indent / outdent |
+| `Ctrl+Shift+[` / `Ctrl+Shift+]` / `Ctrl+Alt+[` / `Ctrl+Alt+]` | Fold, unfold, fold all, unfold all |
 | `F7` / `Shift+F7` | In a compare tab: next / previous change |
 | `Ctrl+Shift+V` | Markdown preview: side by side, preview only, off |
 | `Shift+Alt+F` | Format document or selection |
@@ -149,16 +159,49 @@ Kladde refreshes an existing registration silently at the next start.
 | `Ctrl+Plus` / `Ctrl+Minus` / `Ctrl+0` | Zoom in, out, reset |
 
 The defaults work well with mouse gesture tools that send `Ctrl+T`, `Ctrl+W`, `F5` and `Alt+Left` /
-`Alt+Right`. To change them, run **Open keyboard shortcuts** from the command palette: it opens
-`keybindings.json`, where each command takes a key, a list of keys, or `null` to unbind it:
+`Alt+Right`. Everything else in the palette that has no key here (sort lines, upper / lower case, trim
+trailing whitespace, …) can get one.
+
+### Presets
+
+The `keymap` setting (or **Choose keyboard shortcut preset…** in the command palette) picks the base keys:
+
+| Preset | |
+|---|---|
+| `default` | The table above: VS Code and CodeMirror keys, plus `Ctrl+T`, `F5` and `Alt+Left` / `Alt+Right`. |
+| `notepad++` | Notepad++'s keys: `Ctrl+D` duplicates the line, `Ctrl+L` cuts it, `Ctrl+Shift+L` deletes it, `Ctrl+Shift+Up` / `Down` move lines, `Ctrl+J` joins, `Ctrl+Q` / `Ctrl+Shift+Q` comment, `Ctrl+K` / `Ctrl+Shift+K` add / remove line comments, `Ctrl+U` / `Ctrl+Shift+U` lower / upper case, `Ctrl+B` matching bracket, `Alt+0` / `Alt+Shift+0` fold / unfold all, `Ctrl+R` reload, `Ctrl+Alt+S` save as, `Ctrl+Shift+S` save all. `Ctrl+T`, `F5` and `Alt+Left` / `Alt+Right` stay for mouse gestures. |
+| `vscode` | VS Code's keys: `Ctrl+D` selects the next occurrence, `Ctrl+Shift+K` deletes the line, `Ctrl+L` selects it, and the `Ctrl+K` chords `Ctrl+K Ctrl+C` / `Ctrl+K Ctrl+U` (add / remove line comment), `Ctrl+K Ctrl+0` / `Ctrl+K Ctrl+J` (fold / unfold all), `Ctrl+K Ctrl+X` (trim trailing whitespace), `Ctrl+K V` (preview) and `Ctrl+K Ctrl+S` (change a shortcut). |
+
+### Chords
+
+A key can be several combinations in a row, written with spaces: `Ctrl+K Ctrl+C`. After the first one the
+status bar says what Kladde waits for; the chord is cancelled by `Esc` or after two seconds, and the first
+key does nothing else meanwhile. A key cannot be a command and the start of a chord at the same time: the
+chord wins, and the shortcut editor warns about it.
+
+### Changing shortcuts
+
+Run **Change keyboard shortcut…** from the command palette: pick a command (the list shows its current
+keys and its id), then **Set shortcut…**, **Add another shortcut…**, **Remove shortcut** or **Reset to
+default**. In the dialog press the new keys (a second key makes a chord), then `Enter`. Kladde names the
+command that already uses the key and offers to replace it, writes `keybindings.json` and applies it at
+once. Plain letters are refused as the first key because they are for typing.
+
+You can edit `keybindings.json` yourself (**Open keyboard shortcuts**) as well. Each command takes a key, a
+list of keys, or `null` to unbind it; entries replace the keys the preset gives that command, everything not
+listed keeps them. Every editing command is a command, so unbinding one really frees its key:
 
 ```json
 {
   "file.new": ["Ctrl+N", "Ctrl+T"],
-  "view.togglePreview": "Ctrl+K",
+  "editor.sortLinesAscending": "Ctrl+Alt+O",
+  "editor.toUpperCase": "Ctrl+K Ctrl+U",
   "tab.back": null
 }
 ```
+
+Entries that only repeat a command's built-in default are ignored while a preset is selected, so a
+`keybindings.json` that lists every default (as older versions created) does not pin them.
 
 ## Settings
 
@@ -178,6 +221,7 @@ The defaults work well with mouse gesture tools that send `Ctrl+T`, `Ctrl+W`, `F
 | `markdownPreview` | `split` | how Markdown files open: `split`, `only` or `off` |
 | `pasteImageFolder` | `assets` | folder for pasted images, relative to the Markdown file |
 | `largeFileThresholdMB` | `32` | larger files open in the read-only viewer |
+| `keymap` | `default` | base for the keyboard shortcuts: `default`, `notepad++` or `vscode` |
 | `offerDefaultEditor` | `true` | offer once at start to register Kladde as a default editor candidate |
 | `checkForUpdates` | `true` | look for a newer version at start (once a day, contacts GitHub); the command works either way |
 

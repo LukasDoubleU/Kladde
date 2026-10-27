@@ -24,7 +24,12 @@ employer-related out of code, commits, issues and release notes.
 - `src/lib/`: frontend logic.
   - `workspace.svelte.ts`: tabs, open, save, close, reload, external changes, preview, session (hot exit).
   - `compare.ts`: diff views of compare tabs (`@codemirror/merge`, imported lazily by `Compare.svelte`).
-  - `editor.ts`: CodeMirror setup. `actions.ts`: commands and keybindings. `languages.ts`: detection.
+  - `editor.ts`: CodeMirror setup. `actions.ts`: commands, key handling (chords) and keybindings.json.
+    `languages.ts`: detection.
+  - `keys.ts`: key combos and sequences, conflict rules (no imports, unit tested). `keymaps.ts`: the
+    Notepad++ and VS Code presets. `editor-actions.ts`: CodeMirror's editing commands (and our own: join,
+    sort, case) as actions. `shortcut-editor.svelte.ts`: "Change keyboard shortcut…" and the preset picker
+    (writes keybindings.json / settings.json; dialog in `components/KeyCapture.svelte`).
   - `markdown.ts`: preview rendering. `mermaid.ts`: diagrams (placeholders drawn by `Preview.svelte`, SVGs
     cached by source and theme). `math.ts`: KaTeX rules. Mermaid and KaTeX are dynamic imports: never import
     them statically, so the main bundle stays small. `format.ts`: JSON formatter. `settings.svelte.ts`: settings.
@@ -96,11 +101,22 @@ cd src-tauri && cargo test
 - Comments explain why, not what; match the surrounding style.
 - New setting: add it to `Settings` and `defaultSettings` in `settings.svelte.ts` and to the README table.
 - New command: register it in the action list in `App.svelte` (id, label, default keys); the README lists
-  the important shortcuts.
+  the important shortcuts. Editor commands (anything that works on the text) go into `editorCommands` in
+  `editor-actions.ts` instead: `editor.ts` removes their stock CodeMirror bindings, so a key has exactly one
+  owner (the action table) and unbinding it in keybindings.json frees it. Typing keys (Enter, Backspace,
+  arrows, Home / End, Tab, undo) stay in CodeMirror's keymaps.
+- Shortcuts have three layers: the `keys` of the action (the "default" preset, owner decisions: `Ctrl+D` =
+  delete line, `Alt+Shift+W`, `Ctrl+T`, `F5`, `Alt+Left` / `Alt+Right`), a preset in `keymaps.ts` (lists only
+  what differs; `[]` unbinds) and keybindings.json; a higher layer takes a key from a lower one
+  (`resolveBindings`). New default keys must not clash (`tests/unit/keys.test.mjs` checks this and that
+  presets name existing commands). A key is also an app-level capture handler (`handleKeydown`), so it runs
+  before CodeMirror sees the event; keep that path cheap, it runs on every keystroke.
 
 ## Testing
 
-- `npm run test:unit` (Node's test runner, imports the TypeScript sources directly) covers the formatters.
+- `npm run test:unit` (Node's test runner, imports the TypeScript sources directly, so modules it loads
+  import each other with the `.ts` extension) covers the formatters and the key handling (`keys.test.mjs`).
+- `tests/e2e/keys.test.mjs` covers the default keys, presets, chords and the shortcut editor.
 - `cargo test` covers file I/O and the large file viewer (UTF-16, regex and Unicode search, incremental
   index); `tests/e2e/large.test.mjs` drives the viewer with a lowered `largeFileThresholdMB` in the isolated
   profile's `settings.json`; `npm run check` type-checks the frontend.
