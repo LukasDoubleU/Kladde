@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { capturePointer } from "./lib/pointer";
   import { openSearchPanel } from "@codemirror/search";
   import { listen } from "@tauri-apps/api/event";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -227,7 +228,7 @@
   // Draggable divider between editor and preview.
   function onDividerDown(e: PointerEvent) {
     const el = e.currentTarget as HTMLElement;
-    el.setPointerCapture(e.pointerId);
+    capturePointer(e);
     const move = (ev: PointerEvent) => {
       const r = content.getBoundingClientRect();
       splitRatio = Math.min(0.85, Math.max(0.15, (ev.clientX - r.left) / r.width));
@@ -250,6 +251,8 @@
   $effect(() => {
     const root = document.documentElement.style;
     root.setProperty("--editor-font", settings.fontFamily);
+    root.setProperty("--editor-ligatures", settings.fontLigatures ? "normal" : "none");
+    root.setProperty("--ui-font", settings.uiFontFamily);
     root.setProperty("--editor-font-size", `${Math.max(6, settings.fontSize + workspace.ui.zoom)}px`);
     workspace.view?.requestMeasure();
   });

@@ -50,7 +50,8 @@ Change them with **Open keyboard shortcuts** in the command palette, which opens
 
 | Setting | Default |
 |---|---|
-| `fontFamily`, `fontSize` | Cascadia Mono, 14 |
+| `fontFamily`, `fontSize`, `fontLigatures` | JetBrains Mono (bundled), 14, true |
+| `uiFontFamily` | Inter (bundled) |
 | `tabSize`, `insertSpaces` | 4, true |
 | `wordWrap`, `lineNumbers`, `highlightActiveLine` | false, true, true |
 | `theme` | `dark` (Catppuccin Mocha), `light` or `system` |

@@ -2,6 +2,7 @@
   // Read-only viewer for files above the large file threshold. Only the visible
   // lines are fetched from the Rust side, so file size barely matters.
   import { api, type LargeLine, type LargeMatch } from "../lib/api";
+  import { capturePointer } from "../lib/pointer";
   import { settings } from "../lib/settings.svelte";
   import { workspace, type Tab } from "../lib/workspace.svelte";
 
@@ -109,7 +110,7 @@
     e.preventDefault();
     e.stopPropagation();
     thumbDrag = { offset: e.clientY - track.getBoundingClientRect().top - thumbTop };
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    capturePointer(e);
   }
 
   function onThumbMove(e: PointerEvent) {
@@ -322,6 +323,7 @@
     outline: none;
     font-family: var(--editor-font);
     font-size: var(--editor-font-size);
+    font-variant-ligatures: var(--editor-ligatures);
     line-height: var(--line-height);
   }
   .lines {

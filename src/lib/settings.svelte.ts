@@ -2,8 +2,12 @@
 import { api } from "./api";
 
 export interface Settings {
+  /** Editor font. JetBrains Mono and Inter are bundled, so the defaults work without installing them. */
   fontFamily: string;
   fontSize: number;
+  /** Programming ligatures such as => and != (if the font has them). */
+  fontLigatures: boolean;
+  uiFontFamily: string;
   tabSize: number;
   insertSpaces: boolean;
   wordWrap: boolean;
@@ -20,8 +24,10 @@ export interface Settings {
 }
 
 export const defaultSettings: Settings = {
-  fontFamily: "'Cascadia Mono', Consolas, 'Courier New', monospace",
+  fontFamily: "'JetBrains Mono', 'JetBrains Mono Variable', Consolas, monospace",
   fontSize: 14,
+  fontLigatures: true,
+  uiFontFamily: "Inter, 'Inter Variable', 'Segoe UI', sans-serif",
   tabSize: 4,
   insertSpaces: true,
   wordWrap: false,

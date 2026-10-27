@@ -56,6 +56,7 @@ const theme = EditorView.theme({
   ".cm-scroller": {
     fontFamily: "var(--editor-font)",
     fontSize: "var(--editor-font-size)",
+    fontVariantLigatures: "var(--editor-ligatures)",
     lineHeight: "1.5",
   },
   ".cm-content": { caretColor: "var(--caret)" },

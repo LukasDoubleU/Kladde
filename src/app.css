@@ -44,8 +44,9 @@
   --tok-date: #0f7b8a;
   --tok-warn: #b76b01;
 
-  --ui-font: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
-  --editor-font: "Cascadia Mono", Consolas, monospace;
+  --ui-font: Inter, "Inter Variable", "Segoe UI", sans-serif;
+  --editor-font: "JetBrains Mono", "JetBrains Mono Variable", Consolas, monospace;
+  --editor-ligatures: normal;
   --editor-font-size: 14px;
 }
 

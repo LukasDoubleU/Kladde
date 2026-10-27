@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { capturePointer } from "../lib/pointer";
   import { writeText } from "../lib/clipboard";
   import { workspace, type Tab } from "../lib/workspace.svelte";
   import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -19,7 +20,7 @@
     if (e.button !== 0) return;
     workspace.activate(tab.id);
     drag = { id: tab.id, startX: e.clientX, moved: false };
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    capturePointer(e);
   }
 
   function onPointerMove(e: PointerEvent) {
