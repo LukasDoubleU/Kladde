@@ -104,6 +104,9 @@ export async function launch({ exe = DEBUG_EXE, port = 9341, profile = tempProfi
   const ws = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((r, j) => ((ws.onopen = r), (ws.onerror = j)));
   const cdp = new Cdp(ws);
+  // The page behaves as if its window had the focus, whatever else is in front on the desktop: Kladde
+  // only checks for changed files while focused, and tests must not depend on the desktop.
+  await cdp.send("Emulation.setFocusEmulationEnabled", { enabled: true });
 
   const app = {
     child,
