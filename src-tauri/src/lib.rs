@@ -2,6 +2,7 @@ mod files;
 mod integration;
 mod large;
 mod session;
+mod update;
 
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -245,7 +246,9 @@ pub fn run() {
         )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(large::LargeFiles::default())
+        .manage(update::Pending::default())
         .invoke_handler(tauri::generate_handler![
             frontend_log,
             initial_paths,
@@ -274,6 +277,8 @@ pub fn run() {
             integration_open_default_apps,
             integration_unregister,
             integration_dismiss_offer,
+            update::update_check,
+            update::update_install,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Kladde");
