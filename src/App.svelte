@@ -7,6 +7,7 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { revealItemInDir } from "@tauri-apps/plugin-opener";
   import { onMount, untrack } from "svelte";
+  import Compare from "./components/Compare.svelte";
   import Dialog from "./components/Dialog.svelte";
   import ImageView from "./components/ImageView.svelte";
   import LargeFileView from "./components/LargeFileView.svelte";
@@ -44,6 +45,7 @@
   let configDir = "";
 
   const textTab = () => workspace.active?.kind === "text";
+  const compareTab = () => workspace.active?.kind === "compare";
 
   registerActions([
     { id: "file.new", label: "New file", keys: ["Ctrl+N", "Ctrl+T"], run: () => workspace.newUntitled() },
@@ -129,8 +131,35 @@
       keys: ["Ctrl+H"],
       run: () => {
         if (workspace.active?.kind === "large") workspace.largeApi?.focusSearch();
-        else if (workspace.view) openSearchPanel(workspace.view);
+        else if (workspace.active?.kind === "text" && workspace.view) openSearchPanel(workspace.view);
       },
+    },
+    { id: "compare.with", label: "Compare with…", run: () => workspace.compareWith(), enabled: textTab },
+    {
+      id: "compare.withDisk",
+      label: "Compare with file on disk",
+      run: () => workspace.compareWithDisk(),
+      enabled: () => workspace.active?.kind === "text" && !!workspace.active.path,
+    },
+    { id: "compare.next", label: "Compare: next change", keys: ["F7"], run: () => workspace.compareStep(1), enabled: compareTab },
+    {
+      id: "compare.previous",
+      label: "Compare: previous change",
+      keys: ["Shift+F7"],
+      run: () => workspace.compareStep(-1),
+      enabled: compareTab,
+    },
+    {
+      id: "compare.toggleWhitespace",
+      label: "Compare: toggle ignoring whitespace",
+      run: () => (workspace.compareOptions.ignoreWhitespace = !workspace.compareOptions.ignoreWhitespace),
+      enabled: compareTab,
+    },
+    {
+      id: "compare.toggleCase",
+      label: "Compare: toggle ignoring case",
+      run: () => (workspace.compareOptions.ignoreCase = !workspace.compareOptions.ignoreCase),
+      enabled: compareTab,
     },
     { id: "language.select", label: "Change language mode…", run: selectLanguage, enabled: textTab },
     { id: "encoding.select", label: "Change encoding…", run: selectEncoding, enabled: textTab },
@@ -365,7 +394,10 @@
         <button onclick={() => workspace.reload(tab, tab.kind === "text" ? tab.encoding : undefined)}>
           Reload{tab.dirty ? " (discard my changes)" : ""}
         </button>
-        {#if tab.kind === "text"}<button onclick={() => workspace.keepMine(tab)}>Keep my version</button>{/if}
+        {#if tab.kind === "text"}
+          <button onclick={() => workspace.compareWithDisk(tab)}>Compare</button>
+          <button onclick={() => workspace.keepMine(tab)}>Keep my version</button>
+        {/if}
       {:else}
         <span>This file was deleted or moved.</span>
         {#if tab.kind === "text"}<button onclick={() => workspace.keepMine(tab)}>Keep in editor</button>{/if}
@@ -393,6 +425,10 @@
         />
       </div>
     {/if}
+    <!-- Kept alive while hidden, so a compare tab returns with its scroll position. -->
+    {#each workspace.tabs.filter((t) => t.kind === "compare") as t (t.id)}
+      <div class="fill" class:hidden={t.id !== tab?.id}><Compare tab={t} active={t.id === tab?.id} /></div>
+    {/each}
     {#if tab?.kind === "large"}
       {#key tab.id}
         <div class="fill"><LargeFileView {tab} /></div>
@@ -439,7 +475,8 @@
     flex-shrink: 0;
     height: 100%;
   }
-  .editor.hidden {
+  .editor.hidden,
+  .fill.hidden {
     display: none;
   }
   .preview-pane,

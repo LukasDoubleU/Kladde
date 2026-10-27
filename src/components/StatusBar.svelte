@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { runAction } from "../lib/actions";
+  import { runAction, shortcutLabel } from "../lib/actions";
   import { workspace } from "../lib/workspace.svelte";
 
   let { imageSize }: { imageSize: { w: number; h: number } | null } = $props();
@@ -41,6 +41,12 @@
     </span>
     <span class="dim">{formatSize(tab.size)}</span>
     <span class="dim">Read-only: large file viewer</span>
+  {:else if tab?.kind === "compare"}
+    {@const changes = workspace.compareChanges[tab.id]}
+    {#if changes !== undefined}
+      <span>{changes === 0 ? "No differences" : `${changes} ${changes === 1 ? "change" : "changes"}`}</span>
+    {/if}
+    <span class="dim">{shortcutLabel("compare.next")} / {shortcutLabel("compare.previous")}: next / previous change</span>
   {:else if tab?.kind === "image"}
     {#if imageSize}<span>{imageSize.w} × {imageSize.h}</span>{/if}
     <span class="dim">{formatSize(tab.size)}</span>

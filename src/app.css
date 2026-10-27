@@ -23,6 +23,12 @@
   --dirty: #d9822b;
   --error: #c0392b;
   --banner: #fff4d6;
+  --diff-del-bg: rgb(224 68 51 / 0.08);
+  --diff-del-text: rgb(224 68 51 / 0.28);
+  --diff-del-mark: #e04433;
+  --diff-add-bg: rgb(34 160 60 / 0.09);
+  --diff-add-text: rgb(34 160 60 / 0.28);
+  --diff-add-mark: #22a03c;
 
   --tok-keyword: #a626a4;
   --tok-string: #50a14f;
@@ -104,6 +110,12 @@
   --dirty: var(--ctp-peach);
   --error: var(--ctp-red);
   --banner: color-mix(in srgb, var(--ctp-yellow) 12%, var(--ctp-mantle));
+  --diff-del-bg: rgb(243 139 168 / 0.1);
+  --diff-del-text: rgb(243 139 168 / 0.3);
+  --diff-del-mark: var(--ctp-red);
+  --diff-add-bg: rgb(166 227 161 / 0.1);
+  --diff-add-text: rgb(166 227 161 / 0.28);
+  --diff-add-mark: var(--ctp-green);
 
   --tok-keyword: var(--ctp-mauve);
   --tok-string: var(--ctp-green);

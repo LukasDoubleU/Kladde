@@ -16,6 +16,7 @@ employer-related out of code, commits, issues and release notes.
   - `lib.rs`: Tauri commands and plugins.
 - `src/lib/`: frontend logic.
   - `workspace.svelte.ts`: tabs, open, save, close, reload, external changes, preview, session (hot exit).
+  - `compare.ts`: diff views of compare tabs (`@codemirror/merge`, imported lazily by `Compare.svelte`).
   - `editor.ts`: CodeMirror setup. `actions.ts`: commands and keybindings. `languages.ts`: detection.
   - `markdown.ts`: preview rendering. `mermaid.ts`: diagrams (placeholders drawn by `Preview.svelte`, SVGs
     cached by source and theme). `math.ts`: KaTeX rules. Mermaid and KaTeX are dynamic imports: never import
@@ -25,6 +26,10 @@ employer-related out of code, commits, issues and release notes.
 
 All text tabs share one CodeMirror `EditorView`; inactive tabs keep their `EditorState` in a plain map.
 Never put CodeMirror objects into Svelte `$state`.
+
+Compare tabs (`kind: "compare"`) hold two text snapshots in `workspace.compareData` and show them in their
+own merge view (`Compare.svelte`, kept alive while hidden). They are not part of the session.
+`@codemirror/merge` must stay a dynamic import so the startup bundle does not grow.
 
 ## Commands
 

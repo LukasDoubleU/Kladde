@@ -32,6 +32,15 @@ starts in a fraction of a second, and never loses what you typed.
 - JSON pretty-print and minify that keep numbers and strings exactly as written.
 - Optional spell checking with the Windows dictionaries.
 
+**Compare**
+- Side-by-side diff of two open tabs, a tab and its file on disk, or a tab and the clipboard
+  (**Compare with…** in the command palette). Changed lines and the changed words in them are marked;
+  both sides are highlighted with the file's language.
+- `F7` / `Shift+F7` jump to the next / previous change. Options for ignoring whitespace and case, and an
+  inline view with the removed lines above the added ones.
+- When a file with unsaved changes also changed on disk, the banner offers **Compare**.
+- Compare tabs are snapshots and read-only; they are not restored after a restart.
+
 **Markdown**
 - Live preview side by side or full size (`Ctrl+Shift+V`), following the editor as you scroll.
 - GitHub-flavoured: tables, task lists, autolinks, heading anchors, highlighted code blocks; local images
@@ -89,6 +98,7 @@ so SmartScreen may ask for confirmation on the first start. You can also [build 
 | `Ctrl+F` / `Ctrl+H` / `F3` | Find, replace, find next |
 | `Ctrl+G` | Go to line |
 | `Ctrl+D` | Delete the line (or all lines of the selection) |
+| `F7` / `Shift+F7` | In a compare tab: next / previous change |
 | `Ctrl+Shift+V` | Markdown preview: side by side, preview only, off |
 | `Shift+Alt+F` | Format JSON |
 | `Alt+Z` | Toggle word wrap |
@@ -159,7 +169,7 @@ view and keep their own state, including undo history, so switching tabs is inst
 ## Roadmap
 
 Planned features and ideas are tracked as [issues](https://github.com/LukasDoubleU/Kladde/issues), among them
-text compare, grammar checking with LanguageTool, more formatters, editing large files and custom themes.
+grammar checking with LanguageTool, more formatters, editing large files and custom themes.
 
 ## License
 

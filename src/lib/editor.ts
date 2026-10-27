@@ -164,6 +164,25 @@ export function gutterExtension(show: boolean): Extension {
   return show ? [lineNumbers(), foldGutter(), highlightActiveLineGutter()] : [];
 }
 
+/** Look and basic behavior of the compare editors: the same theme and highlighting, but read-only. */
+export function readOnlyViewExtensions(options: { wordWrap: boolean; tabSize: number }, lang: Extension): Extension {
+  return [
+    lineNumbers(),
+    highlightSpecialChars(),
+    drawSelection(),
+    syntaxHighlighting(classHighlighter),
+    syntaxHighlighting(logHighlighter),
+    search({ top: true }),
+    keymap.of([...defaultKeymap, ...searchKeymap]),
+    EditorState.readOnly.of(true),
+    EditorState.tabSize.of(options.tabSize),
+    options.wordWrap ? EditorView.lineWrapping : [],
+    spellCheckExtension(false),
+    lang,
+    theme,
+  ];
+}
+
 export function createEditorState(doc: string, options: EditorOptions, extra: Extension): EditorState {
   return EditorState.create({
     doc,

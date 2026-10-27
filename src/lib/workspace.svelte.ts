@@ -27,7 +27,7 @@ import { allLanguages, detectLanguage, extensionOf, findLanguage, IMAGE_EXTENSIO
 import { dirname, renderMarkdown, renderSvg, resolvePath, setLanguageLoadedHandler } from "./markdown";
 import { settings } from "./settings.svelte";
 
-export type TabKind = "text" | "large" | "image";
+export type TabKind = "text" | "large" | "image" | "compare";
 export type PreviewMode = "off" | "split" | "only";
 
 export interface Tab {
@@ -60,6 +60,17 @@ interface Runtime {
   version: number;
   /** The version last written as a backup; -1 if never. */
   backedUp: number;
+}
+
+/** One side of a compare tab: a snapshot, not a live view of the tab or file. */
+export interface CompareSide {
+  label: string;
+  text: string;
+}
+
+export interface CompareHandleLike {
+  next(): void;
+  previous(): void;
 }
 
 export interface PickItem {
@@ -206,11 +217,17 @@ class Workspace {
   dialog: DialogRequest | null = $state(null);
 
   view: EditorView | null = null;
+  /** The controls of the compare views (shared by all compare tabs, not persisted). */
+  compareOptions = $state({ ignoreWhitespace: false, ignoreCase: false, unified: false });
+  /** Number of changes per compare tab id. */
+  compareChanges: Record<string, number> = $state({});
   /** Set by the large file view of the active tab. */
   largeApi: { gotoLine(line: number): void; focusSearch(): void } | null = null;
   onConfigSaved: (path: string) => void = () => {};
 
   private runtime = new Map<string, Runtime>();
+  private compareData = new Map<string, { left: CompareSide; right: CompareSide }>();
+  private compareHandles = new Map<string, CompareHandleLike>();
   private closedPaths: string[] = [];
   /** Recently activated tabs, for back/forward navigation like in a browser. */
   private history: string[] = [];
@@ -322,6 +339,21 @@ class Workspace {
     }
   }
 
+  /** The CodeMirror extension of a language; for the editor and the compare views. */
+  private languageSupport(desc: NonNullable<ReturnType<typeof findLanguage>>) {
+    return isMarkdown(desc.name) ? markdownSupport() : desc.load();
+  }
+
+  async languageExtension(name: string | null) {
+    const desc = findLanguage(name);
+    if (!desc) return [];
+    try {
+      return await this.languageSupport(desc);
+    } catch {
+      return [];
+    }
+  }
+
   private async loadLanguage(tab: Tab) {
     const desc = findLanguage(tab.language);
     if (!desc) {
@@ -329,7 +361,7 @@ class Workspace {
       return;
     }
     try {
-      const support = isMarkdown(desc.name) ? await markdownSupport() : await desc.load();
+      const support = await this.languageSupport(desc);
       if (this.tabs.some((t) => t.id === tab.id) && tab.language === desc.name) {
         this.reconfigure(tab, language.reconfigure(support));
       }
@@ -514,6 +546,9 @@ class Workspace {
     const [tab] = this.tabs.splice(index, 1);
     if (tab.largeId !== null) void api.largeClose(tab.largeId);
     this.runtime.delete(id);
+    this.compareData.delete(id);
+    this.compareHandles.delete(id);
+    delete this.compareChanges[id];
     if (this.activeId === id) {
       this.activeId = null;
       const next = this.tabs[index] ?? this.tabs[index - 1];
@@ -739,11 +774,89 @@ class Workspace {
     if (tab.kind === "text") this.markMetaDirty(tab);
   }
 
+  // ---------------------------------------------------------------- compare
+
+  compareOf(id: string) {
+    return this.compareData.get(id);
+  }
+
+  registerCompare(id: string, handle: CompareHandleLike | null) {
+    if (handle) this.compareHandles.set(id, handle);
+    else this.compareHandles.delete(id);
+  }
+
+  /** Jumps to the next (1) or previous (-1) change of the active compare tab. */
+  compareStep(delta: 1 | -1) {
+    const handle = this.activeId ? this.compareHandles.get(this.activeId) : undefined;
+    if (delta > 0) handle?.next();
+    else handle?.previous();
+  }
+
+  private openCompare(left: CompareSide, right: CompareSide, language: string | null) {
+    const tab = this.textTab({ kind: "compare", title: `${left.label} ↔ ${right.label}`, language });
+    this.compareData.set(tab.id, { left, right });
+    // Right next to the tab it was started from.
+    const index = this.tabs.findIndex((t) => t.id === this.activeId);
+    this.tabs.splice(index + 1, 0, tab);
+    this.activate(tab.id);
+  }
+
+  /** Same file name in two folders: the folder name tells them apart. */
+  private compareLabel(tab: Tab, other: Tab): string {
+    if (tab.title !== other.title || !tab.path || !other.path) return tab.title;
+    return `${tab.title} (${basename(dirname(tab.path))})`;
+  }
+
+  /** Compares the file on disk (left) with the text in the editor (right). */
+  async compareWithDisk(tab: Tab | undefined = this.active) {
+    if (!tab || tab.kind !== "text" || !tab.path) return;
+    try {
+      const disk = await api.readFile(tab.path, tab.encoding);
+      this.openCompare(
+        { label: `${tab.title} (on disk)`, text: disk.text },
+        { label: tab.title, text: this.textOf(tab) },
+        tab.language,
+      );
+    } catch (e) {
+      this.showNotice("error", `Could not read ${tab.title} from disk: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+
+  /** Asks what to compare the active tab with: another open tab, its file on disk or the clipboard. */
+  async compareWith() {
+    const tab = this.active;
+    if (!tab || tab.kind !== "text") return;
+    const items: PickItem[] = this.tabs
+      .filter((t) => t.kind === "text" && t.id !== tab.id)
+      .map((t) => ({ id: t.id, label: t.title, detail: t.path ?? "" }));
+    if (tab.path) items.unshift({ id: "@disk", label: "File on disk", detail: tab.path });
+    items.push({ id: "@clipboard", label: "Clipboard" });
+    const picked = await this.pick({ placeholder: `Compare ${tab.title} with…`, items });
+    if (!picked || typeof picked === "string") return;
+    if (picked.id === "@disk") return this.compareWithDisk(tab);
+    if (picked.id === "@clipboard") {
+      try {
+        const text = (await navigator.clipboard.readText()).replace(/\r\n?/g, "\n");
+        this.openCompare({ label: tab.title, text: this.textOf(tab) }, { label: "Clipboard", text }, tab.language);
+      } catch (e) {
+        this.showNotice("error", `Could not read the clipboard: ${e instanceof Error ? e.message : e}`);
+      }
+      return;
+    }
+    const other = this.tabs.find((t) => t.id === picked.id);
+    if (!other) return;
+    this.openCompare(
+      { label: this.compareLabel(tab, other), text: this.textOf(tab) },
+      { label: this.compareLabel(other, tab), text: this.textOf(other) },
+      tab.language ?? other.language,
+    );
+  }
+
   // ---------------------------------------------------------------- navigation & view
 
   async gotoLine() {
     const tab = this.active;
-    if (!tab || tab.kind === "image") return;
+    if (!tab || tab.kind === "image" || tab.kind === "compare") return;
     const max = tab.kind === "large" ? this.largeStatus.lines : this.cursor.lines;
     const answer = await this.pick({ placeholder: `Go to line (1 – ${max})`, items: [], freeText: true });
     const line = typeof answer === "string" ? parseInt(answer, 10) : NaN;
@@ -905,7 +1018,8 @@ class Workspace {
         resolve: (value) => {
           this.picker = null;
           resolve(value);
-          if (this.active?.kind === "text") requestAnimationFrame(() => this.view?.focus());
+          // Not when the answer opened the next picker (command palette -> "Compare with…"), which wants the focus.
+          if (this.active?.kind === "text") requestAnimationFrame(() => !this.picker && this.view?.focus());
         },
       };
     });
@@ -944,8 +1058,8 @@ class Workspace {
     const keep: string[] = [];
     const tabs: SessionTab[] = [];
     // Snapshot of state and version together: edits during the awaits below must not be marked as
-    // backed up when an older text was written.
-    const snapshot = this.tabs.map((tab) => {
+    // backed up when an older text was written. Compare tabs are snapshots: nothing to restore.
+    const snapshot = this.tabs.filter((tab) => tab.kind !== "compare").map((tab) => {
       const rt = this.runtime.get(tab.id);
       return { tab, rt, state: rt?.state, version: rt?.version ?? 0 };
     });
@@ -1046,6 +1160,7 @@ class Workspace {
   }
 
   private async restoreTab(saved: SessionTab) {
+    if (saved.kind === "compare") return;
     if (saved.kind === "large" && saved.path) {
       if ((await api.statFile(saved.path)).exists) await this.openLarge(saved.path, saved.id);
       return;
