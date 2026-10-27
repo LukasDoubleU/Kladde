@@ -82,4 +82,17 @@ jobs:
 
       - run: npm ci
       - run: npx tauri build --debug --no-bundle
-      - run: npm run test:e2e
+
+      - name: WebView2 runtime
+        shell: pwsh
+        run: |
+          $keys = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}',
+                  'HKCU:\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+          $found = $keys | Where-Object { Test-Path $_ } | ForEach-Object { (Get-ItemProperty $_).pv }
+          if ($found) { "WebView2 runtime $found" } else { "::warning::No WebView2 runtime found" }
+
+      # One app at a time: the runner has few cores, and a cold WebView2 start is slow.
+      - name: End-to-end tests
+        env:
+          KLADDE_E2E_START_TIMEOUT: "90000"
+        run: node --test --test-concurrency=1 "tests/e2e/*.test.mjs"

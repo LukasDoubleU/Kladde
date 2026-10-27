@@ -87,8 +87,11 @@ export async function launch({ exe = DEBUG_EXE, port = 9341, profile = tempProfi
   let stderr = "";
   child.stderr.on("data", (d) => (stderr += d));
 
+  // Cold starts on CI runners (first WebView2 start) can take much longer than locally.
+  const startTimeout = Number(process.env.KLADDE_E2E_START_TIMEOUT ?? 20000);
+  const started = Date.now();
   let page;
-  for (let i = 0; i < 200 && !page; i++) {
+  while (!page && Date.now() - started < startTimeout && child.exitCode === null) {
     try {
       const targets = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
       page = targets.find((t) => t.type === "page");
@@ -98,8 +101,9 @@ export async function launch({ exe = DEBUG_EXE, port = 9341, profile = tempProfi
     if (!page) await sleep(100);
   }
   if (!page) {
+    const exit = child.exitCode === null ? "still running" : `exited with code ${child.exitCode}`;
     child.kill();
-    throw new Error(`Kladde did not start (port ${port}). stderr:\n${stderr}`);
+    throw new Error(`Kladde did not start within ${Date.now() - started} ms (port ${port}, ${exit}). stderr:\n${stderr}`);
   }
   const ws = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((r, j) => ((ws.onopen = r), (ws.onerror = j)));
