@@ -123,6 +123,16 @@ async fn backup_read(app: AppHandle, id: String) -> Result<Option<String>, Strin
 }
 
 #[tauri::command]
+async fn backup_versions(app: AppHandle, id: String) -> Result<Vec<session::BackupVersion>, String> {
+    session::backup_versions(&app, &id)
+}
+
+#[tauri::command]
+async fn backup_read_version(app: AppHandle, id: String, n: u32) -> Result<Option<String>, String> {
+    session::backup_read_version(&app, &id, n)
+}
+
+#[tauri::command]
 async fn backup_prune(app: AppHandle, keep: Vec<String>) -> Result<(), String> {
     session::backup_prune(&app, &keep)
 }
@@ -144,16 +154,20 @@ async fn config_dir(app: AppHandle) -> Result<String, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+    // An isolated profile (KLADDE_DATA_DIR) runs as its own instance, e.g. next to the normal one in tests.
+    if session::isolated_profile().is_none() {
         // Must be registered first: a second launch hands its files to the running window.
-        .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             let paths = paths_from_args(argv.into_iter().skip(1), Path::new(&cwd));
             let _ = app.emit("open-paths", paths);
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
                 let _ = window.set_focus();
             }
-        }))
+        }));
+    }
+    builder
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 // The frontend shows the window once the first tab is rendered.
@@ -180,6 +194,8 @@ pub fn run() {
             session_save,
             backup_write,
             backup_read,
+            backup_versions,
+            backup_read_version,
             backup_prune,
             config_read,
             config_file,
