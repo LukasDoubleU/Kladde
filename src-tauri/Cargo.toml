@@ -28,7 +28,8 @@ base64 = "0.22"
 memchr = "2"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_UI_Shell"] }
+winreg = "0.56.0"
 
 [profile.release]
 codegen-units = 1

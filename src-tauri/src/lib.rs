@@ -1,4 +1,5 @@
 mod files;
+mod integration;
 mod large;
 mod session;
 
@@ -152,8 +153,76 @@ async fn config_dir(app: AppHandle) -> Result<String, String> {
     Ok(session::config_dir(&app)?.to_string_lossy().to_string())
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct IntegrationStatus {
+    #[serde(flatten)]
+    status: integration::Status,
+    /// The start-up offer should be shown: nothing registered yet and not dismissed.
+    offer: bool,
+    /// All file type groups Kladde can register.
+    available: Vec<integration::GroupInfo>,
+}
+
+fn current_exe() -> Result<PathBuf, String> {
+    std::env::current_exe().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn integration_status(app: AppHandle) -> Result<IntegrationStatus, String> {
+    let target = integration::target();
+    let status = integration::status(&target.base, &current_exe()?);
+    let offer = !status.present
+        && !integration::offer_dismissed(&session::data_dir(&app)?)
+        && (target.real || std::env::var_os(integration::TEST_OFFER_ENV).is_some());
+    Ok(IntegrationStatus { status, offer, available: integration::group_infos() })
+}
+
+#[tauri::command]
+async fn integration_register(groups: Vec<String>, context_menu: bool) -> Result<(), String> {
+    let target = integration::target();
+    integration::register(&target.base, &current_exe()?, &groups, context_menu)?;
+    if target.real {
+        integration::notify_shell();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn integration_open_default_apps() {
+    if integration::target().real {
+        integration::open_default_apps();
+    }
+}
+
+/// Removes everything Kladde registered. Also stops the start-up offer: the user just said no.
+#[tauri::command]
+async fn integration_unregister(app: AppHandle) -> Result<(), String> {
+    let target = integration::target();
+    integration::unregister(&target.base)?;
+    if target.real {
+        integration::notify_shell();
+    }
+    integration::set_offer_dismissed(&session::data_dir(&app)?)
+}
+
+#[tauri::command]
+async fn integration_dismiss_offer(app: AppHandle) -> Result<(), String> {
+    integration::set_offer_dismissed(&session::data_dir(&app)?)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // The NSIS uninstaller runs this to remove the file associations before it deletes the exe. Handled
+    // before anything else so a running instance (single-instance plugin) does not swallow it.
+    if std::env::args().skip(1).any(|a| a == "--unregister-integration") {
+        let target = integration::target();
+        let _ = integration::unregister(&target.base);
+        if target.real {
+            integration::notify_shell();
+        }
+        return;
+    }
     let mut builder = tauri::Builder::default();
     // An isolated profile (KLADDE_DATA_DIR) runs as its own instance, e.g. next to the normal one in tests.
     if session::isolated_profile().is_none() {
@@ -200,6 +269,11 @@ pub fn run() {
             config_read,
             config_file,
             config_dir,
+            integration_status,
+            integration_register,
+            integration_open_default_apps,
+            integration_unregister,
+            integration_dismiss_offer,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Kladde");

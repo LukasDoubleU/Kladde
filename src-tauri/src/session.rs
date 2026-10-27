@@ -18,7 +18,7 @@ pub fn isolated_profile() -> Option<PathBuf> {
     std::env::var_os(DATA_DIR_ENV).filter(|v| !v.is_empty()).map(PathBuf::from)
 }
 
-fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
+pub fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = match isolated_profile() {
         Some(dir) => dir,
         None => app.path().app_data_dir().map_err(|e| e.to_string())?,
