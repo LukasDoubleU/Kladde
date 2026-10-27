@@ -58,9 +58,10 @@ starts in a fraction of a second, and never loses what you typed.
 
 ## Install
 
-There are no prebuilt releases yet. Build it yourself (see [Building](#building)); the installer ends up in
-`src-tauri/target/release/bundle/nsis/`, and `src-tauri/target/release/kladde.exe` also runs on its own.
-Kladde needs Windows 10 or 11 with WebView2, which ships with Windows 11.
+Download the latest version from [Releases](https://github.com/LukasDoubleU/Kladde/releases): the installer
+(`…_x64-setup.exe`, installs for the current user without admin rights) or the portable `…_x64_portable.exe`.
+Kladde needs Windows 10 or 11 with WebView2, which ships with Windows 11. The files are not code-signed yet,
+so SmartScreen may ask for confirmation on the first start. You can also [build it yourself](#building).
 
 ## Shortcuts
 
@@ -125,6 +126,14 @@ npm run tauri build   # release build and installer
 npm run check         # type-check the frontend
 cd src-tauri && cargo test
 ```
+
+## Contributing
+
+Commit messages follow [Conventional Commits](https://www.conventionalcommits.org), e.g.
+`feat(preview): render Mermaid diagrams` or `fix: keep the cursor when reloading a file`. `npm install`
+sets up a commit-msg hook that checks this, and CI checks it again. Versions follow
+[Semantic Versioning](https://semver.org) and are derived from these messages: releases are created on demand
+by the Release workflow, which also writes the [changelog](CHANGELOG.md).
 
 ## How it works
 
