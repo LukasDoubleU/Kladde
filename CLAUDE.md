@@ -11,7 +11,8 @@ employer-related out of code, commits, issues and release notes.
 
 - `src-tauri/src/`: the Rust core.
   - `files.rs`: reading and writing, encodings, line endings.
-  - `large.rs`: the large file viewer (background line index, positional reads).
+  - `large.rs`: the large file viewer (background line index that grows with the file, positional reads,
+    UTF-16, chunked plain/regex search that runs on the blocking pool and can be cancelled).
   - `session.rs`: session, backups of unsaved text, config files.
   - `integration.rs`: Windows registration (ProgID, capabilities, "Open with", context menu) under a
     registry root passed in, never hard-coded. `src-tauri/windows/installer-hooks.nsh` runs
@@ -29,6 +30,7 @@ employer-related out of code, commits, issues and release notes.
     them statically, so the main bundle stays small. `format.ts`: JSON formatter. `settings.svelte.ts`: settings.
   - `format-xml.ts`: XML formatter. `formatters.ts`: picks a formatter by language name and lazy-loads
     Prettier and sql-formatter.
+  - `linehighlight.ts`: highlights the visible lines of the large file viewer with the editor's grammars.
 - `src/components/`: Svelte components. `src/App.svelte`: layout, the command list and window events.
 - `src/app.css`: global styles and fonts. `src/themes.css`: the four Catppuccin flavors, the 14 accents and the
   role variables built from them (the theming API documented in the README). `src/lib/theme.ts`: picks the flavor
@@ -99,7 +101,9 @@ cd src-tauri && cargo test
 ## Testing
 
 - `npm run test:unit` (Node's test runner, imports the TypeScript sources directly) covers the formatters.
-- `cargo test` covers file I/O and the large file viewer; `npm run check` type-checks the frontend.
+- `cargo test` covers file I/O and the large file viewer (UTF-16, regex and Unicode search, incremental
+  index); `tests/e2e/large.test.mjs` drives the viewer with a lowered `largeFileThresholdMB` in the isolated
+  profile's `settings.json`; `npm run check` type-checks the frontend.
 - End-to-end tests (`npm run test:e2e`, after `npx tauri build --debug --no-bundle`) use
   `tests/e2e/kladde.mjs`: it starts the app with an isolated profile (`KLADDE_DATA_DIR`, own WebView2 data)
   and drives it through the Chrome DevTools Protocol (`key`, `type`, `eval`, `state`, `screenshot`, `close`,

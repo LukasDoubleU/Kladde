@@ -68,7 +68,11 @@ starts in a fraction of a second, and never loses what you typed.
 - Encodings: detects UTF-8, UTF-16 (BOM) and legacy code pages; reopen or save with another encoding;
   keeps CRLF, LF or CR line endings.
 - Large files: anything above 32 MB opens in a read-only viewer that indexes lines in the background and
-  only reads what is on screen. Multi-GB logs open instantly, with search and go to line.
+  only reads what is on screen. Multi-GB logs open instantly, UTF-8, UTF-16 and legacy code pages alike.
+  Search runs in the background (Esc cancels it) with Aa (match case; Unicode-aware when off) and .*
+  (regular expressions, `^` and `$` per line), plus go to line. Log files are highlighted like in the editor.
+  A file that is still being written is followed like `tail -f`; "Open in editor…" loads files up to 256 MB
+  into a normal tab. Editing the big ones is not possible yet.
 - External changes: unmodified tabs reload when the file changes on disk, and the active tab follows a
   growing log live; otherwise a banner asks.
 - Image viewer for PNG, JPEG, GIF, WebP and more.
