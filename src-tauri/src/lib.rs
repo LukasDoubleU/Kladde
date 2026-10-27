@@ -1,5 +1,6 @@
 mod files;
 mod integration;
+mod languagetool;
 mod large;
 mod session;
 mod update;
@@ -156,6 +157,19 @@ async fn backup_prune(app: AppHandle, keep: Vec<String>) -> Result<(), String> {
     session::backup_prune(&app, &keep)
 }
 
+/// One LanguageTool check request (see languagetool.rs); the blocking HTTP call runs off the async runtime.
+#[tauri::command]
+async fn languagetool_check(
+    server: String,
+    data: String,
+    language: String,
+    variants: String,
+) -> Result<String, languagetool::CheckError> {
+    tauri::async_runtime::spawn_blocking(move || languagetool::check(&server, &data, &language, &variants))
+        .await
+        .map_err(|e| languagetool::CheckError { kind: "network", status: None, retry_after: None, message: e.to_string() })?
+}
+
 #[tauri::command]
 async fn config_read(app: AppHandle, name: String) -> Result<Option<String>, String> {
     session::config_read(&app, &name)
@@ -291,6 +305,7 @@ pub fn run() {
             config_read,
             config_file,
             config_dir,
+            languagetool_check,
             integration_status,
             integration_register,
             integration_open_default_apps,
