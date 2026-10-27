@@ -44,7 +44,7 @@
   const textTab = () => workspace.active?.kind === "text";
 
   registerActions([
-    { id: "file.new", label: "New file", keys: ["Ctrl+N"], run: () => workspace.newUntitled() },
+    { id: "file.new", label: "New file", keys: ["Ctrl+N", "Ctrl+T"], run: () => workspace.newUntitled() },
     { id: "file.open", label: "Open file…", keys: ["Ctrl+O"], run: () => workspace.openWithDialog() },
     { id: "file.save", label: "Save", keys: ["Ctrl+S"], run: () => workspace.save(), enabled: textTab },
     { id: "file.saveAs", label: "Save as…", keys: ["Ctrl+Shift+S"], run: () => workspace.saveAs(), enabled: textTab },
@@ -59,6 +59,7 @@
     {
       id: "file.reload",
       label: "Reload from disk",
+      keys: ["F5"],
       run: async () => {
         const t = workspace.active;
         if (!t) return;
@@ -87,6 +88,9 @@
     },
     { id: "tab.next", label: "Next tab", keys: ["Ctrl+Tab", "Ctrl+PageDown"], run: () => workspace.cycle(1) },
     { id: "tab.previous", label: "Previous tab", keys: ["Ctrl+Shift+Tab", "Ctrl+PageUp"], run: () => workspace.cycle(-1) },
+    // Also on the mouse's back/forward buttons.
+    { id: "tab.back", label: "Go back to the previous tab", keys: ["Alt+Left"], run: () => workspace.navigate(-1) },
+    { id: "tab.forward", label: "Go forward to the next tab", keys: ["Alt+Right"], run: () => workspace.navigate(1) },
     { id: "view.commandPalette", label: "Show all commands", keys: ["Ctrl+Shift+P", "F1"], run: commandPalette },
     {
       id: "view.togglePreview",
@@ -202,6 +206,13 @@
     if (BROWSER_KEYS.has(combo) || (FIND_KEYS.has(combo.toLowerCase()) && !inEditor)) e.preventDefault();
   }
 
+  // Mouse back/forward buttons navigate the tab history instead of WebView2's page history.
+  function onMouseButton(e: MouseEvent) {
+    if (e.button !== 3 && e.button !== 4) return;
+    e.preventDefault();
+    if (e.type === "mouseup") runAction(e.button === 3 ? "tab.back" : "tab.forward");
+  }
+
   function onWheel(e: WheelEvent) {
     if (!e.ctrlKey) return;
     e.preventDefault();
@@ -307,7 +318,13 @@
   });
 </script>
 
-<svelte:window onkeydowncapture={onKeydown} onwheelcapture={onWheel} oncontextmenu={onContextMenu} />
+<svelte:window
+  onkeydowncapture={onKeydown}
+  onwheelcapture={onWheel}
+  onmousedowncapture={onMouseButton}
+  onmouseupcapture={onMouseButton}
+  oncontextmenu={onContextMenu}
+/>
 
 <div class="app">
   <TabBar />

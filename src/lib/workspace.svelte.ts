@@ -191,6 +191,10 @@ class Workspace {
 
   private runtime = new Map<string, Runtime>();
   private closedPaths: string[] = [];
+  /** Recently activated tabs, for back/forward navigation like in a browser. */
+  private history: string[] = [];
+  private historyIndex = -1;
+  private navigating = false;
   private previewTimer = 0;
   private sessionTimer = 0;
   private noticeTimer = 0;
@@ -334,6 +338,11 @@ class Workspace {
     this.activeId = id;
     const tab = this.active;
     if (!tab) return;
+    if (!this.navigating && this.history[this.historyIndex] !== id) {
+      this.history.splice(this.historyIndex + 1, Infinity, id);
+      if (this.history.length > 100) this.history.shift();
+      this.historyIndex = this.history.length - 1;
+    }
     if (tab.kind === "text" && this.view) {
       const rt = this.runtime.get(id)!;
       if (this.view.state !== rt.state) {
@@ -533,6 +542,21 @@ class Workspace {
     const index = this.tabs.findIndex((t) => t.id === this.activeId);
     const next = this.tabs[(index + delta + this.tabs.length) % this.tabs.length];
     this.activate(next.id);
+  }
+
+  /** Goes back (-1) or forward (+1) through the recently activated tabs, skipping closed ones. */
+  navigate(delta: -1 | 1) {
+    let i = this.historyIndex + delta;
+    const usable = (id: string) => id !== this.activeId && this.tabs.some((t) => t.id === id);
+    while (i >= 0 && i < this.history.length && !usable(this.history[i])) i += delta;
+    if (i < 0 || i >= this.history.length) return;
+    this.historyIndex = i;
+    this.navigating = true;
+    try {
+      this.activate(this.history[i]);
+    } finally {
+      this.navigating = false;
+    }
   }
 
   moveTab(from: number, to: number) {

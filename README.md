@@ -30,9 +30,11 @@ in tabs, no project tree, no Git, no language servers.
 
 | Keys | Action |
 |---|---|
-| `Ctrl+N` / `Ctrl+O` / `Ctrl+S` / `Ctrl+Shift+S` | New, open, save, save as |
+| `Ctrl+N` or `Ctrl+T` / `Ctrl+O` / `Ctrl+S` / `Ctrl+Shift+S` | New, open, save, save as |
 | `Ctrl+W` / `Ctrl+Shift+T` | Close tab, reopen closed tab |
-| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab |
+| `Ctrl+Tab` or `Ctrl+PageDown` / `Ctrl+Shift+Tab` or `Ctrl+PageUp` | Next / previous tab |
+| `Alt+Left` / `Alt+Right`, mouse back / forward | Back / forward through recently used tabs |
+| `F5` | Reload the file from disk |
 | `Ctrl+F` / `Ctrl+H` / `F3` | Find, replace, find next |
 | `Ctrl+G` | Go to line |
 | `Ctrl+Shift+V` | Cycle Markdown preview: side by side, preview only, off |
