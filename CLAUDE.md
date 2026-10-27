@@ -68,5 +68,8 @@ cd src-tauri && cargo test
   `kill`). Use it for every check of the running app, with a DevTools port of your own when several runs
   happen in parallel. Never send keystrokes to the desktop and never touch the normal profile in
   `%APPDATA%\io.github.lukasdoubleu.kladde`.
+- `tests/e2e/hot-exit.test.mjs` guards the zero-data-loss promise (crash, close, continuous typing, saving,
+  backup versions) and runs in CI (`e2e` job). Backups are throttled (`Workspace.scheduleSession`: first change
+  arms a timer, later ones leave it alone), never debounced: keep it that way.
 - Changes to saving, backups or the session must be checked by killing the process while there are unsaved
   changes and verifying that everything comes back after a restart.

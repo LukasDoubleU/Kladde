@@ -40,8 +40,16 @@ starts in a fraction of a second, and never loses what you typed.
 
 **Files**
 - Hot exit: closing the window never asks. All tabs, including unsaved changes, come back on the next
-  start, even after a crash (backups are written within a second of typing), while the files on disk
-  stay untouched until you save.
+  start, even after a crash, while the files on disk stay untouched until you save.
+- Backups: the text of every unsaved tab is written to disk within about 0.3 seconds of a change, also
+  while you keep typing (large documents wait up to 3 seconds between writes), and whenever the window
+  loses focus. After a crash at most the last fraction of a second is missing.
+- Crash-safe saving: a save writes a temporary file and replaces the original in one step, keeping its
+  attributes and permissions, so a crash or a full disk never leaves a half-written file. The session
+  and the backups are written the same way.
+- Backup versions: up to five older backups per unsaved tab (at least five minutes apart). **Restore an
+  older backup of this tab** in the command palette lists them and opens the chosen one in a new tab; it
+  never overwrites the current tab. Backups of tabs you saved or closed are deleted.
 - Encodings: detects UTF-8, UTF-16 (BOM) and legacy code pages; reopen or save with another encoding;
   keeps CRLF, LF or CR line endings.
 - Large files: anything above 32 MB opens in a read-only viewer that indexes lines in the background and
