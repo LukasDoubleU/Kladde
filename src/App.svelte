@@ -101,6 +101,15 @@
       enabled: textTab,
     },
     { id: "view.toggleWrap", label: "Toggle word wrap", keys: ["Alt+Z"], run: () => workspace.toggleWrap() },
+    { id: "view.toggleSpellCheck", label: "Toggle spell checking", run: () => workspace.toggleSpellCheck() },
+    {
+      id: "format.json",
+      label: "Format JSON",
+      keys: ["Shift+Alt+F"],
+      run: () => workspace.formatJson(),
+      enabled: textTab,
+    },
+    { id: "format.jsonMinify", label: "Minify JSON", run: () => workspace.formatJson(true), enabled: textTab },
     { id: "view.zoomIn", label: "Zoom in", keys: ["Ctrl+Plus", "Ctrl+="], run: () => workspace.zoom(1) },
     { id: "view.zoomOut", label: "Zoom out", keys: ["Ctrl+Minus"], run: () => workspace.zoom(-1) },
     { id: "view.zoomReset", label: "Reset zoom", keys: ["Ctrl+0"], run: () => workspace.zoom(null) },
@@ -305,6 +314,8 @@
       cleanups.push(
         await appWindow.onFocusChanged(({ payload: focused }) => {
           if (focused) void workspace.checkExternalChanges();
+          // Back up unsaved text right away instead of waiting for the debounce.
+          else void workspace.saveSession();
         }),
       );
       // Hot exit: everything, including unsaved text, is restored on the next start.

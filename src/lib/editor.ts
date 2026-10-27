@@ -33,6 +33,7 @@ export const indentation = new Compartment();
 export const readOnly = new Compartment();
 export const gutters = new Compartment();
 export const activeLine = new Compartment();
+export const spelling = new Compartment();
 
 export interface EditorOptions {
   wordWrap: boolean;
@@ -41,6 +42,7 @@ export interface EditorOptions {
   lineNumbers: boolean;
   highlightActiveLine: boolean;
   readOnly: boolean;
+  spellCheck: boolean;
 }
 
 const logHighlighter = tagHighlighter([
@@ -85,6 +87,11 @@ export function indentationExtension(tabSize: number, insertSpaces: boolean): Ex
   return [EditorState.tabSize.of(tabSize), indentUnit.of(insertSpaces ? " ".repeat(tabSize) : "\t")];
 }
 
+/** WebView2's spellchecker, which uses the Windows dictionaries. */
+export function spellCheckExtension(on: boolean): Extension {
+  return EditorView.contentAttributes.of({ spellcheck: on ? "true" : "false" });
+}
+
 export function gutterExtension(show: boolean): Extension {
   return show ? [lineNumbers(), foldGutter(), highlightActiveLineGutter()] : [];
 }
@@ -113,6 +120,7 @@ export function createEditorState(doc: string, options: EditorOptions, extra: Ex
       wrap.of(options.wordWrap ? EditorView.lineWrapping : []),
       indentation.of(indentationExtension(options.tabSize, options.insertSpaces)),
       readOnly.of(EditorState.readOnly.of(options.readOnly)),
+      spelling.of(spellCheckExtension(options.spellCheck)),
       theme,
       extra,
     ],

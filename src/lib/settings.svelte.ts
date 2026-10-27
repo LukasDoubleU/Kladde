@@ -13,6 +13,8 @@ export interface Settings {
   wordWrap: boolean;
   lineNumbers: boolean;
   highlightActiveLine: boolean;
+  /** Spell checking with the Windows dictionaries; toggled per session with the command palette. */
+  spellCheck: boolean;
   /** "dark" is Catppuccin Mocha. */
   theme: "system" | "light" | "dark";
   /** Files above this size open in the read-only large file viewer. */
@@ -33,6 +35,7 @@ export const defaultSettings: Settings = {
   wordWrap: false,
   lineNumbers: true,
   highlightActiveLine: true,
+  spellCheck: false,
   theme: "dark",
   largeFileThresholdMB: 32,
   markdownPreview: "split",

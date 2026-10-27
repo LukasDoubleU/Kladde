@@ -18,8 +18,11 @@ import {
   indentationExtension,
   language,
   readOnly,
+  spellCheckExtension,
+  spelling,
   wrap,
 } from "./editor";
+import { formatJson, minifyJson } from "./format";
 import { allLanguages, detectLanguage, extensionOf, findLanguage, IMAGE_EXTENSIONS, isMarkdown } from "./languages";
 import { dirname, renderMarkdown, renderSvg, resolvePath, setLanguageLoadedHandler } from "./markdown";
 import { settings } from "./settings.svelte";
@@ -99,6 +102,7 @@ interface Session {
   version: 1;
   activeId: string | null;
   wordWrap: boolean;
+  spellCheck?: boolean;
   zoom: number;
   tabs: SessionTab[];
 }
@@ -179,7 +183,7 @@ class Workspace {
   cursor = $state({ line: 1, col: 1, selected: 0, selections: 1, lines: 1 });
   largeStatus = $state({ lines: 0, done: false });
   previewHtml = $state("");
-  ui = $state({ wordWrap: false, zoom: 0 });
+  ui = $state({ wordWrap: false, spellCheck: false, zoom: 0 });
   notice: { kind: "info" | "error"; text: string } | null = $state(null);
   picker: PickerRequest | null = $state(null);
   dialog: DialogRequest | null = $state(null);
@@ -233,6 +237,7 @@ class Workspace {
         lineNumbers: settings.lineNumbers,
         highlightActiveLine: settings.highlightActiveLine,
         readOnly: readOnlyDoc,
+        spellCheck: this.ui.spellCheck,
       },
       this.editorExtras(),
     );
@@ -286,6 +291,7 @@ class Workspace {
         indentation.reconfigure(indentationExtension(settings.tabSize, settings.insertSpaces)),
         gutters.reconfigure(gutterExtension(settings.lineNumbers)),
         activeLine.reconfigure(settings.highlightActiveLine ? highlightActiveLine() : []),
+        spelling.reconfigure(spellCheckExtension(this.ui.spellCheck)),
       ],
     });
   }
@@ -744,6 +750,28 @@ class Workspace {
     this.scheduleSession();
   }
 
+  toggleSpellCheck() {
+    this.ui.spellCheck = !this.ui.spellCheck;
+    this.applyViewOptions();
+    this.showNotice("info", `Spell checking ${this.ui.spellCheck ? "on" : "off"}.`);
+    this.scheduleSession();
+  }
+
+  /** Pretty-prints (or minifies) the JSON in the active tab, as one undoable edit. */
+  formatJson(minify = false) {
+    const tab = this.active;
+    if (!tab || tab.kind !== "text" || !this.view) return;
+    const doc = this.view.state.doc.toString();
+    const indent = settings.insertSpaces ? " ".repeat(settings.tabSize) : "\t";
+    const result = minify ? minifyJson(doc) : formatJson(doc, indent);
+    if ("error" in result) {
+      this.showNotice("error", `Not valid JSON: ${result.error}`);
+      return;
+    }
+    const text = result.text + (doc.endsWith("\n") && !minify ? "\n" : "");
+    if (text !== doc) this.view.dispatch({ changes: minimalChange(doc, text), scrollIntoView: true });
+  }
+
   zoom(delta: number | null) {
     this.ui.zoom = delta === null ? 0 : Math.max(-8, Math.min(30, this.ui.zoom + delta));
     this.scheduleSession();
@@ -922,6 +950,7 @@ class Workspace {
       version: 1,
       activeId: this.activeId,
       wordWrap: this.ui.wordWrap,
+      spellCheck: this.ui.spellCheck,
       zoom: this.ui.zoom,
       tabs,
     };
@@ -931,6 +960,7 @@ class Workspace {
 
   async restoreSession() {
     this.ui.wordWrap = settings.wordWrap;
+    this.ui.spellCheck = settings.spellCheck;
     let session: Session | null = null;
     try {
       const json = await api.sessionLoad();
@@ -940,6 +970,7 @@ class Workspace {
     }
     if (session) {
       this.ui.wordWrap = session.wordWrap;
+      this.ui.spellCheck = session.spellCheck ?? settings.spellCheck;
       this.ui.zoom = session.zoom ?? 0;
       for (const saved of session.tabs) {
         try {
