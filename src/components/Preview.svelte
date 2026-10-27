@@ -56,11 +56,10 @@
     });
   });
 
-  // Diagram colors follow the theme, which is switched by a class on the root element.
+  // Diagram colors follow the theme: flavor, accent and theme.css all announce changes with this event.
   $effect(() => {
-    const observer = new MutationObserver(drawDiagrams);
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
-    return () => observer.disconnect();
+    window.addEventListener("kladde-theme", drawDiagrams);
+    return () => window.removeEventListener("kladde-theme", drawDiagrams);
   });
 
   function onClick(e: MouseEvent) {

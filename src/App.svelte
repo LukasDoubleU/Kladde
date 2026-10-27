@@ -33,6 +33,7 @@
   import { languageNames } from "./lib/languages";
   import { dirname } from "./lib/markdown";
   import { defaultSettingsJson, loadSettings, settings, SETTINGS_FILE } from "./lib/settings.svelte";
+  import { applyTheme, isLight, resolveFlavor, setUserTheme, THEME_FILE, userThemeTemplate } from "./lib/theme";
   import { updates } from "./lib/updates.svelte";
   import { basename, ENCODINGS, workspace } from "./lib/workspace.svelte";
 
@@ -197,6 +198,11 @@
       run: async () => workspace.openPath(await api.configFile(SETTINGS_FILE, defaultSettingsJson())),
     },
     {
+      id: "theme.openCustom",
+      label: "Open custom theme (theme.css)",
+      run: async () => workspace.openPath(await api.configFile(THEME_FILE, userThemeTemplate())),
+    },
+    {
       id: "keybindings.open",
       label: "Open keyboard shortcuts (keybindings.json)",
       run: async () => workspace.openPath(await api.configFile(KEYBINDINGS_FILE, defaultKeybindingsJson())),
@@ -254,12 +260,19 @@
     if (picked && typeof picked !== "string") workspace.setEol(t, picked.id as Eol);
   }
 
+  async function loadUserTheme() {
+    setUserTheme(await api.configRead(THEME_FILE));
+  }
+
   async function reloadConfig(path: string) {
     if (!configDir || dirname(path).toLowerCase() !== configDir.toLowerCase()) return;
     const name = basename(path);
     if (name === SETTINGS_FILE) {
       const error = await loadSettings();
       workspace.showNotice(error ? "error" : "info", error ?? "Settings applied.");
+    } else if (name === THEME_FILE) {
+      await loadUserTheme();
+      workspace.showNotice("info", "Custom theme applied.");
     } else if (name === KEYBINDINGS_FILE) {
       const error = await loadKeybindings();
       workspace.showNotice(error ? "error" : "info", error ?? "Keyboard shortcuts applied.");
@@ -316,10 +329,10 @@
   }
 
   $effect(() => {
-    const dark = settings.theme === "dark" || (settings.theme === "system" && systemDark);
-    document.documentElement.classList.toggle("dark", dark);
+    const flavor = resolveFlavor(settings.theme, settings.themeLight, settings.themeDark, systemDark);
+    applyTheme(flavor, settings.accent);
     // Match the native title bar.
-    void appWindow.setTheme(dark ? "dark" : "light");
+    void appWindow.setTheme(isLight(flavor) ? "light" : "dark");
   });
 
   $effect(() => {
@@ -356,6 +369,7 @@
 
     void (async () => {
       const errors = [await loadSettings(), await loadKeybindings()].filter(Boolean);
+      await loadUserTheme();
       configDir = await api.configDir();
       workspace.onConfigSaved = (path) => void reloadConfig(path);
       workspace.attachView(editorHost);
