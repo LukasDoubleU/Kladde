@@ -27,6 +27,7 @@ chardetng = "0.1"
 base64 = "0.22"
 memchr = "2"
 tauri-plugin-updater = "2"
+regex = "1"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_UI_Shell"] }

@@ -84,7 +84,10 @@ async fn large_lines(
     state.lines(id, start, count)
 }
 
+/// Runs on the blocking pool: a search can take seconds on a multi-GB file, and a new search or
+/// `large_search_cancel` stops it.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn large_search(
     id: u32,
     query: String,
@@ -93,9 +96,23 @@ async fn large_search(
     forward: bool,
     inclusive: bool,
     match_case: bool,
+    regex: bool,
     state: State<'_, large::LargeFiles>,
-) -> Result<Option<large::Match>, String> {
-    state.search(id, &query, line, col, forward, inclusive, match_case)
+) -> Result<large::SearchResult, String> {
+    let file = state.get(id)?;
+    let request = large::SearchRequest { query, line, col, forward, inclusive, match_case, regex };
+    tauri::async_runtime::spawn_blocking(move || file.search(&request)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn large_search_cancel(id: u32, state: State<'_, large::LargeFiles>) -> Result<(), String> {
+    state.cancel_search(id);
+    Ok(())
+}
+
+#[tauri::command]
+async fn large_refresh(id: u32, state: State<'_, large::LargeFiles>) -> Result<large::LargeRefresh, String> {
+    state.refresh(id)
 }
 
 #[tauri::command]
@@ -261,6 +278,8 @@ pub fn run() {
             large_info,
             large_lines,
             large_search,
+            large_search_cancel,
+            large_refresh,
             large_close,
             session_load,
             session_save,

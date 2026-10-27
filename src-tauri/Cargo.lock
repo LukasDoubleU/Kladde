@@ -2037,6 +2037,7 @@ dependencies = [
  "chardetng",
  "encoding_rs",
  "memchr",
+ "regex",
  "serde",
  "serde_json",
  "tauri",
