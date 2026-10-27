@@ -21,10 +21,12 @@ import {
   highlightActiveLineGutter,
   highlightSpecialChars,
   keymap,
+  type KeyBinding,
   lineNumbers,
   rectangularSelection,
 } from "@codemirror/view";
 import { classHighlighter, tagHighlighter } from "@lezer/highlight";
+import { exposedCommands } from "./editor-actions";
 import { logTags } from "./languages";
 
 export const language = new Compartment();
@@ -151,6 +153,15 @@ const phrases = EditorState.phrases.of({
   close: "Close",
 });
 
+/**
+ * CodeMirror's stock keymaps without the commands that are actions (editor-actions.ts): those get
+ * their keys from the action table, where they can be rebound, and must not keep a second owner here.
+ * Cursor movement, deleting, Enter, undo and so on stay with CodeMirror.
+ */
+const stockKeymap: readonly KeyBinding[] = [...defaultKeymap, ...searchKeymap, ...historyKeymap, ...foldKeymap].filter(
+  (b) => !(b.run && exposedCommands.has(b.run)) && !(b.shift && exposedCommands.has(b.shift)),
+);
+
 export function indentationExtension(tabSize: number, insertSpaces: boolean): Extension {
   return [EditorState.tabSize.of(tabSize), indentUnit.of(insertSpaces ? " ".repeat(tabSize) : "\t")];
 }
@@ -202,7 +213,7 @@ export function createEditorState(doc: string, options: EditorOptions, extra: Ex
       crosshairCursor(),
       highlightSelectionMatches(),
       search({ top: true }),
-      keymap.of([...defaultKeymap, ...searchKeymap, ...historyKeymap, ...foldKeymap, indentWithTab]),
+      keymap.of([...stockKeymap, indentWithTab]),
       language.of([]),
       wrap.of(options.wordWrap ? EditorView.lineWrapping : []),
       indentation.of(indentationExtension(options.tabSize, options.insertSpaces)),

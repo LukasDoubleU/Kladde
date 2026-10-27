@@ -1,6 +1,5 @@
 <script lang="ts">
   import { capturePointer } from "./lib/pointer";
-  import { deleteLine } from "@codemirror/commands";
   import { openSearchPanel } from "@codemirror/search";
   import { listen } from "@tauri-apps/api/event";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -29,6 +28,7 @@
   } from "./lib/actions";
   import { api, type Eol } from "./lib/api";
   import { writeText } from "./lib/clipboard";
+  import { editorActions } from "./lib/editor-actions";
   import { integration } from "./lib/integration.svelte";
   import { languageNames } from "./lib/languages";
   import { dirname } from "./lib/markdown";
@@ -124,13 +124,8 @@
     { id: "view.zoomOut", label: "Zoom out", keys: ["Ctrl+Minus"], run: () => workspace.zoom(-1) },
     { id: "view.zoomReset", label: "Reset zoom", keys: ["Ctrl+0"], run: () => workspace.zoom(null) },
     { id: "edit.gotoLine", label: "Go to line…", keys: ["Ctrl+G"], run: () => workspace.gotoLine() },
-    {
-      id: "edit.deleteLine",
-      label: "Delete line",
-      keys: ["Ctrl+D"],
-      run: () => workspace.view && deleteLine(workspace.view),
-      enabled: textTab,
-    },
+    // CodeMirror's editing commands (delete line, move line, comment, …), see editor-actions.ts.
+    ...editorActions(() => workspace.view, textTab),
     {
       id: "edit.replace",
       label: "Find and replace",
