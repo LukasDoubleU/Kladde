@@ -94,8 +94,8 @@ test("a diagram follows edits and the theme", async () => {
     await app.type("\n  B --> C");
     await app.waitFor("document.querySelector('.markdown .mermaid-block svg')?.textContent.includes('C')", 20000);
 
-    // Switching the theme redraws with the light palette.
-    await app.eval(`document.documentElement.classList.remove('dark')`);
+    // Switching the theme redraws with the light palette (what the theme setting does: attribute and event).
+    await app.eval(`document.documentElement.dataset.theme = 'latte'; window.dispatchEvent(new Event('kladde-theme'))`);
     await app.waitFor(
       `getComputedStyle(document.querySelector('.markdown .mermaid-block svg .node rect, .markdown .mermaid-block svg .node polygon')).fill !== ${JSON.stringify(dark)}`,
       20000,
