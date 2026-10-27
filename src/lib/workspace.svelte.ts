@@ -896,15 +896,22 @@ class Workspace {
 
   // ---------------------------------------------------------------- session (hot exit)
 
+  /**
+   * Throttle, not debounce: the first change arms a timer and later changes leave it alone, so
+   * continuous typing is backed up every few hundred ms instead of never. The whole text of a tab is
+   * written each time, so large documents wait longer (at most 3 s).
+   */
   scheduleSession() {
-    if (!this.restored) return;
-    clearTimeout(this.sessionTimer);
-    this.sessionTimer = window.setTimeout(() => void this.saveSession(), 1000);
+    if (!this.restored || this.sessionTimer) return;
+    const size = this.view?.state.doc.length ?? 0;
+    const delay = Math.min(3000, 300 + size / 500);
+    this.sessionTimer = window.setTimeout(() => void this.saveSession(), delay);
   }
 
   /** Persists open tabs and backs up unsaved text, so closing never loses anything. */
   saveSession(): Promise<void> {
     clearTimeout(this.sessionTimer);
+    this.sessionTimer = 0;
     this.sessionChain = this.sessionChain.then(() => this.writeSession()).catch((e) => console.error(e));
     return this.sessionChain;
   }
@@ -919,15 +926,19 @@ class Workspace {
     }
     const keep: string[] = [];
     const tabs: SessionTab[] = [];
-    for (const tab of this.tabs) {
+    // Snapshot of state and version together: edits during the awaits below must not be marked as
+    // backed up when an older text was written.
+    const snapshot = this.tabs.map((tab) => {
       const rt = this.runtime.get(tab.id);
-      const state = rt?.state;
+      return { tab, rt, state: rt?.state, version: rt?.version ?? 0 };
+    });
+    for (const { tab, rt, state, version } of snapshot) {
       const needsBackup = tab.kind === "text" && !!state && (tab.dirty || (!tab.path && state.doc.length > 0));
       if (needsBackup && rt) {
         keep.push(tab.id);
-        if (rt.backedUp !== rt.version) {
+        if (rt.backedUp !== version) {
           await api.backupWrite(tab.id, state!.doc.toString());
-          rt.backedUp = rt.version;
+          rt.backedUp = version;
         }
       }
       if (!tab.path && !needsBackup) continue;
