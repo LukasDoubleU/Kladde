@@ -30,6 +30,8 @@ export interface Settings {
   markdownPreview: "off" | "split" | "only";
   /** Folder (relative to the Markdown file) for images pasted from the clipboard. */
   pasteImageFolder: string;
+  /** Base for the keyboard shortcuts: "default", "notepad++" or "vscode"; keybindings.json overrides single commands. */
+  keymap: "default" | "notepad++" | "vscode";
   /** Offer once at start to make Kladde selectable as the default editor in Windows. */
   offerDefaultEditor: boolean;
   /** Look for a newer version on GitHub a few seconds after start, at most once a day. */
@@ -54,6 +56,7 @@ export const defaultSettings: Settings = {
   largeFileThresholdMB: 32,
   markdownPreview: "split",
   pasteImageFolder: "assets",
+  keymap: "default",
   offerDefaultEditor: true,
   checkForUpdates: true,
 };

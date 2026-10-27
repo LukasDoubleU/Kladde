@@ -10,6 +10,7 @@
   import DefaultEditor from "./components/DefaultEditor.svelte";
   import Dialog from "./components/Dialog.svelte";
   import ImageView from "./components/ImageView.svelte";
+  import KeyCapture from "./components/KeyCapture.svelte";
   import LargeFileView from "./components/LargeFileView.svelte";
   import Picker from "./components/Picker.svelte";
   import Preview from "./components/Preview.svelte";
@@ -24,15 +25,19 @@
     loadKeybindings,
     registerActions,
     runAction,
+    setChordHintListener,
+    setKeymap,
     shortcutLabel,
   } from "./lib/actions";
   import { api, type Eol } from "./lib/api";
   import { writeText } from "./lib/clipboard";
   import { editorActions } from "./lib/editor-actions";
   import { integration } from "./lib/integration.svelte";
+  import { keyHint } from "./lib/keyhint.svelte";
   import { languageNames } from "./lib/languages";
   import { dirname } from "./lib/markdown";
   import { defaultSettingsJson, loadSettings, settings, SETTINGS_FILE } from "./lib/settings.svelte";
+  import { changeKeybinding, chooseKeymap, keyCapture } from "./lib/shortcut-editor.svelte";
   import { applyTheme, isLight, resolveFlavor, setUserTheme, THEME_FILE, userThemeTemplate } from "./lib/theme";
   import { updates } from "./lib/updates.svelte";
   import { basename, ENCODINGS, workspace } from "./lib/workspace.svelte";
@@ -208,6 +213,8 @@
       label: "Open keyboard shortcuts (keybindings.json)",
       run: async () => workspace.openPath(await api.configFile(KEYBINDINGS_FILE, defaultKeybindingsJson())),
     },
+    { id: "keybindings.change", label: "Change keyboard shortcut…", run: changeKeybinding },
+    { id: "keybindings.preset", label: "Choose keyboard shortcut preset (Notepad++, VS Code)…", run: chooseKeymap },
   ]);
 
   async function commandPalette() {
@@ -286,7 +293,7 @@
   const FIND_KEYS = new Set(["ctrl+f", "ctrl+g", "f3"]);
 
   function onKeydown(e: KeyboardEvent) {
-    if (workspace.picker || workspace.dialog || integration.setup) return;
+    if (workspace.picker || workspace.dialog || integration.setup || keyCapture.request) return;
     if (handleKeydown(e)) return;
     const combo = [e.ctrlKey && "ctrl", e.shiftKey && "shift", e.key.length === 1 ? e.key.toLowerCase() : e.key]
       .filter(Boolean)
@@ -344,6 +351,10 @@
     root.setProperty("--editor-font-size", `${Math.max(6, settings.fontSize + workspace.ui.zoom)}px`);
     workspace.view?.requestMeasure();
   });
+
+  setChordHintListener((text) => (keyHint.text = text));
+
+  $effect(() => setKeymap(settings.keymap));
 
   $effect(() => {
     // Re-apply editor options whenever settings change.
@@ -496,6 +507,7 @@
 
 {#if workspace.picker}<Picker />{/if}
 {#if workspace.dialog}<Dialog />{/if}
+{#if keyCapture.request}<KeyCapture />{/if}
 
 <style>
   .app {

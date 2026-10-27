@@ -1,9 +1,24 @@
 // App-level commands and their keyboard shortcuts.
 //
-// Every command is an action with an id. Default shortcuts can be overridden in
-// keybindings.json: { "file.save": "Ctrl+S", "view.togglePreview": ["Ctrl+K", "F8"], "file.close": null }
+// Every command is an action with an id. The keys of an action come from three layers, and the highest
+// one that mentions the action wins: keybindings.json, the keymap preset (setting `keymap`), the `keys`
+// of the action itself. A key is a combo ("Ctrl+S") or a chord of several ("Ctrl+K Ctrl+C"). Example:
+// { "file.save": "Ctrl+S", "view.togglePreview": ["Ctrl+Shift+V", "Ctrl+K V"], "file.close": null }
 
 import { api } from "./api";
+import { KEYMAPS, keymapNamed, type KeymapName } from "./keymaps";
+import {
+  BUILTIN_KEYS,
+  comboFromEvent,
+  formatSequence,
+  normalizeSequence,
+  resolveBindings,
+  sequencesConflict,
+  type BindingEntry,
+  type ResolvedBindings,
+} from "./keys";
+
+export { comboFromEvent, normalizeCombo, normalizeSequence } from "./keys";
 
 export interface Action {
   id: string;
@@ -16,62 +31,43 @@ export interface Action {
 
 export const KEYBINDINGS_FILE = "keybindings.json";
 
+/** How long a chord waits for its next key. */
+const CHORD_TIMEOUT = 2000;
+
 const actions = new Map<string, Action>();
 let overrides: Record<string, string[] | null> = {};
-let bindings = new Map<string, string>();
+let keymapName: KeymapName = "default";
+let resolved: ResolvedBindings = { bindings: new Map(), prefixes: new Set(), keys: new Map() };
 
-const ALIASES: Record<string, string> = {
-  "+": "plus",
-  "-": "minus",
-  " ": "space",
-  esc: "escape",
-  del: "delete",
-  pgup: "pageup",
-  pgdn: "pagedown",
-  return: "enter",
-  up: "arrowup",
-  down: "arrowdown",
-  left: "arrowleft",
-  right: "arrowright",
-  control: "ctrl",
-  cmd: "meta",
-  win: "meta",
-};
-
-/** Normalizes "Ctrl+Shift+S" to "ctrl+shift+s" with a fixed modifier order. */
-export function normalizeCombo(combo: string): string {
-  const parts = combo.toLowerCase().split("+").map((p) => p.trim());
-  const mods = new Set<string>();
-  let key = "";
-  for (const raw of parts) {
-    const part = ALIASES[raw] ?? raw;
-    if (part === "ctrl" || part === "alt" || part === "shift" || part === "meta") mods.add(part);
-    else key = part;
-  }
-  return [...["ctrl", "alt", "shift", "meta"].filter((m) => mods.has(m)), key].join("+");
-}
-
-export function comboFromEvent(e: KeyboardEvent): string | null {
-  if (["Control", "Shift", "Alt", "Meta", "AltGraph"].includes(e.key)) return null;
-  let key: string;
-  if (e.code.startsWith("Digit")) key = e.code.slice(5);
-  else if (e.key.length === 1) key = ALIASES[e.key] ?? e.key.toLowerCase();
-  else key = e.key.toLowerCase();
-  const mods = [e.ctrlKey && "ctrl", e.altKey && "alt", e.shiftKey && "shift", e.metaKey && "meta"].filter(Boolean);
-  return [...mods, key].join("+");
-}
-
-function keysOf(action: Action): string[] {
+/** The override of an action, unless it only repeats the built-in default under another preset. */
+function overrideOf(action: Action): string[] | null | undefined {
   const override = overrides[action.id];
-  if (override === null) return [];
-  return override ?? action.keys ?? [];
+  // keybindings.json files written by older versions listed every default; they must not pin the
+  // default keys when a preset is chosen.
+  if (override && keymapName !== "default" && action.id in KEYMAPS[keymapName].keys) {
+    const same = (a: string[], b: string[]) => a.map(normalizeSequence).join("|") === b.map(normalizeSequence).join("|");
+    if (same(override, action.keys ?? [])) return undefined;
+  }
+  return override;
+}
+
+/** Keys of an action without keybindings.json: the preset's, or its own default. */
+export function defaultKeysOf(id: string): string[] {
+  return KEYMAPS[keymapName].keys[id] ?? actions.get(id)?.keys ?? [];
 }
 
 function rebuild() {
-  bindings = new Map();
+  const entries: BindingEntry[] = [];
   for (const action of actions.values()) {
-    for (const combo of keysOf(action)) bindings.set(normalizeCombo(combo), action.id);
+    const override = overrideOf(action);
+    const layer = override !== undefined ? 2 : action.id in KEYMAPS[keymapName].keys ? 1 : 0;
+    for (const key of override !== undefined ? (override ?? []) : defaultKeysOf(action.id)) {
+      const seq = normalizeSequence(key);
+      if (seq) entries.push({ id: action.id, seq, layer });
+    }
   }
+  resolved = resolveBindings(entries);
+  cancelChord();
 }
 
 export function registerActions(list: Action[]) {
@@ -79,8 +75,26 @@ export function registerActions(list: Action[]) {
   rebuild();
 }
 
+/** Chooses the keymap preset by the value of the `keymap` setting. Unknown names mean the default. */
+export function setKeymap(name: unknown) {
+  const next = keymapNamed(name) ?? "default";
+  if (next === keymapName) return;
+  keymapName = next;
+  rebuild();
+}
+
+export function currentKeymap(): KeymapName {
+  return keymapName;
+}
+
+/** The actions that are available right now (the command palette). */
 export function allActions(): Action[] {
   return [...actions.values()].filter((a) => a.enabled?.() ?? true);
+}
+
+/** Every action, also those that are disabled at the moment (the shortcut editor). */
+export function registeredActions(): Action[] {
+  return [...actions.values()];
 }
 
 export function runAction(id: string) {
@@ -88,45 +102,110 @@ export function runAction(id: string) {
   if (action && (action.enabled?.() ?? true)) void action.run();
 }
 
-/** Human-readable shortcut of an action, e.g. "Ctrl+Shift+S". */
+/** The keys an action really has, normalized, e.g. ["ctrl+k ctrl+c"]. */
+export function keysOf(id: string): string[] {
+  return resolved.keys.get(id) ?? [];
+}
+
+/** Human-readable shortcut of an action, e.g. "Ctrl+Shift+S" or "Ctrl+K Ctrl+C". */
 export function shortcutLabel(id: string): string {
-  const action = actions.get(id);
-  const first = action ? keysOf(action)[0] : undefined;
-  if (!first) return "";
-  const names: Record<string, string> = {
-    plus: "+",
-    minus: "-",
-    arrowleft: "Left",
-    arrowright: "Right",
-    arrowup: "Up",
-    arrowdown: "Down",
-    pageup: "PageUp",
-    pagedown: "PageDown",
-  };
-  return normalizeCombo(first)
-    .split("+")
-    .map((p) => names[p] ?? p.charAt(0).toUpperCase() + p.slice(1))
-    .join("+");
+  const first = keysOf(id)[0];
+  return first ? formatSequence(first) : "";
+}
+
+/** The other actions that use a key sequence, a chord starting with it, or the start of it. */
+export function findConflicts(sequence: string, exceptId: string): { id: string; label: string; key: string }[] {
+  const seq = normalizeSequence(sequence);
+  const found: { id: string; label: string; key: string }[] = [];
+  for (const [id, keys] of resolved.keys) {
+    if (id === exceptId) continue;
+    for (const key of keys) {
+      if (sequencesConflict(key, seq)) found.push({ id, label: actions.get(id)?.label ?? id, key });
+    }
+  }
+  return found;
+}
+
+/** Name of the fixed editing command (not an action) that has this key, if any. */
+export function builtinKeyName(sequence: string): string | null {
+  return BUILTIN_KEYS[normalizeSequence(sequence)] ?? null;
+}
+
+// ---------------------------------------------------------------- key handling
+
+let pending = "";
+let pendingTimer = 0;
+let flashTimer = 0;
+let hintListener: (text: string) => void = () => {};
+
+/** Receives the text for the status bar while a chord waits for its next key ("" when it is over). */
+export function setChordHintListener(listener: (text: string) => void) {
+  hintListener = listener;
+}
+
+function cancelChord() {
+  clearTimeout(pendingTimer);
+  if (pending) {
+    pending = "";
+    hintListener("");
+  }
+}
+
+function startChord(sequence: string) {
+  clearTimeout(pendingTimer);
+  clearTimeout(flashTimer);
+  pending = sequence;
+  const second = sequence.split(" ").length === 1;
+  hintListener(`${formatSequence(sequence)} pressed, waiting for the ${second ? "second" : "next"} key…`);
+  pendingTimer = window.setTimeout(cancelChord, CHORD_TIMEOUT);
+}
+
+function flashHint(text: string) {
+  hintListener(text);
+  clearTimeout(flashTimer);
+  flashTimer = window.setTimeout(() => hintListener(""), 1500);
 }
 
 /** Runs the action bound to the pressed keys. Returns true if the event was handled. */
 export function handleKeydown(e: KeyboardEvent): boolean {
+  // Typing is the common case: keep it out of everything below.
+  if (!pending && !e.ctrlKey && !e.altKey && !e.metaKey && e.key.length === 1) return false;
   const combo = comboFromEvent(e);
+  // A bare modifier (the Ctrl of "Ctrl+K Ctrl+C") leaves a waiting chord alone.
   if (!combo) return false;
-  const id = bindings.get(combo);
+  const swallow = () => {
+    e.preventDefault();
+    e.stopPropagation();
+    return true;
+  };
+  const waiting = pending;
+  if (waiting && combo === "escape") {
+    cancelChord();
+    return swallow();
+  }
+  const sequence = waiting ? `${waiting} ${combo}` : combo;
+  cancelChord();
+  // A key that starts a chord never runs on its own: resolveBindings() allows no such binding.
+  if (resolved.prefixes.has(sequence)) {
+    startChord(sequence);
+    return swallow();
+  }
+  const id = resolved.bindings.get(sequence);
   const action = id ? actions.get(id) : undefined;
-  if (!action || !(action.enabled?.() ?? true)) return false;
-  e.preventDefault();
-  e.stopPropagation();
-  void action.run();
-  return true;
+  if (action && (action.enabled?.() ?? true)) {
+    void action.run();
+    return swallow();
+  }
+  if (waiting) {
+    flashHint(`${formatSequence(sequence)} is not a command.`);
+    return swallow();
+  }
+  return false;
 }
 
+/** Contents of a new keybindings.json: nothing is overridden, so the keymap preset applies in full. */
 export function defaultKeybindingsJson(): string {
-  const entries = [...actions.values()]
-    .filter((a) => a.keys?.length)
-    .map((a) => `  ${JSON.stringify(a.id)}: ${JSON.stringify(a.keys!.length === 1 ? a.keys![0] : a.keys)}`);
-  return `{\n${entries.join(",\n")}\n}\n`;
+  return "{\n}\n";
 }
 
 /** Loads keybindings.json. Returns an error message if the file is invalid. */

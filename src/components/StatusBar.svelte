@@ -1,5 +1,6 @@
 <script lang="ts">
   import { runAction, shortcutLabel } from "../lib/actions";
+  import { keyHint } from "../lib/keyhint.svelte";
   import { workspace } from "../lib/workspace.svelte";
 
   let { imageSize }: { imageSize: { w: number; h: number } | null } = $props();
@@ -51,6 +52,8 @@
     {#if imageSize}<span>{imageSize.w} × {imageSize.h}</span>{/if}
     <span class="dim">{formatSize(tab.size)}</span>
   {/if}
+
+  {#if keyHint.text}<span class="chord" role="status">{keyHint.text}</span>{/if}
 
   <span class="spacer"></span>
 
@@ -107,6 +110,9 @@
   }
   .dim {
     color: var(--fg-dim);
+  }
+  .chord {
+    color: var(--accent);
   }
   .warn {
     color: var(--dirty);
