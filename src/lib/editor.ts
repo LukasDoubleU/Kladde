@@ -65,10 +65,10 @@ const theme = EditorView.theme({
   ".cm-activeLine": { backgroundColor: "var(--active-line)" },
   ".cm-gutters": {
     backgroundColor: "var(--bg)",
-    color: "var(--fg-dim)",
+    color: "var(--line-number)",
     borderRight: "1px solid var(--border)",
   },
-  ".cm-activeLineGutter": { backgroundColor: "var(--active-line)", color: "var(--fg)" },
+  ".cm-activeLineGutter": { backgroundColor: "var(--active-line)", color: "var(--active-line-number)" },
   ".cm-selectionMatch": { backgroundColor: "var(--selection-match)" },
   ".cm-searchMatch": { backgroundColor: "var(--search-match)", outline: "1px solid var(--search-match-border)" },
   ".cm-searchMatch.cm-searchMatch-selected": { backgroundColor: "var(--search-match-selected)" },

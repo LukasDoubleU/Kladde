@@ -22,7 +22,7 @@ in tabs, no project tree, no Git, no language servers.
 - **External changes**: unmodified tabs reload automatically when the file changes on disk
   (the active tab is followed live, like `tail -f`); otherwise a banner asks.
 - Image viewer, multiple cursors, column selection (`Alt`+drag), find and replace with regex,
-  word wrap, zoom, light and dark theme following Windows.
+  word wrap, zoom. Theme: [Catppuccin Mocha](https://catppuccin.com) with Rosewater accent (a light theme is available).
 
 ## Shortcuts
 
@@ -51,7 +51,7 @@ Change them with **Open keyboard shortcuts** in the command palette, which opens
 | `fontFamily`, `fontSize` | Cascadia Mono, 14 |
 | `tabSize`, `insertSpaces` | 4, true |
 | `wordWrap`, `lineNumbers`, `highlightActiveLine` | false, true, true |
-| `theme` | `system`, `light` or `dark` |
+| `theme` | `dark` (Catppuccin Mocha), `light` or `system` |
 | `largeFileThresholdMB` | 32 |
 | `markdownPreview` | `split`, `only` or `off`: how Markdown files open |
 | `pasteImageFolder` | `assets` |

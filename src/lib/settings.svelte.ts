@@ -9,6 +9,7 @@ export interface Settings {
   wordWrap: boolean;
   lineNumbers: boolean;
   highlightActiveLine: boolean;
+  /** "dark" is Catppuccin Mocha. */
   theme: "system" | "light" | "dark";
   /** Files above this size open in the read-only large file viewer. */
   largeFileThresholdMB: number;
@@ -26,7 +27,7 @@ export const defaultSettings: Settings = {
   wordWrap: false,
   lineNumbers: true,
   highlightActiveLine: true,
-  theme: "system",
+  theme: "dark",
   largeFileThresholdMB: 32,
   markdownPreview: "split",
   pasteImageFolder: "assets",

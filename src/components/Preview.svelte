@@ -120,7 +120,7 @@
     margin: 0 0 1em;
   }
   .markdown :global(a) {
-    color: var(--accent);
+    color: var(--link);
     text-decoration: none;
   }
   .markdown :global(a:hover) {

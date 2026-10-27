@@ -232,6 +232,8 @@
   $effect(() => {
     const dark = settings.theme === "dark" || (settings.theme === "system" && systemDark);
     document.documentElement.classList.toggle("dark", dark);
+    // Match the native title bar.
+    void appWindow.setTheme(dark ? "dark" : "light");
   });
 
   $effect(() => {
