@@ -14,7 +14,8 @@ use tauri::{AppHandle, State};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 /// Replaces the manifest URL, e.g. to serve a fake `latest.json` in tests. Honored only with an isolated
-/// profile (`KLADDE_DATA_DIR`), so a stray variable can never redirect a real installation.
+/// profile (`KLADDE_DATA_DIR`), so a stray variable can never redirect a real installation. An isolated
+/// profile without it does not check at all.
 pub const URL_ENV: &str = "KLADDE_UPDATE_URL";
 
 /// Time of the last successful check, kept in the data folder (not in settings.json).
@@ -89,6 +90,10 @@ pub async fn update_check(
     let dir = crate::session::data_dir(&app)?;
     if !manual && !is_due(last_check(&dir), now_secs()) {
         return Ok(None);
+    }
+    // Test profiles never talk to the real GitHub: they get a fake manifest or no check at all.
+    if crate::session::isolated_profile().is_some() && endpoint_override().is_none() {
+        return if manual { Err(format!("Set {URL_ENV} to check for updates in an isolated profile.")) } else { Ok(None) };
     }
     let update = find_update(&app).await?;
     // Only a completed check counts: while offline Kladde asks again at the next start.

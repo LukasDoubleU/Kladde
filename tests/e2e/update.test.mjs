@@ -140,6 +140,19 @@ test("installed copy offers Update now, but a test profile never installs", asyn
   }
 });
 
+test("an isolated profile without a test endpoint does not check (never the real GitHub)", async () => {
+  const app = await launch({ port: 9349, profile: newProfile() });
+  try {
+    await sleep(7000);
+    assert.equal(await banner(app), null);
+    await runCommand(app, "Check for updates");
+    await app.waitFor("document.querySelector('.notice.error')", 5000);
+    assert.match(await notice(app), /KLADDE_UPDATE_URL/);
+  } finally {
+    await app.kill();
+  }
+});
+
 test("setting off: no automatic check; the command still works", async () => {
   requests = [];
   answer = "none";
