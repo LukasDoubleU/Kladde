@@ -76,7 +76,9 @@ starts in a fraction of a second, and never loses what you typed.
   with" and has an optional "Edit with Kladde" Explorer context menu entry. Per user, no admin rights.
 
 **Look**
-- [Catppuccin Mocha](https://catppuccin.com) with a Rosewater accent; a light theme is available.
+- All four [Catppuccin](https://catppuccin.com) flavors (Mocha, Macchiato, Frappé, Latte) with a choice of the
+  14 accent colors, optionally following the Windows light/dark setting; Mocha with Rosewater is the default.
+  Your own colors go into a `theme.css` (see [Themes](#themes)).
 - [JetBrains Mono](https://www.jetbrains.com/lp/mono/) with ligatures in the editor and
   [Inter](https://rsms.me/inter/) for the interface, both bundled.
 - Zoom with `Ctrl`+wheel or `Ctrl+Plus` / `Ctrl+Minus`.
@@ -163,7 +165,9 @@ The defaults work well with mouse gesture tools that send `Ctrl+T`, `Ctrl+W`, `F
 | `fontFamily`, `fontSize` | JetBrains Mono, `14` | editor font |
 | `fontLigatures` | `true` | ligatures such as `=>` and `!=` |
 | `uiFontFamily` | Inter | interface font |
-| `theme` | `dark` | `dark` (Catppuccin Mocha), `light` or `system` |
+| `theme` | `mocha` | `mocha`, `macchiato`, `frappe`, `latte` or `system` (follow Windows); `dark` and `light` still work as names for Mocha and Latte |
+| `themeLight`, `themeDark` | `latte`, `mocha` | the flavors `system` uses while Windows is in light or dark mode |
+| `accent` | `rosewater` | `rosewater`, `flamingo`, `pink`, `mauve`, `red`, `maroon`, `peach`, `yellow`, `green`, `teal`, `sky`, `sapphire`, `blue` or `lavender` |
 | `tabSize`, `insertSpaces` | `4`, `true` | |
 | `wordWrap`, `lineNumbers`, `highlightActiveLine` | `false`, `true`, `true` | |
 | `spellCheck` | `false` | can also be toggled from the command palette |
@@ -173,8 +177,45 @@ The defaults work well with mouse gesture tools that send `Ctrl+T`, `Ctrl+W`, `F
 | `offerDefaultEditor` | `true` | offer once at start to register Kladde as a default editor candidate |
 | `checkForUpdates` | `true` | look for a newer version at start (once a day, contacts GitHub); the command works either way |
 
-Settings, keyboard shortcuts, the session, the time of the last update check and backups of unsaved text live in
+Settings, keyboard shortcuts, the custom theme, the session, the time of the last update check and backups of
+unsaved text live in
 `%APPDATA%\io.github.lukasdoubleu.kladde`.
+
+### Themes
+
+The `theme`, `themeLight`, `themeDark` and `accent` settings pick a built-in look; the window's title bar follows
+(light for Latte, dark for the others). An unknown name is reported and replaced by the default. The light theme
+that older versions shipped was replaced by Latte, so `"theme": "light"` now shows Latte.
+
+For anything else, run **Open custom theme (theme.css)** in the command palette. It creates `theme.css` in the
+config folder with every variable listed (commented out, with the values of the current theme). The file is loaded
+after the built-in theme, so it can override any variable, and saving it applies it immediately.
+Everything is colored through these CSS variables: the editor, gutters, search panel, preview (including code
+blocks), Mermaid diagrams, compare view, status bar, dialogs, picker and large file viewer.
+
+```css
+:root {
+  --ctp-base: #1a1b26;        /* retints every surface that is built from the palette */
+  --accent: #ff9e64;
+  --tok-keyword: #bb9af7;
+}
+```
+
+| Variables | Used for |
+|---|---|
+| `--ctp-rosewater` … `--ctp-crust` (26) | the Catppuccin palette; all roles below are built from it. `--ctp-accent` is the chosen accent |
+| `--bg`, `--bg-alt`, `--bg-hover`, `--border` | editor and preview background; bars, panels and dialogs; hovered and selected rows; lines |
+| `--fg`, `--fg-dim` | text; secondary text, icons |
+| `--accent`, `--accent-fg`, `--caret` | accent (focus, selected rows, buttons, diagram borders); text on the accent; text cursor |
+| `--link`, `--error`, `--dirty`, `--banner` | links in dialogs; errors; the unsaved-changes mark; background of the "file changed" banner |
+| `--selection`, `--selection-match`, `--active-line`, `--bracket-match`, `--special-char` | selection, other occurrences of the selection, current line, matching bracket, control characters |
+| `--line-number`, `--active-line-number` | gutter |
+| `--search-match`, `--search-match-border`, `--search-match-selected` | find matches |
+| `--diff-del-bg`, `--diff-del-text`, `--diff-del-mark`, `--diff-add-bg`, `--diff-add-text`, `--diff-add-mark` | compare view: changed lines, changed words, markers |
+| `--tok-keyword`, `--tok-string`, `--tok-escape`, `--tok-number`, `--tok-comment`, `--tok-function`, `--tok-type`, `--tok-property`, `--tok-variable`, `--tok-operator`, `--tok-punctuation`, `--tok-meta`, `--tok-heading`, `--tok-link`, `--tok-invalid`, `--tok-inserted`, `--tok-deleted`, `--tok-date`, `--tok-warn` | syntax highlighting in the editor and in code blocks of the preview |
+
+Colors can be written in any CSS syntax. Fonts are not part of the theme: use `fontFamily` and `uiFontFamily`
+in `settings.json`. If you set `--accent` yourself, also set `--accent-fg` to a readable text color on it.
 
 ## Building
 
@@ -211,7 +252,7 @@ view and keep their own state, including undo history, so switching tabs is inst
 ## Roadmap
 
 Planned features and ideas are tracked as [issues](https://github.com/LukasDoubleU/Kladde/issues), among them
-grammar checking with LanguageTool, more formatters (TOML), editing large files and custom themes.
+grammar checking with LanguageTool, more formatters (TOML), editing large files.
 
 ## License
 

@@ -30,7 +30,10 @@ employer-related out of code, commits, issues and release notes.
   - `format-xml.ts`: XML formatter. `formatters.ts`: picks a formatter by language name and lazy-loads
     Prettier and sql-formatter.
 - `src/components/`: Svelte components. `src/App.svelte`: layout, the command list and window events.
-- `src/app.css`: theme colors as CSS variables (Catppuccin Mocha block, light theme).
+- `src/app.css`: global styles and fonts. `src/themes.css`: the four Catppuccin flavors, the 14 accents and the
+  role variables built from them (the theming API documented in the README). `src/lib/theme.ts`: picks the flavor
+  (`theme`, `themeLight`/`themeDark`, `accent` settings, Windows mode), sets `data-theme`/`data-accent` on the root
+  and loads the user's `theme.css` last.
 
 All text tabs share one CodeMirror `EditorView`; inactive tabs keep their `EditorState` in a plain map.
 Never put CodeMirror objects into Svelte `$state`.
@@ -50,6 +53,16 @@ npm run tauri dev     # app with hot reload
 npm run tauri build   # release exe and installer
 cd src-tauri && cargo test
 ```
+
+## Theming
+
+- Colors exist only as CSS variables (`themes.css`); components and the CodeMirror theme use `var(--…)`, never
+  literal colors (shadows and scrims are the exception). New colored UI needs a role variable in `themes.css`,
+  the `THEME_VARIABLES` list in `theme.ts` (it generates the theme.css template) and the README table.
+- Flavor and accent selectors use `:where()`, so a user's `:root { … }` in theme.css overrides them without a
+  more specific selector. Keep it that way. Mermaid reads the variables and redraws on the `kladde-theme` event.
+- Latte is the only light flavor (`isLight`); `--accent-fg` must stay readable (4.5:1) on every flavor and accent,
+  which `tests/e2e/theme.test.mjs` checks.
 
 ## Commits and versions
 
