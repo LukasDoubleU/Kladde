@@ -16,6 +16,9 @@ employer-related out of code, commits, issues and release notes.
   - `integration.rs`: Windows registration (ProgID, capabilities, "Open with", context menu) under a
     registry root passed in, never hard-coded. `src-tauri/windows/installer-hooks.nsh` runs
     `kladde.exe --unregister-integration` from the NSIS uninstaller.
+  - `update.rs`: update check and install on top of tauri-plugin-updater (commands `update_check`,
+    `update_install`); the webview never calls the plugin itself. `src/lib/updates.svelte.ts` and
+    `UpdateBanner.svelte` are the user-facing side.
   - `lib.rs`: Tauri commands and plugins.
 - `src/lib/`: frontend logic.
   - `workspace.svelte.ts`: tabs, open, save, close, reload, external changes, preview, session (hot exit).
@@ -64,6 +67,14 @@ cd src-tauri && cargo test
   1.0.0, features and breaking changes bump the minor version and everything else the patch. A dry run
   builds and previews the notes without releasing.
 - Preview the next changelog locally with `npx git-cliff --unreleased`.
+- Updates: the release workflow signs the installer for tauri-plugin-updater when the repository secret
+  `TAURI_SIGNING_PRIVATE_KEY` exists (password secret `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` optional): it builds
+  with `src-tauri/tauri.updater.conf.json` (`createUpdaterArtifacts`), then `scripts/make-update-manifest.mjs`
+  writes `latest.json`, and both it and `…-setup.exe.sig` go into the release. Without the secret the build
+  works but there is no update data. The app reads `releases/latest/download/latest.json`; the matching public key
+  is `plugins.updater.pubkey` in `tauri.conf.json`. Never commit the private key; losing or replacing it means
+  installed copies can no longer update (they must be reinstalled by hand). Pre-releases are not offered.
+- Code signing (Authenticode, for SmartScreen) is not set up yet; see issue #9.
 
 ## Code
 
@@ -90,5 +101,9 @@ cd src-tauri && cargo test
   the shell notification and the Windows settings page; `cargo test` uses a random key of its own. Tests delete
   their key afterwards (see `tests/e2e/integration.test.mjs`). `KLADDE_TEST_OFFER=1` makes an isolated profile
   show the start-up offer.
+- Update tests (`tests/e2e/update.test.mjs`) serve a fake `latest.json` from a local server through
+  `KLADDE_UPDATE_URL`, which only an isolated profile (`KLADDE_DATA_DIR`) honors. `update_install` refuses to run in
+  an isolated profile, so no test can start an installer. A copy of the exe with an empty `uninstall.exe` next to
+  it counts as "installed" (that is how the NSIS installer lays it out); without it the exe is portable.
 - Changes to saving, backups or the session must be checked by killing the process while there are unsaved
   changes and verifying that everything comes back after a restart.

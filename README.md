@@ -88,6 +88,19 @@ Download the latest version from [Releases](https://github.com/LukasDoubleU/Klad
 Kladde needs Windows 10 or 11 with WebView2, which ships with Windows 11. The files are not code-signed yet,
 so SmartScreen may ask for confirmation on the first start. You can also [build it yourself](#building).
 
+### Updates
+
+Kladde looks for a newer version a few seconds after start, at most once a day, in the background. When there
+is one, a banner says so: **Update now** (downloads the installer, checks its signature, installs it and
+restarts Kladde; unsaved text is backed up first and comes back), **Release notes** or **Later**. The command
+**Check for updates** asks right away and tells you when you are up to date. The portable exe cannot replace
+itself, so its banner offers **Download**, which opens the release page.
+
+The check is one request for `latest.json` from the GitHub release page of this repository; Kladde sends
+nothing but the request itself (GitHub sees your IP address, as with any download), no identifier and nothing about your files. Update packages are signed with a key whose public half is built into Kladde,
+so a tampered download is rejected. Set `checkForUpdates` to `false` in the settings to turn the automatic
+check off (the command keeps working). Versions before the one that introduced updates must be updated by hand once.
+
 ### Default editor and Explorer
 
 Windows does not let apps make themselves the default; you choose that in its settings. So Kladde registers
@@ -158,8 +171,9 @@ The defaults work well with mouse gesture tools that send `Ctrl+T`, `Ctrl+W`, `F
 | `pasteImageFolder` | `assets` | folder for pasted images, relative to the Markdown file |
 | `largeFileThresholdMB` | `32` | larger files open in the read-only viewer |
 | `offerDefaultEditor` | `true` | offer once at start to register Kladde as a default editor candidate |
+| `checkForUpdates` | `true` | look for a newer version at start (once a day, contacts GitHub); the command works either way |
 
-Settings, keyboard shortcuts, the session and backups of unsaved text live in
+Settings, keyboard shortcuts, the session, the time of the last update check and backups of unsaved text live in
 `%APPDATA%\io.github.lukasdoubleu.kladde`.
 
 ## Building
