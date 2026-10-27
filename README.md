@@ -2,8 +2,13 @@
 
 A lightweight text editor for Windows: a Notepad++ replacement with first-class Markdown.
 
-*Kladde* is German for a rough-draft notebook. It is a text editor, not an IDE: single files
-in tabs, no project tree, no Git, no language servers.
+*Kladde* is German for a rough-draft notebook.
+
+## Motivation
+
+A text editor, simple yet powerful like Notepad++, without becoming an IDE.
+
+So: single files in tabs, no project tree, no Git, no language servers.
 
 ## Features
 
