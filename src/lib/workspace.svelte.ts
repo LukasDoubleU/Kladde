@@ -530,6 +530,90 @@ class Workspace {
     this.addTab(tab);
   }
 
+  /** Opens the file again in the same tab, e.g. after it was truncated, replaced or rotated. */
+  private async reopenLarge(tab: Tab) {
+    if (!tab.path) return;
+    try {
+      const opened = await api.largeOpen(tab.path);
+      const old = tab.largeId;
+      Object.assign(tab, {
+        largeId: opened.id,
+        encoding: opened.encoding,
+        mtime: opened.mtime,
+        size: opened.size,
+        external: null,
+      });
+      if (old !== null) void api.largeClose(old);
+    } catch (e) {
+      this.showNotice("error", `Could not reload ${tab.title}: ${e}`);
+    }
+  }
+
+  private refreshingLarge = new Set<string>();
+
+  /**
+   * A large file's size or time changed on disk. Appended data extends the viewer's index in place (the
+   * view follows the end like `tail -f`); a shorter or rewritten file is reopened.
+   */
+  private async refreshLarge(tab: Tab, stat: { size: number; mtime: number }) {
+    if (tab.largeId === null || this.refreshingLarge.has(tab.id)) return;
+    this.refreshingLarge.add(tab.id);
+    try {
+      const result = await api.largeRefresh(tab.largeId);
+      // The open handle sees growth and truncation of its own file. A file that was renamed away and
+      // replaced shows up as a path that no longer matches the handle: it is bigger than the handle's
+      // file (the stat came first, so the handle can only be ahead when the same file grew), or equally
+      // big with another time.
+      const replaced = result.size < stat.size || (result.size === stat.size && result.mtime !== stat.mtime);
+      if (result.changed || replaced) await this.reopenLarge(tab);
+      else if (this.tabs.includes(tab)) {
+        tab.mtime = result.mtime;
+        tab.size = result.size;
+      }
+    } catch {
+      /* closed meanwhile */
+    } finally {
+      this.refreshingLarge.delete(tab.id);
+    }
+  }
+
+  /** Largest file that "Open in editor" accepts: the editor holds the text several times in memory. */
+  readonly largeEditLimit = 256 * 1024 * 1024;
+
+  /** Opens a large file in a normal editor tab, in place of the viewer. */
+  async openLargeInEditor(tab: Tab | undefined = this.active) {
+    if (!tab || tab.kind !== "large" || !tab.path) return;
+    const mb = Math.round(tab.size / (1024 * 1024));
+    if (tab.size > this.largeEditLimit) {
+      this.showNotice("error", `${tab.title} is too large for the editor (${mb} MB, limit ${this.largeEditLimit / 1048576} MB).`);
+      return;
+    }
+    const choice = await this.ask(
+      `Open ${tab.title} (${mb} MB) in the editor?`,
+      [
+        { id: "open", label: "Open in editor", primary: true },
+        { id: "cancel", label: "Cancel" },
+      ],
+      "The editor loads the whole file and needs several times its size in memory; it can be slow and may run out of memory. The viewer is the safe way to read very large files.",
+    );
+    if (choice !== "open") return;
+    try {
+      const content = await api.readFile(tab.path);
+      const index = this.tabs.indexOf(tab);
+      if (index < 0) return;
+      const next = this.createText(tab.path, content, tab.id);
+      const state = this.newState(content.text);
+      this.runtime.set(next.id, { state, saved: state.doc, metaDirty: false, scrollTop: 0, version: 0, backedUp: -1 });
+      this.tabs.splice(index, 1, next);
+      if (tab.largeId !== null) void api.largeClose(tab.largeId);
+      this.activate(next.id);
+      void this.loadLanguage(next);
+      if (content.lossy) this.showNotice("info", `${next.title}: some bytes are not valid ${content.encoding}.`);
+    } catch (e) {
+      this.showNotice("error", `Could not open ${tab.title} in the editor: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+
   async openPaths(paths: string[]) {
     for (const path of paths) await this.openPath(path);
   }
@@ -677,9 +761,7 @@ class Workspace {
   async reload(tab: Tab | undefined = this.active, encoding?: string) {
     if (!tab?.path) return;
     if (tab.kind === "large") {
-      const { path, id } = tab;
-      this.removeTab(id);
-      await this.openLarge(path, id);
+      await this.reopenLarge(tab);
       return;
     }
     if (tab.kind === "image") {
@@ -760,6 +842,9 @@ class Workspace {
           tab.external = "deleted";
           if (tab.kind === "text") this.markMetaDirty(tab);
         }
+      } else if (tab.kind === "large") {
+        if (stat.mtime !== tab.mtime || stat.size !== tab.size) void this.refreshLarge(tab, stat);
+        else if (tab.external === "deleted") tab.external = null;
       } else if (stat.mtime !== tab.mtime) {
         if (tab.kind === "text" && !tab.dirty) void this.reload(tab, tab.encoding);
         else if (tab.kind === "image") void this.reload(tab);

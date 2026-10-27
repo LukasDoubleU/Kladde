@@ -140,6 +140,12 @@
         else if (workspace.active?.kind === "text" && workspace.view) openSearchPanel(workspace.view);
       },
     },
+    {
+      id: "file.openLargeInEditor",
+      label: "Open large file in the editor",
+      run: () => workspace.openLargeInEditor(),
+      enabled: () => workspace.active?.kind === "large",
+    },
     { id: "compare.with", label: "Compare with…", run: () => workspace.compareWith(), enabled: textTab },
     {
       id: "compare.withDisk",

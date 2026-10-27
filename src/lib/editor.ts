@@ -45,7 +45,7 @@ export interface EditorOptions {
   spellCheck: boolean;
 }
 
-const logHighlighter = tagHighlighter([
+export const logHighlighter = tagHighlighter([
   { tag: logTags.error, class: "tok-log-error" },
   { tag: logTags.warn, class: "tok-log-warn" },
   { tag: logTags.info, class: "tok-log-info" },

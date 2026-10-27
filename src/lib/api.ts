@@ -46,6 +46,25 @@ export interface LargeMatch {
   len: number;
 }
 
+export interface LargeInfo {
+  lines: number;
+  done: boolean;
+  size: number;
+}
+
+export interface LargeSearchResult {
+  found: LargeMatch | null;
+  /** A newer search or a cancel request stopped it. */
+  cancelled: boolean;
+}
+
+export interface LargeRefresh {
+  size: number;
+  mtime: number;
+  /** Not just appended to: the file has to be reopened. */
+  changed: boolean;
+}
+
 export interface IntegrationGroup {
   id: string;
   label: string;
@@ -87,7 +106,7 @@ export const api = {
   statFiles: (paths: string[]) => invoke<FileStat[]>("stat_files", { paths }),
 
   largeOpen: (path: string) => invoke<LargeOpened>("large_open", { path }),
-  largeInfo: (id: number) => invoke<{ lines: number; done: boolean }>("large_info", { id }),
+  largeInfo: (id: number) => invoke<LargeInfo>("large_info", { id }),
   largeLines: (id: number, start: number, count: number) =>
     invoke<LargeLine[]>("large_lines", { id, start, count }),
   largeSearch: (
@@ -97,7 +116,10 @@ export const api = {
     forward: boolean,
     inclusive: boolean,
     matchCase: boolean,
-  ) => invoke<LargeMatch | null>("large_search", { id, query, ...from, forward, inclusive, matchCase }),
+    regex: boolean,
+  ) => invoke<LargeSearchResult>("large_search", { id, query, ...from, forward, inclusive, matchCase, regex }),
+  largeSearchCancel: (id: number) => invoke<void>("large_search_cancel", { id }),
+  largeRefresh: (id: number) => invoke<LargeRefresh>("large_refresh", { id }),
   largeClose: (id: number) => invoke<void>("large_close", { id }),
 
   sessionLoad: () => invoke<string | null>("session_load"),

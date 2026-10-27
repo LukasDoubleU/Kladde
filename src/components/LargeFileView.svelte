@@ -1,7 +1,11 @@
 <script lang="ts">
   // Read-only viewer for files above the large file threshold. Only the visible
   // lines are fetched from the Rust side, so file size barely matters.
+  import type { Language } from "@codemirror/language";
+  import { untrack } from "svelte";
   import { api, type LargeLine, type LargeMatch } from "../lib/api";
+  import { detectLanguage } from "../lib/languages";
+  import { highlightLines, markSpans, unitOffset, type Span } from "../lib/linehighlight";
   import { capturePointer } from "../lib/pointer";
   import { settings } from "../lib/settings.svelte";
   import { workspace, type Tab } from "../lib/workspace.svelte";
@@ -9,10 +13,12 @@
   let { tab }: { tab: Tab } = $props();
   const id = $derived(tab.largeId!);
 
+  type ViewLine = LargeLine & { spans: Span[] };
+
   let total = $state(1);
   let done = $state(false);
   let topLine = $state(0);
-  let lines: LargeLine[] = $state([]);
+  let lines: ViewLine[] = $state([]);
   let linesStart = $state(0);
   let height = $state(0);
   let match: LargeMatch | null = $state(null);
@@ -20,6 +26,7 @@
 
   let query = $state("");
   let matchCase = $state(false);
+  let useRegex = $state(false);
   let searching = $state(false);
   let searchMessage = $state("");
 
@@ -32,9 +39,21 @@
   const maxTop = $derived(Math.max(0, total - visible + 1));
   const gutterChars = $derived(String(total).length + 1);
 
-  // Poll the background indexer until it has counted all lines.
+  // The file grew (the periodic check updates the tab's size): keep showing the end if it was shown.
+  let lastSize = untrack(() => tab.size);
+  let followEnd = false;
+  $effect(() => {
+    const size = tab.size;
+    untrack(() => {
+      if (size > lastSize) followEnd = topLine >= maxTop;
+      lastSize = size;
+    });
+  });
+
+  // Poll the background indexer until it has counted all lines; again after the file grew.
   $effect(() => {
     const fileId = id;
+    void tab.size;
     let cancelled = false;
     const poll = async () => {
       try {
@@ -43,7 +62,9 @@
         total = Math.max(1, info.lines);
         done = info.done;
         workspace.largeStatus = { lines: info.lines, done: info.done };
-        if (!info.done) setTimeout(poll, 150);
+        if (followEnd) scrollTo(maxTop);
+        if (info.done) followEnd = false;
+        else setTimeout(poll, 150);
       } catch {
         /* closed */
       }
@@ -52,16 +73,60 @@
     return () => (cancelled = true);
   });
 
-  // Fetch the visible lines whenever the position or the indexed line count changes.
+  // A reopened file (truncated or rotated) may be shorter than the position.
+  $effect(() => {
+    if (topLine > maxTop) topLine = maxTop;
+  });
+  $effect(() => {
+    void id;
+    match = null;
+    markedLine = null;
+  });
+
+  // Highlighting by the file's language, as far as it works line by line (e.g. log files).
+  let parser = $state.raw<Language["parser"] | null>(null);
+  $effect(() => {
+    const desc = tab.path ? detectLanguage(tab.path, "") : null;
+    parser = null;
+    // Markdown depends on blocks that start above the window.
+    if (!desc || desc.name === "Markdown") return;
+    let stale = false;
+    desc
+      .load()
+      .then((support) => {
+        if (!stale) parser = support.language.parser;
+      })
+      .catch(() => {});
+    return () => (stale = true);
+  });
+
+  function withSpans(result: LargeLine[], language: Language["parser"] | null): ViewLine[] {
+    let spans: Span[][] | null = null;
+    if (language) {
+      try {
+        spans = highlightLines(
+          language,
+          result.map((l) => l.text),
+        );
+      } catch {
+        /* show plain text */
+      }
+    }
+    return result.map((l, i) => ({ ...l, spans: spans?.[i] ?? [{ text: l.text, cls: "" }] }));
+  }
+
+  // Fetch the visible lines whenever the position, the indexed line count or the file changes.
   let request = 0;
   $effect(() => {
     const start = topLine;
     const count = visible + 1;
     void total;
+    void tab.size;
+    const language = parser;
     const mine = ++request;
     void api.largeLines(id, start, count).then((result) => {
       if (mine !== request) return;
-      lines = result;
+      lines = withSpans(result, language);
       linesStart = start;
     });
   });
@@ -94,6 +159,7 @@
     else if (e.key === "PageUp" || (e.key === " " && e.shiftKey)) scrollTo(topLine - page);
     else if (e.key === "Home" && e.ctrlKey) scrollTo(0);
     else if (e.key === "End" && e.ctrlKey) scrollTo(maxTop);
+    else if (e.key === "Escape" && searching) cancelSearch();
     else if (e.key === "f" && e.ctrlKey) focusSearch();
     else if (e.key === "F3") void find(!e.shiftKey);
     else return;
@@ -124,32 +190,49 @@
     scrollTo(topLine + (y < thumbTop ? -1 : 1) * Math.max(1, visible - 1));
   }
 
+  // Searches run in Rust; a newer search or a cancel stops the one before (it then reports `cancelled`).
+  let searchToken = 0;
   async function find(forward: boolean) {
-    if (!query || searching) return;
+    if (!query) return;
+    const mine = ++searchToken;
     searching = true;
     searchMessage = "Searching…";
     try {
       const from = match ?? { line: topLine, col: 0 };
-      let found = await api.largeSearch(id, query, from, forward, !match, matchCase);
+      let result = await api.largeSearch(id, query, from, forward, !match, matchCase, useRegex);
+      if (mine !== searchToken || result.cancelled) return;
       let wrapped = false;
-      if (!found) {
-        const start = forward ? { line: 0, col: 0 } : { line: total, col: 0 };
-        found = await api.largeSearch(id, query, start, forward, true, matchCase);
-        wrapped = !!found;
+      if (!result.found) {
+        const start = forward ? { line: 0, col: 0 } : { line: Number.MAX_SAFE_INTEGER, col: 0 };
+        result = await api.largeSearch(id, query, start, forward, true, matchCase, useRegex);
+        if (mine !== searchToken || result.cancelled) return;
+        wrapped = !!result.found;
       }
-      match = found;
+      match = result.found;
       markedLine = null;
-      if (found) {
-        reveal(found.line);
+      if (result.found) {
+        reveal(result.found.line);
         searchMessage = wrapped ? "Wrapped around" : "";
       } else {
         searchMessage = "No results";
       }
     } catch (e) {
-      searchMessage = String(e);
+      if (mine === searchToken) searchMessage = String(e);
     } finally {
-      searching = false;
+      if (mine === searchToken) searching = false;
     }
+  }
+
+  function cancelSearch() {
+    searchToken++;
+    searching = false;
+    searchMessage = "Search cancelled";
+    void api.largeSearchCancel(id);
+  }
+
+  function searchOptionChanged() {
+    match = null;
+    searchMessage = "";
   }
 
   function focusSearch() {
@@ -170,14 +253,11 @@
     return () => (workspace.largeApi = null);
   });
 
-  function split(text: string, lineIndex: number): [string, string, string] | null {
-    if (!match || match.line !== lineIndex) return null;
-    const chars = [...text];
-    return [
-      chars.slice(0, match.col).join(""),
-      chars.slice(match.col, match.col + match.len).join(""),
-      chars.slice(match.col + match.len).join(""),
-    ];
+  /** The spans of a line, with the search match marked. */
+  function lineSpans(line: ViewLine, lineIndex: number): Span[] {
+    if (!match || match.line !== lineIndex) return line.spans;
+    const from = unitOffset(line.text, match.col);
+    return markSpans(line.spans, from, from + unitOffset(line.text.slice(from), match.len));
   }
 </script>
 
@@ -188,18 +268,40 @@
       bind:value={query}
       oninput={() => (match = null)}
       onkeydown={(e) => {
-        if (e.key === "Enter") void find(!e.shiftKey);
-        else if (e.key === "Escape") viewport.focus();
-        else return;
+        if (e.key === "Enter" || e.key === "F3") void find(!e.shiftKey);
+        else if (e.key === "Escape") {
+          if (searching) cancelSearch();
+          else viewport.focus();
+        } else return;
         e.preventDefault();
       }}
       placeholder="Find (Enter / Shift+Enter)"
       spellcheck="false"
     />
-    <label title="Match case"><input type="checkbox" bind:checked={matchCase} onchange={() => (match = null)} /> Aa</label>
+    <button
+      class="toggle"
+      class:on={matchCase}
+      aria-pressed={matchCase}
+      title="Match case"
+      onclick={() => {
+        matchCase = !matchCase;
+        searchOptionChanged();
+      }}>Aa</button
+    >
+    <button
+      class="toggle"
+      class:on={useRegex}
+      aria-pressed={useRegex}
+      title="Regular expression"
+      onclick={() => {
+        useRegex = !useRegex;
+        searchOptionChanged();
+      }}>.*</button
+    >
     <button title="Previous (Shift+F3)" onclick={() => find(false)}>↑</button>
     <button title="Next (F3)" onclick={() => find(true)}>↓</button>
     <span class="message">{searchMessage}</span>
+    {#if searching}<button class="wide" title="Cancel the search (Esc)" onclick={cancelSearch}>Cancel</button>{/if}
     <span class="spacer"></span>
     <input
       class="goto"
@@ -214,6 +316,14 @@
       }}
     />
     {#if !done}<span class="message">Indexing… {total.toLocaleString()} lines</span>{/if}
+    <button
+      class="wide"
+      title={tab.size > workspace.largeEditLimit
+        ? "Too large for the editor"
+        : "Load the whole file into the editor (needs a lot of memory)"}
+      disabled={tab.size > workspace.largeEditLimit}
+      onclick={() => workspace.openLargeInEditor(tab)}>Open in editor…</button
+    >
   </div>
 
   <div class="body">
@@ -232,13 +342,14 @@
       <div class="lines">
         {#each lines as line, i (linesStart + i)}
           {@const index = linesStart + i}
-          {@const parts = split(line.text, index)}
+          {@const spans = lineSpans(line, index)}
           <div class="line" class:marked={index === markedLine}>
             <span class="number">{index + 1}</span>
             <span class="text"
-              >{#if parts}{parts[0]}<mark>{parts[1]}</mark>{parts[2]}{:else}{line.text}{/if}{#if line.truncated}<span
-                  class="truncated"
-                  title="Line shortened for display">…</span
+              >{#each spans as s}{#if s.mark}<mark class={s.cls}>{s.text}</mark>{:else if s.cls}<span class={s.cls}
+                    >{s.text}</span
+                  >{:else}{s.text}{/if}{/each}{#if line.truncated}<span class="truncated" title="Line shortened for display"
+                  >…</span
                 >{/if}</span
             >
           </div>
@@ -298,11 +409,20 @@
     width: 26px;
     height: 24px;
   }
-  .toolbar label {
-    display: flex;
-    align-items: center;
-    gap: 3px;
+  .toolbar button.wide {
+    width: auto;
+    padding: 0 8px;
+  }
+  .toolbar button.toggle {
     color: var(--fg-dim);
+  }
+  .toolbar button.toggle.on {
+    color: var(--fg);
+    border-color: var(--accent);
+    background: var(--active-line);
+  }
+  .toolbar button:disabled {
+    opacity: 0.5;
   }
   .message {
     color: var(--fg-dim);
