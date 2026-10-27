@@ -34,8 +34,6 @@ export interface Settings {
   languageToolVariants: string;
   /** Check every file type, not only Markdown and plain text. */
   languageToolAllFiles: boolean;
-  /** "dark" is Catppuccin Mocha. */
-  theme: "system" | "light" | "dark";
   /** Files above this size open in the read-only large file viewer. */
   largeFileThresholdMB: number;
   /** How Markdown files open: source only, side by side, or rendered only. */
@@ -70,7 +68,6 @@ export const defaultSettings: Settings = {
   languageToolLanguage: "auto",
   languageToolVariants: "en-US,de-DE",
   languageToolAllFiles: false,
-  theme: "dark",
   largeFileThresholdMB: 32,
   markdownPreview: "split",
   pasteImageFolder: "assets",

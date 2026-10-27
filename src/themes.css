@@ -196,6 +196,9 @@
   --special-char: var(--ctp-red);
   --dirty: var(--ctp-peach);
   --error: var(--ctp-red);
+  --lt-spelling: var(--ctp-red);
+  --lt-grammar: var(--ctp-blue);
+  --lt-style: var(--ctp-peach);
   --banner: color-mix(in srgb, var(--ctp-yellow) 12%, var(--ctp-mantle));
   --diff-del-bg: color-mix(in srgb, var(--ctp-red) 10%, transparent);
   --diff-del-text: color-mix(in srgb, var(--ctp-red) 30%, transparent);
