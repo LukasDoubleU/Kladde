@@ -23,6 +23,8 @@ export interface Settings {
   markdownPreview: "off" | "split" | "only";
   /** Folder (relative to the Markdown file) for images pasted from the clipboard. */
   pasteImageFolder: string;
+  /** Offer once at start to make Kladde selectable as the default editor in Windows. */
+  offerDefaultEditor: boolean;
 }
 
 export const defaultSettings: Settings = {
@@ -40,6 +42,7 @@ export const defaultSettings: Settings = {
   largeFileThresholdMB: 32,
   markdownPreview: "split",
   pasteImageFolder: "assets",
+  offerDefaultEditor: true,
 };
 
 export const SETTINGS_FILE = "settings.json";

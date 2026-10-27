@@ -46,6 +46,25 @@ export interface LargeMatch {
   len: number;
 }
 
+export interface IntegrationGroup {
+  id: string;
+  label: string;
+  extensions: string[];
+}
+
+export interface IntegrationStatus {
+  /** Anything of Kladde is registered with Windows (file types or the context menu entry). */
+  present: boolean;
+  /** Registered for this exe and the current extension list; false means it needs a refresh. */
+  current: boolean;
+  /** Ids of the registered file type groups. */
+  groups: string[];
+  contextMenu: boolean;
+  /** Show the start-up offer: nothing registered yet and not dismissed. */
+  offer: boolean;
+  available: IntegrationGroup[];
+}
+
 export const api = {
   initialPaths: () => invoke<string[]>("initial_paths"),
   readFile: (path: string, encoding?: string) => invoke<FileContent>("read_file", { path, encoding }),
@@ -81,4 +100,11 @@ export const api = {
   configFile: (name: string, defaultContent: string) =>
     invoke<string>("config_file", { name, default: defaultContent }),
   configDir: () => invoke<string>("config_dir"),
+
+  integrationStatus: () => invoke<IntegrationStatus>("integration_status"),
+  integrationRegister: (groups: string[], contextMenu: boolean) =>
+    invoke<void>("integration_register", { groups, contextMenu }),
+  integrationOpenDefaultApps: () => invoke<void>("integration_open_default_apps"),
+  integrationUnregister: () => invoke<void>("integration_unregister"),
+  integrationDismissOffer: () => invoke<void>("integration_dismiss_offer"),
 };

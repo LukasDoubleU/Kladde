@@ -8,6 +8,7 @@
   import { revealItemInDir } from "@tauri-apps/plugin-opener";
   import { onMount, untrack } from "svelte";
   import Compare from "./components/Compare.svelte";
+  import DefaultEditor from "./components/DefaultEditor.svelte";
   import Dialog from "./components/Dialog.svelte";
   import ImageView from "./components/ImageView.svelte";
   import LargeFileView from "./components/LargeFileView.svelte";
@@ -27,6 +28,7 @@
   } from "./lib/actions";
   import { api, type Eol } from "./lib/api";
   import { writeText } from "./lib/clipboard";
+  import { integration } from "./lib/integration.svelte";
   import { languageNames } from "./lib/languages";
   import { dirname } from "./lib/markdown";
   import { defaultSettingsJson, loadSettings, settings, SETTINGS_FILE } from "./lib/settings.svelte";
@@ -172,6 +174,21 @@
       enabled: textTab,
     },
     {
+      id: "integration.setDefault",
+      label: "Set Kladde as default editor…",
+      run: () => integration.openSetup(),
+    },
+    {
+      id: "integration.contextMenu",
+      label: "Toggle “Edit with Kladde” in the Explorer context menu",
+      run: () => integration.toggleContextMenu(),
+    },
+    {
+      id: "integration.remove",
+      label: "Remove Kladde from Windows file associations",
+      run: () => integration.remove(),
+    },
+    {
       id: "settings.open",
       label: "Open settings (settings.json)",
       run: async () => workspace.openPath(await api.configFile(SETTINGS_FILE, defaultSettingsJson())),
@@ -252,7 +269,7 @@
   const FIND_KEYS = new Set(["ctrl+f", "ctrl+g", "f3"]);
 
   function onKeydown(e: KeyboardEvent) {
-    if (workspace.picker || workspace.dialog) return;
+    if (workspace.picker || workspace.dialog || integration.setup) return;
     if (handleKeydown(e)) return;
     const combo = [e.ctrlKey && "ctrl", e.shiftKey && "shift", e.key.length === 1 ? e.key.toLowerCase() : e.key]
       .filter(Boolean)
@@ -344,6 +361,7 @@
       await appWindow.show();
       await appWindow.setFocus();
       if (errors.length) workspace.showNotice("error", errors.join(" "));
+      void integration.check();
 
       cleanups.push(await listen<string[]>("open-paths", (e) => void workspace.openPaths(e.payload)));
       cleanups.push(
@@ -387,6 +405,7 @@
 
 <div class="app">
   <TabBar />
+  <DefaultEditor />
 
   {#if tab?.external}
     <div class="banner">
