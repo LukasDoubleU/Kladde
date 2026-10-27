@@ -62,10 +62,11 @@ cd src-tauri && cargo test
 ## Testing
 
 - `cargo test` covers file I/O and the large file viewer; `npm run check` type-checks the frontend.
-- To check the running app, start the debug build with
-  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333` and drive the WebView through the
-  Chrome DevTools Protocol (`Input.dispatchKeyEvent`, `Input.insertText`, `Runtime.evaluate`,
-  `Page.captureScreenshot`). Never send keystrokes to the desktop. Start with an empty app data folder
-  (`%APPDATA%\io.github.lukasdoubleu.kladde`) and remove it afterwards.
+- End-to-end tests (`npm run test:e2e`, after `npx tauri build --debug --no-bundle`) use
+  `tests/e2e/kladde.mjs`: it starts the app with an isolated profile (`KLADDE_DATA_DIR`, own WebView2 data)
+  and drives it through the Chrome DevTools Protocol (`key`, `type`, `eval`, `state`, `screenshot`, `close`,
+  `kill`). Use it for every check of the running app, with a DevTools port of your own when several runs
+  happen in parallel. Never send keystrokes to the desktop and never touch the normal profile in
+  `%APPDATA%\io.github.lukasdoubleu.kladde`.
 - Changes to saving, backups or the session must be checked by killing the process while there are unsaved
   changes and verifying that everything comes back after a restart.
