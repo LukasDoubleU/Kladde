@@ -25,6 +25,8 @@ export interface Settings {
   pasteImageFolder: string;
   /** Offer once at start to make Kladde selectable as the default editor in Windows. */
   offerDefaultEditor: boolean;
+  /** Look for a newer version on GitHub a few seconds after start, at most once a day. */
+  checkForUpdates: boolean;
 }
 
 export const defaultSettings: Settings = {
@@ -43,6 +45,7 @@ export const defaultSettings: Settings = {
   markdownPreview: "split",
   pasteImageFolder: "assets",
   offerDefaultEditor: true,
+  checkForUpdates: true,
 };
 
 export const SETTINGS_FILE = "settings.json";

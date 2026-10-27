@@ -16,6 +16,7 @@
   import Preview from "./components/Preview.svelte";
   import StatusBar from "./components/StatusBar.svelte";
   import TabBar from "./components/TabBar.svelte";
+  import UpdateBanner from "./components/UpdateBanner.svelte";
   import {
     allActions,
     defaultKeybindingsJson,
@@ -32,6 +33,7 @@
   import { languageNames } from "./lib/languages";
   import { dirname } from "./lib/markdown";
   import { defaultSettingsJson, loadSettings, settings, SETTINGS_FILE } from "./lib/settings.svelte";
+  import { updates } from "./lib/updates.svelte";
   import { basename, ENCODINGS, workspace } from "./lib/workspace.svelte";
 
   const appWindow = getCurrentWindow();
@@ -188,6 +190,7 @@
       label: "Remove Kladde from Windows file associations",
       run: () => integration.remove(),
     },
+    { id: "update.check", label: "Check for updates", run: () => updates.check(true) },
     {
       id: "settings.open",
       label: "Open settings (settings.json)",
@@ -362,6 +365,7 @@
       await appWindow.setFocus();
       if (errors.length) workspace.showNotice("error", errors.join(" "));
       void integration.check();
+      updates.scheduleCheck();
 
       cleanups.push(await listen<string[]>("open-paths", (e) => void workspace.openPaths(e.payload)));
       cleanups.push(
@@ -406,6 +410,7 @@
 <div class="app">
   <TabBar />
   <DefaultEditor />
+  <UpdateBanner />
 
   {#if tab?.external}
     <div class="banner">

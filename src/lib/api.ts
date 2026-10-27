@@ -1,5 +1,5 @@
 // Typed wrappers around the Rust commands in src-tauri/src/lib.rs.
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 
 export type Eol = "CRLF" | "LF" | "CR";
 
@@ -65,6 +65,18 @@ export interface IntegrationStatus {
   available: IntegrationGroup[];
 }
 
+export interface UpdateInfo {
+  version: string;
+  /** Release notes from the update manifest, if it has any. */
+  notes: string | null;
+  /** A portable exe cannot be updated in place: it is offered the download page instead. */
+  portable: boolean;
+}
+
+export type UpdateProgress =
+  | { event: "downloading"; downloaded: number; total: number | null }
+  | { event: "installing" };
+
 export const api = {
   initialPaths: () => invoke<string[]>("initial_paths"),
   readFile: (path: string, encoding?: string) => invoke<FileContent>("read_file", { path, encoding }),
@@ -107,4 +119,13 @@ export const api = {
   integrationOpenDefaultApps: () => invoke<void>("integration_open_default_apps"),
   integrationUnregister: () => invoke<void>("integration_unregister"),
   integrationDismissOffer: () => invoke<void>("integration_dismiss_offer"),
+
+  /** manual: always ask; otherwise the check is skipped when one succeeded in the last 24 hours. */
+  updateCheck: (manual: boolean) => invoke<UpdateInfo | null>("update_check", { manual }),
+  /** Downloads and installs; the app exits and restarts through the installer when this succeeds. */
+  updateInstall: (onEvent: (e: UpdateProgress) => void) => {
+    const channel = new Channel<UpdateProgress>();
+    channel.onmessage = onEvent;
+    return invoke<void>("update_install", { onEvent: channel });
+  },
 };
