@@ -85,6 +85,7 @@
     {
       id: "file.reveal",
       label: "Reveal in Explorer",
+      keys: ["Alt+Shift+W"],
       run: () => revealItemInDir(workspace.active!.path!),
       enabled: () => !!workspace.active?.path,
     },

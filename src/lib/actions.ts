@@ -93,9 +93,19 @@ export function shortcutLabel(id: string): string {
   const action = actions.get(id);
   const first = action ? keysOf(action)[0] : undefined;
   if (!first) return "";
+  const names: Record<string, string> = {
+    plus: "+",
+    minus: "-",
+    arrowleft: "Left",
+    arrowright: "Right",
+    arrowup: "Up",
+    arrowdown: "Down",
+    pageup: "PageUp",
+    pagedown: "PageDown",
+  };
   return normalizeCombo(first)
     .split("+")
-    .map((p) => (p === "plus" ? "+" : p === "minus" ? "-" : p.charAt(0).toUpperCase() + p.slice(1)))
+    .map((p) => names[p] ?? p.charAt(0).toUpperCase() + p.slice(1))
     .join("+");
 }
 
