@@ -33,6 +33,11 @@ employer-related out of code, commits, issues and release notes.
   - `markdown.ts`: preview rendering. `mermaid.ts`: diagrams (placeholders drawn by `Preview.svelte`, SVGs
     cached by source and theme). `math.ts`: KaTeX rules. Mermaid and KaTeX are dynamic imports: never import
     them statically, so the main bundle stays small. `format.ts`: JSON formatter. `settings.svelte.ts`: settings.
+  - `grammar.ts`: LanguageTool checking through `@codemirror/lint` (lazy import, only active while grammar
+    checking is on); `grammar-text.ts`: its pure part (Markdown masking, paragraphs, request, offset mapping),
+    unit-tested. `src-tauri/src/languagetool.rs` makes the HTTP request (the CSP keeps the page from doing it).
+    Nothing is sent unless a server is configured and checking is on; the public server needs a one-time
+    consent (localStorage). Never import `grammar.ts` or `@codemirror/lint` statically.
   - `format-xml.ts`: XML formatter. `formatters.ts`: picks a formatter by language name and lazy-loads
     Prettier and sql-formatter.
   - `linehighlight.ts`: highlights the visible lines of the large file viewer with the editor's grammars.
@@ -120,12 +125,17 @@ cd src-tauri && cargo test
 - `cargo test` covers file I/O and the large file viewer (UTF-16, regex and Unicode search, incremental
   index); `tests/e2e/large.test.mjs` drives the viewer with a lowered `largeFileThresholdMB` in the isolated
   profile's `settings.json`; `npm run check` type-checks the frontend.
+- `npm run test:unit` (Node's test runner, imports the TypeScript sources directly) covers the formatters and the
+  text side of grammar checking. Node strips types only: no parameter properties or enums in those files.
+- `cargo test` covers file I/O, the large file viewer and the LanguageTool client (against a local socket); `npm run check` type-checks the frontend.
 - End-to-end tests (`npm run test:e2e`, after `npx tauri build --debug --no-bundle`) use
   `tests/e2e/kladde.mjs`: it starts the app with an isolated profile (`KLADDE_DATA_DIR`, own WebView2 data)
   and drives it through the Chrome DevTools Protocol (`key`, `type`, `eval`, `state`, `screenshot`, `close`,
   `kill`). Use it for every check of the running app, with a DevTools port of your own when several runs
   happen in parallel. Never send keystrokes to the desktop and never touch the normal profile in
   `%APPDATA%\io.github.lukasdoubleu.kladde`.
+- `tests/e2e/grammar.test.mjs` runs a fake LanguageTool server in the test (node http): never point tests at the
+  public API.
 - `tests/e2e/hot-exit.test.mjs` guards the zero-data-loss promise (crash, close, continuous typing, saving,
   backup versions) and runs in CI (`e2e` job). Backups are throttled (`Workspace.scheduleSession`: first change
   arms a timer, later ones leave it alone), never debounced: keep it that way.

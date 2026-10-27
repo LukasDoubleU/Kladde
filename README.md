@@ -38,6 +38,7 @@ starts in a fraction of a second, and never loses what you typed.
   LESS, HTML, Vue, Markdown and YAML (Prettier). With a selection only those lines are formatted; indentation
   follows the tab settings. The formatters load on first use, so they cost nothing at startup.
 - Optional spell checking with the Windows dictionaries.
+- Optional grammar and style checking with [LanguageTool](https://languagetool.org) (see below).
 
 **Compare**
 - Side-by-side diff of two open tabs, a tab and its file on disk, or a tab and the clipboard
@@ -202,6 +203,33 @@ listed keeps them. Every editing command is a command, so unbinding one really f
 
 Entries that only repeat a command's built-in default are ignored while a preset is selected, so a
 `keybindings.json` that lists every default (as older versions created) does not pin them.
+## Grammar checking
+
+Kladde can check grammar, style and spelling with [LanguageTool](https://languagetool.org). It is off until
+you set it up, and nothing is sent anywhere before you turn it on.
+
+1. Set `languageToolServer` in `settings.json`:
+   - `http://localhost:8081` for a LanguageTool server on your machine (the HTTP server from the
+     LanguageTool download; **nothing leaves your machine**), or
+   - `https://api.languagetool.org` for the public API. Your text is then **sent to a third party**: Kladde
+     asks for confirmation once, and the public API limits requests (about 20 a minute), so long documents
+     are checked in pieces.
+2. Run **Toggle grammar checking (LanguageTool)** from the command palette. The state is remembered.
+
+Findings are underlined (red wavy: spelling, blue wavy: grammar, orange dotted: style). Hover one to read
+the message and click a suggestion to apply it; it is a normal edit you can undo. **Ignore word** / **Ignore
+rule** hides a finding until Kladde restarts. The status bar shows the number of findings.
+
+- Only Markdown and plain text are checked, unless `languageToolAllFiles` is on. In Markdown, front matter,
+  code, math, links' targets, HTML and URLs are left out.
+- Kladde checks the paragraphs around the visible part of the document, about a second after you stop
+  typing or scrolling. Unchanged paragraphs are remembered, so only edited ones are sent again.
+- The language is detected automatically. Pick one for a file with **Set grammar checking language…**
+  (remembered with the session), or put `lang: de` in the front matter of a Markdown file.
+- If the server is unreachable or refuses, Kladde reports it once, keeps your text as is and tries again
+  later with growing pauses.
+- It works next to the Windows spell checker; turn that off with **Toggle spell checking** if the double
+  underlines bother you.
 
 ## Settings
 
@@ -218,6 +246,11 @@ Entries that only repeat a command's built-in default are ignored while a preset
 | `tabSize`, `insertSpaces` | `4`, `true` | |
 | `wordWrap`, `lineNumbers`, `highlightActiveLine` | `false`, `true`, `true` | |
 | `spellCheck` | `false` | can also be toggled from the command palette |
+| `grammarCheck` | `false` | grammar checking at start; needs `languageToolServer`; toggled from the command palette |
+| `languageToolServer` | `""` | address of a LanguageTool server, e.g. `http://localhost:8081`; empty means not set up |
+| `languageToolLanguage` | `auto` | `auto` detects the language, or a code such as `de-DE` or `en-GB` |
+| `languageToolVariants` | `en-US,de-DE` | variants preferred when the language is detected (`en` can be US, UK, …) |
+| `languageToolAllFiles` | `false` | check every text file, not only Markdown and plain text |
 | `markdownPreview` | `split` | how Markdown files open: `split`, `only` or `off` |
 | `pasteImageFolder` | `assets` | folder for pasted images, relative to the Markdown file |
 | `largeFileThresholdMB` | `32` | larger files open in the read-only viewer |
