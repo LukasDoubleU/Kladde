@@ -21,6 +21,13 @@ test("opens files and creates tabs", async () => {
     state = await app.state();
     assert.equal(state.active, "new 1");
     assert.deepEqual(state.dirty, ["new 1"]);
+
+    // Ctrl+D deletes the current line.
+    await app.key("Enter");
+    await app.type("second line");
+    await app.key("Ctrl+D");
+    state = await app.state();
+    assert.equal(state.text.trim(), "scratch");
   } finally {
     await app.kill();
   }

@@ -77,6 +77,7 @@ so SmartScreen may ask for confirmation on the first start. You can also [build 
 | `F5` | Reload the file from disk |
 | `Ctrl+F` / `Ctrl+H` / `F3` | Find, replace, find next |
 | `Ctrl+G` | Go to line |
+| `Ctrl+D` | Delete the line (or all lines of the selection) |
 | `Ctrl+Shift+V` | Markdown preview: side by side, preview only, off |
 | `Shift+Alt+F` | Format JSON |
 | `Alt+Z` | Toggle word wrap |

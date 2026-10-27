@@ -1,5 +1,6 @@
 <script lang="ts">
   import { capturePointer } from "./lib/pointer";
+  import { deleteLine } from "@codemirror/commands";
   import { openSearchPanel } from "@codemirror/search";
   import { listen } from "@tauri-apps/api/event";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -114,6 +115,13 @@
     { id: "view.zoomOut", label: "Zoom out", keys: ["Ctrl+Minus"], run: () => workspace.zoom(-1) },
     { id: "view.zoomReset", label: "Reset zoom", keys: ["Ctrl+0"], run: () => workspace.zoom(null) },
     { id: "edit.gotoLine", label: "Go to line…", keys: ["Ctrl+G"], run: () => workspace.gotoLine() },
+    {
+      id: "edit.deleteLine",
+      label: "Delete line",
+      keys: ["Ctrl+D"],
+      run: () => workspace.view && deleteLine(workspace.view),
+      enabled: textTab,
+    },
     {
       id: "edit.replace",
       label: "Find and replace",
