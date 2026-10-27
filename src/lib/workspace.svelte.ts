@@ -107,6 +107,23 @@ interface Session {
   tabs: SessionTab[];
 }
 
+function ago(ms: number): string {
+  const seconds = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  if (seconds < 90) return "a minute ago";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 90) return `${minutes} minutes ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 36) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.round(hours / 24);
+  return `${days} days ago`;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} bytes`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
 export const ENCODINGS: PickItem[] = [
   { id: "UTF-8", label: "UTF-8" },
   { id: "UTF-8 BOM", label: "UTF-8 with BOM" },
@@ -967,6 +984,37 @@ class Workspace {
     };
     await api.sessionSave(JSON.stringify(session));
     await api.backupPrune(keep);
+  }
+
+  /** Offers the older backup versions of the active tab and opens the chosen one in a new tab. */
+  async restoreBackupVersion() {
+    const tab = this.active;
+    if (!tab || tab.kind !== "text") return;
+    const versions = await api.backupVersions(tab.id);
+    if (versions.length === 0) {
+      this.showNotice("info", "There are no older backups of this tab yet. Versions are kept while a tab has unsaved changes.");
+      return;
+    }
+    const items = versions.map((v) => ({ id: String(v.n), label: ago(v.mtime), detail: formatBytes(v.size) }));
+    const picked = await this.pick({ placeholder: "Restore an older backup (opens in a new tab)", items });
+    if (!picked || typeof picked === "string") return;
+    const text = await api.backupReadVersion(tab.id, Number(picked.id));
+    if (text === null) {
+      this.showNotice("error", "That backup is gone.");
+      return;
+    }
+    // Never overwrite the current tab: the old text opens next to it.
+    const restored = this.textTab({
+      title: this.untitledTitle(),
+      encoding: tab.encoding,
+      bom: tab.bom,
+      eol: tab.eol,
+      language: tab.language,
+      dirty: text.length > 0,
+    });
+    const state = this.newState(text);
+    this.addTab(restored, { state, saved: Text.empty, metaDirty: false, scrollTop: 0, version: 0, backedUp: -1 });
+    void this.loadLanguage(restored);
   }
 
   async restoreSession() {

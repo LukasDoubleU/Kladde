@@ -136,6 +136,12 @@
     { id: "encoding.select", label: "Change encoding…", run: selectEncoding, enabled: textTab },
     { id: "eol.select", label: "Change line endings…", run: selectEol, enabled: textTab },
     {
+      id: "file.restoreBackup",
+      label: "Restore an older backup of this tab…",
+      run: () => workspace.restoreBackupVersion(),
+      enabled: textTab,
+    },
+    {
       id: "settings.open",
       label: "Open settings (settings.json)",
       run: async () => workspace.openPath(await api.configFile(SETTINGS_FILE, defaultSettingsJson())),
@@ -323,7 +329,7 @@
       cleanups.push(
         await appWindow.onFocusChanged(({ payload: focused }) => {
           if (focused) void workspace.checkExternalChanges();
-          // Back up unsaved text right away instead of waiting for the debounce.
+          // Back up unsaved text right away instead of waiting for the throttle timer.
           else void workspace.saveSession();
         }),
       );

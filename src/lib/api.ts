@@ -21,6 +21,13 @@ export interface FileStat {
   size: number;
 }
 
+export interface BackupVersion {
+  /** 1 is the newest older version. */
+  n: number;
+  mtime: number;
+  size: number;
+}
+
 export interface LargeOpened {
   id: number;
   size: number;
@@ -66,6 +73,8 @@ export const api = {
   sessionSave: (json: string) => invoke<void>("session_save", { json }),
   backupWrite: (id: string, text: string) => invoke<void>("backup_write", { id, text }),
   backupRead: (id: string) => invoke<string | null>("backup_read", { id }),
+  backupVersions: (id: string) => invoke<BackupVersion[]>("backup_versions", { id }),
+  backupReadVersion: (id: string, n: number) => invoke<string | null>("backup_read_version", { id, n }),
   backupPrune: (keep: string[]) => invoke<void>("backup_prune", { keep }),
 
   configRead: (name: string) => invoke<string | null>("config_read", { name }),
