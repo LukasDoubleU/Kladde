@@ -63,6 +63,24 @@
     </button>
   {/if}
   {#if tab?.kind === "text"}
+    {#if workspace.grammar.state !== "off"}
+      {@const g = workspace.grammar}
+      <button
+        class:warn={g.state === "error" || g.state === "limited"}
+        title={g.message || "Grammar checking with LanguageTool: click to set the language"}
+        onclick={() => runAction("view.setGrammarLanguage")}
+      >
+        {g.state === "checking"
+          ? "Grammar: checking…"
+          : g.state === "error"
+            ? "Grammar: unavailable"
+            : g.state === "limited"
+              ? "Grammar: waiting"
+              : g.count === 0
+                ? "Grammar: no issues"
+                : `Grammar: ${g.count} ${g.count === 1 ? "issue" : "issues"}`}
+      </button>
+    {/if}
     {#if workspace.previewAvailable(tab)}
       <button title="Toggle preview (Ctrl+Shift+V)" onclick={() => workspace.togglePreview()}>
         Preview: {tab.preview === "off" ? "off" : tab.preview === "split" ? "side by side" : "only"}

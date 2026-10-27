@@ -130,6 +130,10 @@ export const api = {
   backupReadVersion: (id: string, n: number) => invoke<string | null>("backup_read_version", { id, n }),
   backupPrune: (keep: string[]) => invoke<void>("backup_prune", { keep }),
 
+  /** One LanguageTool check; resolves to the response JSON, rejects with { kind, status?, retryAfter?, message }. */
+  languageToolCheck: (server: string, data: string, language: string, variants: string) =>
+    invoke<string>("languagetool_check", { server, data, language, variants }),
+
   configRead: (name: string) => invoke<string | null>("config_read", { name }),
   configFile: (name: string, defaultContent: string) =>
     invoke<string>("config_file", { name, default: defaultContent }),

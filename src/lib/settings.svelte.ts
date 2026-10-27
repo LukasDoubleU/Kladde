@@ -24,6 +24,18 @@ export interface Settings {
   themeDark: Flavor;
   /** Catppuccin accent color: selections, caret, focus rings, buttons. */
   accent: Accent;
+  /** Grammar checking with LanguageTool at start; toggled per session with the command palette. */
+  grammarCheck: boolean;
+  /** Address of a LanguageTool server; empty means grammar checking is not set up. */
+  languageToolServer: string;
+  /** "auto" detects the language per paragraph, or a code such as "de-DE". */
+  languageToolLanguage: string;
+  /** Variants LanguageTool should prefer when it detects the language itself. */
+  languageToolVariants: string;
+  /** Check every file type, not only Markdown and plain text. */
+  languageToolAllFiles: boolean;
+  /** "dark" is Catppuccin Mocha. */
+  theme: "system" | "light" | "dark";
   /** Files above this size open in the read-only large file viewer. */
   largeFileThresholdMB: number;
   /** How Markdown files open: source only, side by side, or rendered only. */
@@ -53,6 +65,12 @@ export const defaultSettings: Settings = {
   themeLight: "latte",
   themeDark: "mocha",
   accent: "rosewater",
+  grammarCheck: false,
+  languageToolServer: "",
+  languageToolLanguage: "auto",
+  languageToolVariants: "en-US,de-DE",
+  languageToolAllFiles: false,
+  theme: "dark",
   largeFileThresholdMB: 32,
   markdownPreview: "split",
   pasteImageFolder: "assets",

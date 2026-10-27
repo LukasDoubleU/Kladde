@@ -8,11 +8,13 @@ import { EditorSelection, type EditorState, type StateEffect, Text } from "@code
 import { EditorView, highlightActiveLine, type ViewUpdate } from "@codemirror/view";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { runAction } from "./actions";
 import { api, type Eol, type FileContent } from "./api";
 import {
   activeLine,
   createEditorState,
   gutterExtension,
+  grammar,
   gutters,
   indentation,
   indentationExtension,
@@ -23,6 +25,8 @@ import {
   wrap,
 } from "./editor";
 import { minifyJson } from "./format";
+import type { GrammarHost } from "./grammar";
+import { frontMatterLanguage, isPublicServer, LANGUAGES, normalizeLanguage } from "./grammar-text";
 import { formatterFor, formattableLanguages, formatWith, mapCursor, type Formatter } from "./formatters";
 import { allLanguages, detectLanguage, extensionOf, findLanguage, IMAGE_EXTENSIONS, isMarkdown } from "./languages";
 import { dirname, renderMarkdown, renderSvg, resolvePath, setLanguageLoadedHandler } from "./markdown";
@@ -105,6 +109,8 @@ interface SessionTab {
   eol: Eol;
   language: string | null;
   preview: PreviewMode;
+  /** A LanguageTool language chosen for this tab; absent means the setting (or the front matter). */
+  grammarLanguage?: string;
   hasBackup: boolean;
   cursor: number;
   scrollTop: number;
@@ -115,6 +121,7 @@ interface Session {
   activeId: string | null;
   wordWrap: boolean;
   spellCheck?: boolean;
+  grammarCheck?: boolean;
   zoom: number;
   tabs: SessionTab[];
 }
@@ -206,13 +213,18 @@ function blobToBase64(blob: Blob): Promise<string> {
   });
 }
 
+/** localStorage key: the user agreed to send text to the public LanguageTool server. */
+const PUBLIC_SERVER_CONSENT = "kladde.languageToolPublicServer";
+
 class Workspace {
   tabs: Tab[] = $state([]);
   activeId: string | null = $state(null);
   cursor = $state({ line: 1, col: 1, selected: 0, selections: 1, lines: 1 });
   largeStatus = $state({ lines: 0, done: false });
   previewHtml = $state("");
-  ui = $state({ wordWrap: false, spellCheck: false, zoom: 0 });
+  ui = $state({ wordWrap: false, spellCheck: false, grammarCheck: false, zoom: 0 });
+  /** Grammar checking of the shown tab, for the status bar. "off": not running for this tab. */
+  grammar = $state({ state: "off" as "off" | "checking" | "idle" | "limited" | "error", count: 0, message: "" });
   notice: { kind: "info" | "error"; text: string } | null = $state(null);
   picker: PickerRequest | null = $state(null);
   dialog: DialogRequest | null = $state(null);
@@ -227,6 +239,11 @@ class Workspace {
   onConfigSaved: (path: string) => void = () => {};
 
   private runtime = new Map<string, Runtime>();
+  /** The LanguageTool language per tab id, where it differs from the setting. */
+  private grammarLanguages = new Map<string, string>();
+  private grammarModule: typeof import("./grammar") | null = null;
+  private grammarKey = "";
+  private grammarConsent: Promise<boolean> | null = null;
   private compareData = new Map<string, { left: CompareSide; right: CompareSide }>();
   private compareHandles = new Map<string, CompareHandleLike>();
   private closedPaths: string[] = [];
@@ -329,6 +346,144 @@ class Workspace {
         spelling.reconfigure(spellCheckExtension(this.ui.spellCheck)),
       ],
     });
+    void this.applyGrammar();
+  }
+
+  // ---------------------------------------------------------------- grammar checking
+
+  /** Markdown and plain text, or every text file with the languageToolAllFiles setting. */
+  private grammarEligible(tab: Tab | undefined): boolean {
+    return !!tab && tab.kind === "text" && (settings.languageToolAllFiles || tab.language === null || isMarkdown(tab.language));
+  }
+
+  private grammarHost: GrammarHost = {
+    options: (view) => {
+      const tab = this.active;
+      const server = settings.languageToolServer.trim();
+      if (!tab || view !== this.view || !server || !this.ui.grammarCheck || !this.grammarEligible(tab)) return null;
+      // The public server only ever gets text after the user agreed (see confirmGrammarServer).
+      if (isPublicServer(server) && localStorage.getItem(PUBLIC_SERVER_CONSENT) !== "1") return null;
+      const markdown = isMarkdown(tab.language);
+      const language =
+        this.grammarLanguages.get(tab.id) ??
+        (markdown ? frontMatterLanguage(view.state.sliceDoc(0, 4000)) : null) ??
+        normalizeLanguage(settings.languageToolLanguage) ??
+        "auto";
+      return { markdown, language, server, variants: settings.languageToolVariants.trim() };
+    },
+    status: (status) => {
+      this.grammar = { state: status.state, count: status.count, message: status.message ?? "" };
+    },
+    failed: (message) => this.showNotice("error", message),
+  };
+
+  /** The one-time warning before text goes to the public LanguageTool server. */
+  private confirmGrammarServer(server: string): Promise<boolean> {
+    if (!isPublicServer(server) || localStorage.getItem(PUBLIC_SERVER_CONSENT) === "1") return Promise.resolve(true);
+    this.grammarConsent ??= this.ask(
+      "Send your text to the public LanguageTool server?",
+      [
+        { id: "send", label: "Send text", primary: true },
+        { id: "cancel", label: "Cancel" },
+      ],
+      "Grammar checking sends the paragraphs around the visible part of the document to " +
+        "api.languagetool.org, a server run by a third party. Do not use it for confidential text. " +
+        "For a setup where nothing leaves your machine, run LanguageTool locally and set " +
+        "languageToolServer to http://localhost:8081.",
+    ).then((choice) => {
+      this.grammarConsent = null;
+      if (choice === "send") localStorage.setItem(PUBLIC_SERVER_CONSENT, "1");
+      return choice === "send";
+    });
+    return this.grammarConsent;
+  }
+
+  /** Brings the editor in line with the grammar settings and the shown tab; loads LanguageTool support on first use. */
+  private async applyGrammar() {
+    const view = this.view;
+    const tab = this.active;
+    if (!view) return;
+    const server = settings.languageToolServer.trim();
+    if (!this.ui.grammarCheck || !server || !this.grammarEligible(tab)) {
+      if (this.grammarModule) view.dispatch({ effects: grammar.reconfigure([]) });
+      this.grammar = { state: "off", count: 0, message: "" };
+      return;
+    }
+    if (!(await this.confirmGrammarServer(server))) {
+      this.ui.grammarCheck = false;
+      this.scheduleSession();
+      void this.applyGrammar();
+      return;
+    }
+    const module = (this.grammarModule ??= await import("./grammar"));
+    if (this.view !== view || this.active !== tab || !this.ui.grammarCheck) return;
+    module.configureGrammar(this.grammarHost);
+    const key = [server, settings.languageToolLanguage, settings.languageToolVariants].join("\n");
+    const changed = key !== this.grammarKey;
+    if (changed) {
+      this.grammarKey = key;
+      module.resetGrammar();
+    }
+    view.dispatch({ effects: grammar.reconfigure(module.grammarExtension) });
+    this.grammar = { state: "idle", count: module.grammarCount(view), message: "" };
+    if (changed) module.requestRefresh(view);
+  }
+
+  async toggleGrammarCheck() {
+    if (this.ui.grammarCheck) {
+      this.ui.grammarCheck = false;
+      this.applyViewOptions();
+      this.showNotice("info", "Grammar checking off.");
+      this.scheduleSession();
+      return;
+    }
+    if (!settings.languageToolServer.trim()) {
+      const choice = await this.ask(
+        "Grammar checking needs a LanguageTool server.",
+        [
+          { id: "settings", label: "Open settings", primary: true },
+          { id: "cancel", label: "Cancel" },
+        ],
+        "Set languageToolServer in settings.json: http://localhost:8081 for a local server (nothing leaves " +
+          "your machine) or https://api.languagetool.org for the public API (your text is sent to a third " +
+          "party). Then run this command again.",
+      );
+      if (choice === "settings") runAction("settings.open");
+      return;
+    }
+    this.ui.grammarCheck = true;
+    await this.applyGrammar();
+    if (!this.ui.grammarCheck) return;
+    this.scheduleSession();
+    this.showNotice(
+      "info",
+      this.grammarEligible(this.active)
+        ? "Grammar checking on."
+        : "Grammar checking on. It checks Markdown and plain text; set languageToolAllFiles for other files.",
+    );
+  }
+
+  /** Picks the LanguageTool language of the shown tab (otherwise: the setting, or the front matter of Markdown). */
+  async setGrammarLanguage() {
+    const tab = this.active;
+    if (!tab || tab.kind !== "text") return;
+    const current = this.grammarLanguages.get(tab.id) ?? "";
+    const items = [
+      { id: "", label: `Default (${settings.languageToolLanguage})`, detail: current === "" ? "current" : "" },
+      ...LANGUAGES.map((l) => ({ id: l.id, label: l.label, detail: l.id === current ? "current" : l.id })),
+    ];
+    const picked = await this.pick({ placeholder: "Grammar checking language (or type a code such as de-DE)", items, freeText: true });
+    if (picked === null || this.active !== tab) return;
+    const id = typeof picked === "string" ? normalizeLanguage(picked) : picked.id;
+    if (id === null) {
+      this.showNotice("error", `"${picked}" is not a language code. Use a code such as en-US or de-DE.`);
+      return;
+    }
+    if (id === "") this.grammarLanguages.delete(tab.id);
+    else this.grammarLanguages.set(tab.id, id);
+    this.scheduleSession();
+    if (this.ui.grammarCheck && this.view) this.grammarModule?.requestRefresh(this.view);
+    else this.showNotice("info", "Grammar checking is off; the language applies once you turn it on.");
   }
 
   private reconfigure(tab: Tab, effects: StateEffect<unknown> | StateEffect<unknown>[]) {
@@ -376,6 +531,7 @@ class Workspace {
     if (isMarkdown(name) && tab.preview === "off") tab.preview = settings.markdownPreview;
     if (!this.previewAvailable(tab)) tab.preview = "off";
     void this.loadLanguage(tab);
+    void this.applyGrammar();
     this.renderPreview();
     this.scheduleSession();
   }
@@ -1238,6 +1394,7 @@ class Workspace {
         eol: tab.eol,
         language: tab.language,
         preview: tab.preview,
+        grammarLanguage: this.grammarLanguages.get(tab.id),
         hasBackup: needsBackup,
         cursor: state?.selection.main.head ?? 0,
         scrollTop: rt?.scrollTop ?? 0,
@@ -1248,6 +1405,7 @@ class Workspace {
       activeId: this.activeId,
       wordWrap: this.ui.wordWrap,
       spellCheck: this.ui.spellCheck,
+      grammarCheck: this.ui.grammarCheck,
       zoom: this.ui.zoom,
       tabs,
     };
@@ -1289,6 +1447,7 @@ class Workspace {
   async restoreSession() {
     this.ui.wordWrap = settings.wordWrap;
     this.ui.spellCheck = settings.spellCheck;
+    this.ui.grammarCheck = settings.grammarCheck;
     let session: Session | null = null;
     try {
       const json = await api.sessionLoad();
@@ -1299,6 +1458,7 @@ class Workspace {
     if (session) {
       this.ui.wordWrap = session.wordWrap;
       this.ui.spellCheck = session.spellCheck ?? settings.spellCheck;
+      this.ui.grammarCheck = session.grammarCheck ?? settings.grammarCheck;
       this.ui.zoom = session.zoom ?? 0;
       for (const saved of session.tabs) {
         try {
@@ -1341,6 +1501,7 @@ class Workspace {
     if (saved.path && !disk) tab.path = saved.path;
     tab.language = saved.language;
     tab.preview = saved.preview;
+    if (saved.grammarLanguage) this.grammarLanguages.set(tab.id, saved.grammarLanguage);
     if (backup !== null) Object.assign(tab, { encoding: saved.encoding, bom: saved.bom, eol: saved.eol });
 
     let state = this.newState(text);

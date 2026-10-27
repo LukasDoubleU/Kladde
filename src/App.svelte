@@ -117,6 +117,13 @@
     { id: "view.toggleWrap", label: "Toggle word wrap", keys: ["Alt+Z"], run: () => workspace.toggleWrap() },
     { id: "view.toggleSpellCheck", label: "Toggle spell checking", run: () => workspace.toggleSpellCheck() },
     {
+      id: "view.toggleGrammarCheck",
+      label: "Toggle grammar checking (LanguageTool)",
+      run: () => workspace.toggleGrammarCheck(),
+      enabled: textTab,
+    },
+    { id: "view.setGrammarLanguage", label: "Set grammar checking language…", run: () => workspace.setGrammarLanguage(), enabled: textTab },
+    {
       id: "format.document",
       label: "Format document or selection",
       keys: ["Shift+Alt+F"],
@@ -359,6 +366,7 @@
   $effect(() => {
     // Re-apply editor options whenever settings change.
     void [settings.tabSize, settings.insertSpaces, settings.lineNumbers, settings.highlightActiveLine];
+    void [settings.languageToolServer, settings.languageToolLanguage, settings.languageToolVariants, settings.languageToolAllFiles];
     untrack(() => workspace.applyViewOptions());
   });
 

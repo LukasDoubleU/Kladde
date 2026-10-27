@@ -36,6 +36,7 @@ export const readOnly = new Compartment();
 export const gutters = new Compartment();
 export const activeLine = new Compartment();
 export const spelling = new Compartment();
+export const grammar = new Compartment();
 
 export interface EditorOptions {
   wordWrap: boolean;
@@ -219,6 +220,7 @@ export function createEditorState(doc: string, options: EditorOptions, extra: Ex
       indentation.of(indentationExtension(options.tabSize, options.insertSpaces)),
       readOnly.of(EditorState.readOnly.of(options.readOnly)),
       spelling.of(spellCheckExtension(options.spellCheck)),
+      grammar.of([]),
       theme,
       phrases,
       extra,
