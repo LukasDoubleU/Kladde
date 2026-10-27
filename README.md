@@ -72,6 +72,8 @@ starts in a fraction of a second, and never loses what you typed.
 - External changes: unmodified tabs reload when the file changes on disk, and the active tab follows a
   growing log live; otherwise a banner asks.
 - Image viewer for PNG, JPEG, GIF, WebP and more.
+- Windows integration: Kladde offers itself as a default editor (once, on first start), appears in "Open
+  with" and has an optional "Edit with Kladde" Explorer context menu entry. Per user, no admin rights.
 
 **Look**
 - [Catppuccin Mocha](https://catppuccin.com) with a Rosewater accent; a light theme is available.
@@ -85,6 +87,25 @@ Download the latest version from [Releases](https://github.com/LukasDoubleU/Klad
 (`…_x64-setup.exe`, installs for the current user without admin rights) or the portable `…_x64_portable.exe`.
 Kladde needs Windows 10 or 11 with WebView2, which ships with Windows 11. The files are not code-signed yet,
 so SmartScreen may ask for confirmation on the first start. You can also [build it yourself](#building).
+
+### Default editor and Explorer
+
+Windows does not let apps make themselves the default; you choose that in its settings. So Kladde registers
+itself as a capable app (under `HKCU`, nothing machine-wide) and then opens the Windows default apps page for
+you. On the first start a banner offers this: **Choose file types…**, **Not now** (asks again next time) or
+**Don't ask again** (stored in the data folder, not in `settings.json`). The same is available any time from
+the command palette:
+
+- **Set Kladde as default editor…** lets you opt into groups of file types (plain text, logs, Markdown, config
+  and data files, scripts and source code) and the context menu entry, registers them and opens the Windows
+  settings. Kladde also shows up in "Open with" for every file.
+- **Toggle "Edit with Kladde" in the Explorer context menu** adds or removes only that entry (on Windows 11 it
+  is under "Show more options").
+- **Remove Kladde from Windows file associations** undoes everything Kladde wrote. The uninstaller does the
+  same. Other programs' associations are never touched.
+
+The portable exe registers its current location; if it moves, or a newer version supports more file types,
+Kladde refreshes an existing registration silently at the next start.
 
 ## Shortcuts
 
@@ -136,6 +157,7 @@ The defaults work well with mouse gesture tools that send `Ctrl+T`, `Ctrl+W`, `F
 | `markdownPreview` | `split` | how Markdown files open: `split`, `only` or `off` |
 | `pasteImageFolder` | `assets` | folder for pasted images, relative to the Markdown file |
 | `largeFileThresholdMB` | `32` | larger files open in the read-only viewer |
+| `offerDefaultEditor` | `true` | offer once at start to register Kladde as a default editor candidate |
 
 Settings, keyboard shortcuts, the session and backups of unsaved text live in
 `%APPDATA%\io.github.lukasdoubleu.kladde`.

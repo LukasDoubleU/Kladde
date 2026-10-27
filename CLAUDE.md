@@ -13,6 +13,9 @@ employer-related out of code, commits, issues and release notes.
   - `files.rs`: reading and writing, encodings, line endings.
   - `large.rs`: the large file viewer (background line index, positional reads).
   - `session.rs`: session, backups of unsaved text, config files.
+  - `integration.rs`: Windows registration (ProgID, capabilities, "Open with", context menu) under a
+    registry root passed in, never hard-coded. `src-tauri/windows/installer-hooks.nsh` runs
+    `kladde.exe --unregister-integration` from the NSIS uninstaller.
   - `lib.rs`: Tauri commands and plugins.
 - `src/lib/`: frontend logic.
   - `workspace.svelte.ts`: tabs, open, save, close, reload, external changes, preview, session (hot exit).
@@ -82,5 +85,10 @@ cd src-tauri && cargo test
 - `tests/e2e/hot-exit.test.mjs` guards the zero-data-loss promise (crash, close, continuous typing, saving,
   backup versions) and runs in CI (`e2e` job). Backups are throttled (`Workspace.scheduleSession`: first change
   arms a timer, later ones leave it alone), never debounced: keep it that way.
+- Registry code must never write the real `HKCU\Software\Classes`, `RegisteredApplications` or `Kladde` keys in
+  tests. With `KLADDE_DATA_DIR` set the app uses `HKCU\Software\KladdeTest\<KLADDE_TEST_KEY>` instead and skips
+  the shell notification and the Windows settings page; `cargo test` uses a random key of its own. Tests delete
+  their key afterwards (see `tests/e2e/integration.test.mjs`). `KLADDE_TEST_OFFER=1` makes an isolated profile
+  show the start-up offer.
 - Changes to saving, backups or the session must be checked by killing the process while there are unsaved
   changes and verifying that everything comes back after a restart.
