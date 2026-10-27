@@ -91,8 +91,33 @@ jobs:
           $found = $keys | Where-Object { Test-Path $_ } | ForEach-Object { (Get-ItemProperty $_).pv }
           if ($found) { "WebView2 runtime $found" } else { "::warning::No WebView2 runtime found" }
 
+      # A quick first check: if the app cannot start on the runner at all, the diagnostics below run
+      # instead of every test waiting for its timeout.
+      - name: Smoke test
+        env:
+          KLADDE_E2E_START_TIMEOUT: "90000"
+        run: node --test tests/e2e/smoke.test.mjs
+
       # One app at a time: the runner has few cores, and a cold WebView2 start is slow.
       - name: End-to-end tests
         env:
           KLADDE_E2E_START_TIMEOUT: "90000"
         run: node --test --test-concurrency=1 "tests/e2e/*.test.mjs"
+
+      - name: Diagnostics when the app does not start
+        if: failure()
+        shell: pwsh
+        run: |
+          $profile = Join-Path $env:RUNNER_TEMP "kladde-diag"
+          $env:KLADDE_DATA_DIR = "$profile\data"
+          $env:WEBVIEW2_USER_DATA_FOLDER = "$profile\webview"
+          $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9399 --enable-logging --v=1"
+          "Interactive: $([Environment]::UserInteractive), session: $((Get-Process -Id $PID).SessionId)"
+          $p = Start-Process src-tauri\target\debug\kladde.exe -PassThru -RedirectStandardError "$profile-stderr.txt"
+          Start-Sleep -Seconds 30
+          Get-Process kladde, msedgewebview2 -ErrorAction SilentlyContinue | Format-Table Id, ProcessName, SessionId, MainWindowTitle -AutoSize | Out-String
+          netstat -ano | Select-String "LISTENING" | Select-String ":93"
+          try { (Invoke-WebRequest http://127.0.0.1:9399/json -UseBasicParsing -TimeoutSec 5).Content } catch { "DevTools endpoint: $_" }
+          "--- stderr"; Get-Content "$profile-stderr.txt" -ErrorAction SilentlyContinue
+          "--- WebView2 log"; Get-ChildItem $profile -Recurse -Filter "*debug.log" -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName -Tail 60 }
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
