@@ -36,6 +36,8 @@ starts in a fraction of a second, and never loses what you typed.
 - Live preview side by side or full size (`Ctrl+Shift+V`), following the editor as you scroll.
 - GitHub-flavoured: tables, task lists, autolinks, heading anchors, highlighted code blocks; local images
   resolve relative to the file.
+- Mermaid diagrams (```` ```mermaid ````) and math with KaTeX (`$inline$`, `$$block$$`, ```` ```math ````), in the
+  colors of the current theme. Both load only when a document uses them and work offline.
 - Paste an image from the clipboard and it is saved next to the file (`assets/` by default) and linked.
 
 **Files**
@@ -150,7 +152,8 @@ by the Release workflow, which also writes the [changelog](CHANGELOG.md).
 [Tauri 2](https://v2.tauri.app) with a Rust core for file I/O, encodings, the large file viewer and the
 session; [CodeMirror 6](https://codemirror.net) as the editor; [Svelte 5](https://svelte.dev) for the
 interface; [markdown-it](https://github.com/markdown-it/markdown-it) and
-[DOMPurify](https://github.com/cure53/DOMPurify) for the preview. All open text tabs share one editor
+[DOMPurify](https://github.com/cure53/DOMPurify) for the preview, with
+[Mermaid](https://mermaid.js.org) and [KaTeX](https://katex.org) loaded on demand. All open text tabs share one editor
 view and keep their own state, including undo history, so switching tabs is instant.
 
 ## Roadmap

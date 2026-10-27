@@ -17,7 +17,9 @@ employer-related out of code, commits, issues and release notes.
 - `src/lib/`: frontend logic.
   - `workspace.svelte.ts`: tabs, open, save, close, reload, external changes, preview, session (hot exit).
   - `editor.ts`: CodeMirror setup. `actions.ts`: commands and keybindings. `languages.ts`: detection.
-  - `markdown.ts`: preview rendering. `format.ts`: JSON formatter. `settings.svelte.ts`: settings.
+  - `markdown.ts`: preview rendering. `mermaid.ts`: diagrams (placeholders drawn by `Preview.svelte`, SVGs
+    cached by source and theme). `math.ts`: KaTeX rules. Mermaid and KaTeX are dynamic imports: never import
+    them statically, so the main bundle stays small. `format.ts`: JSON formatter. `settings.svelte.ts`: settings.
 - `src/components/`: Svelte components. `src/App.svelte`: layout, the command list and window events.
 - `src/app.css`: theme colors as CSS variables (Catppuccin Mocha block, light theme).
 
