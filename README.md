@@ -29,7 +29,11 @@ starts in a fraction of a second, and never loses what you typed.
 - Syntax highlighting for ~145 languages, detected by extension, file name and shebang line. Grammars load
   on demand; batch files and logs have built-in highlighters too.
 - Multiple cursors, column selection (`Alt`+drag), find and replace with regex, go to line, word wrap.
-- JSON pretty-print and minify that keep numbers and strings exactly as written.
+- Format document or selection (`Shift+Alt+F`) picks the formatter from the tab's language: JSON (numbers and
+  strings stay exactly as written; also *Minify JSON*), XML and SVG (own formatter, text, comments and CDATA
+  untouched), SQL (sql-formatter, dialect from the language), JavaScript, TypeScript, JSX, TSX, CSS, SCSS,
+  LESS, HTML, Vue, Markdown and YAML (Prettier). With a selection only those lines are formatted; indentation
+  follows the tab settings. The formatters load on first use, so they cost nothing at startup.
 - Optional spell checking with the Windows dictionaries.
 
 **Compare**
@@ -100,7 +104,7 @@ so SmartScreen may ask for confirmation on the first start. You can also [build 
 | `Ctrl+D` | Delete the line (or all lines of the selection) |
 | `F7` / `Shift+F7` | In a compare tab: next / previous change |
 | `Ctrl+Shift+V` | Markdown preview: side by side, preview only, off |
-| `Shift+Alt+F` | Format JSON |
+| `Shift+Alt+F` | Format document or selection |
 | `Alt+Z` | Toggle word wrap |
 | `Ctrl+Plus` / `Ctrl+Minus` / `Ctrl+0` | Zoom in, out, reset |
 
@@ -163,13 +167,15 @@ by the Release workflow, which also writes the [changelog](CHANGELOG.md).
 session; [CodeMirror 6](https://codemirror.net) as the editor; [Svelte 5](https://svelte.dev) for the
 interface; [markdown-it](https://github.com/markdown-it/markdown-it) and
 [DOMPurify](https://github.com/cure53/DOMPurify) for the preview, with
-[Mermaid](https://mermaid.js.org) and [KaTeX](https://katex.org) loaded on demand. All open text tabs share one editor
+[Mermaid](https://mermaid.js.org) and [KaTeX](https://katex.org) loaded on demand, and
+[Prettier](https://prettier.io) and [sql-formatter](https://github.com/sql-formatter-org/sql-formatter) for
+formatting. All open text tabs share one editor
 view and keep their own state, including undo history, so switching tabs is instant.
 
 ## Roadmap
 
 Planned features and ideas are tracked as [issues](https://github.com/LukasDoubleU/Kladde/issues), among them
-grammar checking with LanguageTool, more formatters, editing large files and custom themes.
+grammar checking with LanguageTool, more formatters (TOML), editing large files and custom themes.
 
 ## License
 

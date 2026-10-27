@@ -13,6 +13,7 @@
     "tauri": "tauri",
     "prepare": "node scripts/install-hooks.mjs",
     "version:set": "node scripts/set-version.mjs",
+    "test:unit": "node --test \"tests/unit/*.test.mjs\"",
     "test:e2e": "node --test \"tests/e2e/*.test.mjs\""
   },
   "devDependencies": {
@@ -44,6 +45,8 @@
     "dompurify": "^3.4.17",
     "katex": "^0.19.1",
     "markdown-it": "^15.0.3",
-    "mermaid": "^12.2.0"
+    "mermaid": "^12.2.0",
+    "prettier": "^3.9.10",
+    "sql-formatter": "^15.9.0"
   }
 }

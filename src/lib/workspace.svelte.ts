@@ -22,7 +22,8 @@ import {
   spelling,
   wrap,
 } from "./editor";
-import { formatJson, minifyJson } from "./format";
+import { minifyJson } from "./format";
+import { formatterFor, formattableLanguages, formatWith, mapCursor, type Formatter } from "./formatters";
 import { allLanguages, detectLanguage, extensionOf, findLanguage, IMAGE_EXTENSIONS, isMarkdown } from "./languages";
 import { dirname, renderMarkdown, renderSvg, resolvePath, setLanguageLoadedHandler } from "./markdown";
 import { settings } from "./settings.svelte";
@@ -887,19 +888,88 @@ class Workspace {
     this.scheduleSession();
   }
 
-  /** Pretty-prints (or minifies) the JSON in the active tab, as one undoable edit. */
+  /** Pretty-prints (or minifies) the JSON in the active tab. */
   formatJson(minify = false) {
+    return this.format(minify ? "minify" : "json");
+  }
+
+  /**
+   * Formats the selected lines, or the whole document, as one undoable edit. "auto" picks the formatter
+   * from the tab's language; "json" and "minify" are the JSON commands, whatever the language.
+   */
+  async format(mode: "auto" | "json" | "minify" = "auto") {
     const tab = this.active;
-    if (!tab || tab.kind !== "text" || !this.view) return;
-    const doc = this.view.state.doc.toString();
-    const indent = settings.insertSpaces ? " ".repeat(settings.tabSize) : "\t";
-    const result = minify ? minifyJson(doc) : formatJson(doc, indent);
-    if ("error" in result) {
-      this.showNotice("error", `Not valid JSON: ${result.error}`);
+    const view = this.view;
+    if (!tab || tab.kind !== "text" || !view) return;
+    const formatter: Formatter | null = mode === "auto" ? formatterFor(tab.language) : { kind: "json" };
+    if (!formatter) {
+      this.showNotice(
+        "info",
+        `No formatter for ${tab.language ?? "plain text"}. Formatting works for ${formattableLanguages().join(", ")}.`,
+      );
       return;
     }
-    const text = result.text + (doc.endsWith("\n") && !minify ? "\n" : "");
-    if (text !== doc) this.view.dispatch({ changes: minimalChange(doc, text), scrollIntoView: true });
+
+    const before = view.state;
+    const doc = before.doc;
+    const sel = before.selection.main;
+    let from = 0;
+    let to = doc.length;
+    if (!sel.empty) {
+      // Whole lines; a selection that ends at the start of a line does not include that line.
+      const last = doc.lineAt(sel.to);
+      from = doc.lineAt(sel.from).from;
+      to = sel.to === last.from && last.number > doc.lineAt(sel.from).number ? doc.line(last.number - 1).to : last.to;
+    }
+    const partial = !sel.empty;
+    const text = doc.sliceString(from, to);
+    if (text.trim() === "") {
+      this.showNotice("info", "Nothing to format.");
+      return;
+    }
+
+    // A selection is formatted without its own indentation, which is put back afterwards.
+    const base = partial ? (/^[ \t]*/.exec(text)?.[0] ?? "") : "";
+    const input = base
+      ? text.split("\n").map((l) => (l.startsWith(base) ? l.slice(base.length) : l)).join("\n")
+      : text;
+    const label = mode === "auto" ? tab.language : "JSON";
+    const what = partial ? `the selection as ${label}` : label;
+    const options = { tabSize: settings.tabSize, insertSpaces: settings.insertSpaces };
+    let result;
+    try {
+      result =
+        mode === "minify" ? minifyJson(input) : await formatWith(formatter, input, options, doc.lineAt(from).number);
+    } catch (e) {
+      result = { error: e instanceof Error ? e.message : String(e) };
+    }
+    if ("error" in result) {
+      this.showNotice("error", `Cannot format ${what}: ${result.error}`);
+      return;
+    }
+    if (view !== this.view || view.state.doc !== doc || this.active?.id !== tab.id) {
+      this.showNotice("info", "The text changed while formatting, so nothing was applied. Run it again.");
+      return;
+    }
+
+    let formatted = result.text.replace(/\n+$/, "");
+    if (base) formatted = formatted.split("\n").map((l) => (l ? base + l : l)).join("\n");
+    // Prettier always ends with a newline; the others keep what the document had.
+    const newline = formatter.kind === "prettier" || text.endsWith("\n");
+    if (!partial && mode !== "minify" && formatted && newline) formatted += "\n";
+    if (formatted === text) {
+      this.showNotice("info", "Already formatted.");
+      return;
+    }
+    const change = minimalChange(text, formatted);
+    const selection = partial
+      ? EditorSelection.single(from, from + formatted.length)
+      : EditorSelection.cursor(from + mapCursor(text, formatted, sel.head - from));
+    view.dispatch({
+      changes: { from: from + change.from, to: from + change.to, insert: change.insert },
+      selection,
+      scrollIntoView: true,
+    });
   }
 
   zoom(delta: number | null) {

@@ -21,6 +21,8 @@ employer-related out of code, commits, issues and release notes.
   - `markdown.ts`: preview rendering. `mermaid.ts`: diagrams (placeholders drawn by `Preview.svelte`, SVGs
     cached by source and theme). `math.ts`: KaTeX rules. Mermaid and KaTeX are dynamic imports: never import
     them statically, so the main bundle stays small. `format.ts`: JSON formatter. `settings.svelte.ts`: settings.
+  - `format-xml.ts`: XML formatter. `formatters.ts`: picks a formatter by language name and lazy-loads
+    Prettier and sql-formatter.
 - `src/components/`: Svelte components. `src/App.svelte`: layout, the command list and window events.
 - `src/app.css`: theme colors as CSS variables (Catppuccin Mocha block, light theme).
 
@@ -37,6 +39,7 @@ own merge view (`Compare.svelte`, kept alive while hidden). They are not part of
 npm install           # also installs the commit-msg hook (core.hooksPath = .githooks)
 npm run check         # svelte-check
 npm run build         # frontend only
+npm run test:unit     # formatter tests
 npm run tauri dev     # app with hot reload
 npm run tauri build   # release exe and installer
 cd src-tauri && cargo test
@@ -68,6 +71,7 @@ cd src-tauri && cargo test
 
 ## Testing
 
+- `npm run test:unit` (Node's test runner, imports the TypeScript sources directly) covers the formatters.
 - `cargo test` covers file I/O and the large file viewer; `npm run check` type-checks the frontend.
 - End-to-end tests (`npm run test:e2e`, after `npx tauri build --debug --no-bundle`) use
   `tests/e2e/kladde.mjs`: it starts the app with an isolated profile (`KLADDE_DATA_DIR`, own WebView2 data)
