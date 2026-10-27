@@ -152,6 +152,8 @@ export async function launch({ exe = DEBUG_EXE, port = 9341, profile = tempProfi
       if (single && !has("Ctrl") && !has("Alt")) await cdp.send("Input.dispatchKeyEvent", { ...base, type: "char", text: key });
       await cdp.send("Input.dispatchKeyEvent", { ...base, type: "keyUp" });
       await sleep(30);
+      // The command palette opens asynchronously: wait for it, so text typed next lands in its input.
+      if (combo === "Ctrl+Shift+P" || combo === "F1") await app.waitFor("document.activeElement?.matches('.picker input')");
     },
 
     /** Types text into the focused element. */
