@@ -319,6 +319,10 @@ sets up a commit-msg hook that checks this, and CI checks it again. Versions fol
 [Semantic Versioning](https://semver.org) and are derived from these messages: releases are created on demand
 by the Release workflow, which also writes the [changelog](CHANGELOG.md).
 
+How Kladde is built, how it is tested and how work is organized is described in [docs/](docs/architecture.md)
+(architecture, decisions, testing, development, roadmap); [CLAUDE.md](CLAUDE.md) is the short version for coding
+agents.
+
 ## How it works
 
 [Tauri 2](https://v2.tauri.app) with a Rust core for file I/O, encodings, the large file viewer and the
@@ -333,7 +337,7 @@ view and keep their own state, including undo history, so switching tabs is inst
 ## Roadmap
 
 Planned features and ideas are tracked as [issues](https://github.com/LukasDoubleU/Kladde/issues), among them
-grammar checking with LanguageTool, more formatters (TOML), editing large files.
+editing large files in the viewer, code signing and more formatters (TOML); see also [docs/roadmap.md](docs/roadmap.md).
 
 ## License
 
