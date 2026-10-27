@@ -27,6 +27,9 @@ chardetng = "0.1"
 base64 = "0.22"
 memchr = "2"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
 [profile.release]
 codegen-units = 1
 lto = true

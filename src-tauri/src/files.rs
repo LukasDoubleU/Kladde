@@ -186,9 +186,69 @@ pub fn write(path: &Path, text: &str, encoding: &str, bom: bool, eol: &str) -> R
         out.extend_from_slice(&encoded);
     }
 
-    fs::write(path, &out).map_err(|e| e.to_string())?;
+    write_safely(path, &out).map_err(|e| e.to_string())?;
     let meta = fs::metadata(path).map_err(|e| e.to_string())?;
     Ok(mtime_ms(&meta))
+}
+
+/// Writes a file so that a crash or power loss never leaves it half-written: the bytes go to a
+/// temporary file next to it, which then replaces the original. On Windows, ReplaceFileW keeps the
+/// original's attributes, permissions and creation time. Where no temporary file can be created
+/// (e.g. a folder that only allows writing existing files), it falls back to writing in place.
+pub fn write_safely(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    // Follow symlinks, so the link stays a link and its target gets the new content.
+    let target = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let (Some(dir), Some(name)) = (target.parent(), target.file_name()) else {
+        return fs::write(&target, bytes);
+    };
+    let tmp = dir.join(format!(".{}.kladde-save", name.to_string_lossy()));
+    let written = fs::File::create(&tmp).and_then(|mut file| {
+        file.write_all(bytes)?;
+        file.sync_all()
+    });
+    if written.is_err() {
+        let _ = fs::remove_file(&tmp);
+        return fs::write(&target, bytes);
+    }
+    let swapped = if target.exists() { replace_file(&target, &tmp) } else { fs::rename(&tmp, &target) };
+    if swapped.is_err() {
+        let _ = fs::remove_file(&tmp);
+        return fs::write(&target, bytes);
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn replace_file(target: &Path, replacement: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        ReplaceFileW, REPLACEFILE_IGNORE_ACL_ERRORS, REPLACEFILE_IGNORE_MERGE_ERRORS,
+    };
+    let wide = |p: &Path| p.as_os_str().encode_wide().chain(Some(0)).collect::<Vec<u16>>();
+    let (target, replacement) = (wide(target), wide(replacement));
+    let flags = REPLACEFILE_IGNORE_MERGE_ERRORS | REPLACEFILE_IGNORE_ACL_ERRORS;
+    // SAFETY: both paths are NUL-terminated UTF-16 strings that outlive the call.
+    let ok = unsafe {
+        ReplaceFileW(
+            target.as_ptr(),
+            replacement.as_ptr(),
+            std::ptr::null(),
+            flags,
+            std::ptr::null(),
+            std::ptr::null(),
+        )
+    };
+    if ok == 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+fn replace_file(target: &Path, replacement: &Path) -> std::io::Result<()> {
+    fs::rename(replacement, target)
 }
 
 #[cfg(test)]
@@ -247,6 +307,33 @@ mod tests {
     fn unmappable_characters_are_rejected() {
         let path = temp_file("unmappable.txt", b"x");
         assert!(write(&path, "日本", "windows-1252", false, "LF").is_err());
+    }
+
+    #[test]
+    fn safe_write_replaces_content_and_leaves_no_temp_file() {
+        let path = temp_file("safe.txt", b"old content that is longer");
+        write_safely(&path, b"new").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"new");
+        let dir = path.parent().unwrap();
+        assert!(!dir.join(".safe.txt.kladde-save").exists());
+        // A file that does not exist yet is created.
+        let fresh = dir.join("fresh-safe.txt");
+        let _ = fs::remove_file(&fresh);
+        write_safely(&fresh, b"x").unwrap();
+        assert_eq!(fs::read(&fresh).unwrap(), b"x");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn safe_write_keeps_file_attributes() {
+        use std::os::windows::fs::MetadataExt;
+        const HIDDEN: u32 = 0x2;
+        let path = temp_file("hidden.txt", b"secret");
+        std::process::Command::new("attrib").arg("+h").arg(&path).status().unwrap();
+        write_safely(&path, b"still hidden").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"still hidden");
+        assert_ne!(fs::metadata(&path).unwrap().file_attributes() & HIDDEN, 0);
+        std::process::Command::new("attrib").arg("-h").arg(&path).status().unwrap();
     }
 
     #[test]
