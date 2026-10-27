@@ -3,6 +3,7 @@
 // - GitHub-flavoured: tables, strikethrough, task lists, autolinks, heading anchors.
 // - Local images resolve relative to the Markdown file and load through Tauri's asset protocol.
 // - Code blocks are highlighted with the same grammars as the editor.
+// - Mermaid fences become placeholders that the preview draws (mermaid.ts); math is rendered by KaTeX (math.ts).
 // - Block elements carry data-line attributes so the preview can follow the editor's scrolling.
 
 import { LanguageDescription } from "@codemirror/language";
@@ -11,6 +12,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import DOMPurify from "dompurify";
 import MarkdownIt, { type StateCore } from "markdown-it";
 import { allLanguages } from "./languages";
+import { mathPlugin, renderMathFence } from "./math";
 
 const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
@@ -82,14 +84,20 @@ function annotate(state: StateCore) {
 }
 
 const md = new MarkdownIt({ html: true, linkify: true, typographer: false, highlight });
+md.use(mathPlugin, () => onLanguageLoaded?.());
 md.core.ruler.push("kladde_annotate", annotate);
 
 // Fenced code: keep the data-line attribute, which the default renderer drops.
 md.renderer.rules.fence = (tokens, idx) => {
   const token = tokens[idx];
   const lang = token.info.trim().split(/\s+/)[0] ?? "";
-  const body = highlight(token.content, lang) || escapeHtml(token.content);
   const line = token.attrGet("data-line");
+  if (lang === "mermaid") {
+    // The source stays readable in the placeholder until the diagram is drawn (or if drawing fails).
+    return `<div class="mermaid-block" data-mermaid data-line="${line ?? ""}"><pre><code>${escapeHtml(token.content)}</code></pre></div>\n`;
+  }
+  if (lang === "math") return renderMathFence(token.content, String(line ?? ""), () => onLanguageLoaded?.());
+  const body = highlight(token.content, lang) || escapeHtml(token.content);
   const cls = lang ? ` class="language-${escapeHtml(lang)}"` : "";
   return `<pre data-line="${line ?? ""}"><code${cls}>${body}</code></pre>\n`;
 };

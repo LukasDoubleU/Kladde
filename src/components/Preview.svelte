@@ -2,6 +2,7 @@
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { tick } from "svelte";
   import { resolvePath } from "../lib/markdown";
+  import { renderDiagrams } from "../lib/mermaid";
   import { workspace } from "../lib/workspace.svelte";
 
   let { html, baseDir, follow }: { html: string; baseDir: string | null; follow: boolean } = $props();
@@ -42,9 +43,24 @@
     return () => (workspace.onEditorScroll = () => {});
   });
 
+  /** Draws the Mermaid diagrams; their height changes the layout, so the scroll position is synced again. */
+  function drawDiagrams() {
+    if (pane) void renderDiagrams(pane).then(sync);
+  }
+
   $effect(() => {
     void html;
-    void tick().then(sync);
+    void tick().then(() => {
+      sync();
+      drawDiagrams();
+    });
+  });
+
+  // Diagram colors follow the theme, which is switched by a class on the root element.
+  $effect(() => {
+    const observer = new MutationObserver(drawDiagrams);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+    return () => observer.disconnect();
   });
 
   function onClick(e: MouseEvent) {
@@ -183,6 +199,56 @@
   .markdown :global(li.task-list-item input) {
     margin: 0 0.4em 0 -1.4em;
     vertical-align: middle;
+  }
+  .markdown :global(.mermaid-block) {
+    margin: 0 0 1em;
+    text-align: center;
+    overflow-x: auto;
+  }
+  .markdown :global(.mermaid-block > pre) {
+    margin: 0;
+    text-align: left;
+    opacity: 0.55;
+  }
+  .markdown :global(.mermaid-block svg) {
+    max-width: 100%;
+    height: auto;
+  }
+  .markdown :global(.mermaid-block.mermaid-stale) {
+    opacity: 0.6;
+  }
+  .markdown :global(.mermaid-error) {
+    text-align: left;
+    padding: 8px 12px;
+    border: 1px solid var(--error);
+    border-radius: 6px;
+    background: var(--bg-alt);
+  }
+  .markdown :global(.mermaid-error strong) {
+    color: var(--error);
+  }
+  .markdown :global(.mermaid-error pre) {
+    margin: 4px 0 0;
+    padding: 0;
+    border: none;
+    background: none;
+    white-space: pre-wrap;
+    font-family: var(--editor-font);
+    font-size: 0.85em;
+  }
+  .markdown :global(.math-block) {
+    margin: 0 0 1em;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  .markdown :global(.math-pending) {
+    font-family: var(--editor-font);
+    color: var(--fg-dim);
+  }
+  .markdown :global(.math-error) {
+    font-family: var(--editor-font);
+    color: var(--error);
+    cursor: help;
   }
   .markdown :global(.svg-preview) {
     display: grid;
