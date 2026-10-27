@@ -2,6 +2,9 @@
   "name": "kladde",
   "private": true,
   "version": "0.1.0",
+  "description": "A lightweight text editor for Windows with first-class Markdown",
+  "license": "MIT",
+  "repository": "github:LukasDoubleU/Kladde",
   "type": "module",
   "scripts": {
     "dev": "vite",
