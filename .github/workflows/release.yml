@@ -157,7 +157,8 @@ jobs:
           git add package.json package-lock.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json CHANGELOG.md
           git commit -m "chore(release): $TAG"
           git tag -a "$TAG" -m "Kladde $TAG"
-          git push origin HEAD:main "$TAG"
+          # Atomic: if main moved meanwhile, neither the commit nor the tag is pushed (rerun the workflow).
+          git push --atomic origin HEAD:main "$TAG"
           flags=()
           if [ "$PRERELEASE" = true ]; then flags+=(--prerelease); fi
           gh release create "$TAG" release/* --verify-tag --title "Kladde $TAG" --notes-file notes.md "${flags[@]}"
