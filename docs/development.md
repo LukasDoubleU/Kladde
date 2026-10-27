@@ -54,7 +54,9 @@
   6. commits `chore(release): vX.Y.Z` as github-actions[bot], tags, pushes to `main` and publishes the release.
 - When the workflow itself changed, run a **dry run** first: it does everything except commit/tag/publish and
   uploads the files and notes as an artifact.
-- After a release, pull `main` (the bot commit) before continuing.
+- Don't push to `main` while a release runs: the release commit and tag are pushed atomically at the end and are
+  rejected if `main` moved (then rerun the workflow). After a release, pull `main` (the bot commit) before
+  continuing.
 - The updater key pair: public key in `tauri.conf.json` (`plugins.updater.pubkey`), private key only as the
   repository secret. Never commit it, never replace it: installed copies could no longer update.
 - `cliff.toml` gotcha: write regexes as TOML literal strings (`'^chore\(release\)'`); escaping in basic strings
