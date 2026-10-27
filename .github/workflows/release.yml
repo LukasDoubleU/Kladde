@@ -4,6 +4,10 @@
 # last release (see cliff.toml), unless a bump is chosen explicitly. The workflow sets the version in
 # all files, builds and tests, updates CHANGELOG.md, commits and tags "chore(release): vX.Y.Z" on main
 # and publishes a GitHub release with the changelog, the installer, the portable exe and checksums.
+#
+# With the repository secret TAURI_SIGNING_PRIVATE_KEY (the updater key, see CLAUDE.md) the installer is also
+# signed for Kladde's built-in updater and the release carries latest.json and the .sig file. Without the
+# secret (forks, first tries) the build works as before, just without update data.
 name: Release
 
 on:
@@ -91,14 +95,32 @@ jobs:
         run: cargo test
 
       - name: Build
-        run: npm run tauri build
+        env:
+          # Signs the installer for the updater; empty in forks, then no update data is built.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            npm run tauri build -- --config src-tauri/tauri.updater.conf.json
+          else
+            echo "::notice::TAURI_SIGNING_PRIVATE_KEY is not set: building without update data."
+            npm run tauri build
+          fi
 
       - name: Collect files
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
           mkdir release
-          cp "src-tauri/target/release/bundle/nsis/Kladde_${VERSION}_x64-setup.exe" release/
+          setup="src-tauri/target/release/bundle/nsis/Kladde_${VERSION}_x64-setup.exe"
+          cp "$setup" release/
+          # Update data for the in-app updater: the signature and the manifest it points at.
+          if [ -f "$setup.sig" ]; then
+            cp "$setup.sig" release/
+            node scripts/make-update-manifest.mjs "$VERSION" "$setup" "$GITHUB_REPOSITORY" "$TAG" > release/latest.json
+            cat release/latest.json
+          fi
           cp src-tauri/target/release/kladde.exe "release/Kladde_${VERSION}_x64_portable.exe"
           (cd release && sha256sum *.exe > SHA256SUMS.txt)
           ls -l release
