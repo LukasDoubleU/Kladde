@@ -92,6 +92,12 @@ jobs:
                   'HKCU:\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
           $found = $keys | Where-Object { Test-Path $_ } | ForEach-Object { (Get-ItemProperty $_).pv }
           if ($found) { "WebView2 runtime $found" } else { "::warning::No WebView2 runtime found" }
+          # Policies and variables that change how WebView2 starts (they can override what an app passes).
+          'HKLM:\SOFTWARE\Policies\Microsoft\Edge\WebView2', 'HKCU:\SOFTWARE\Policies\Microsoft\Edge\WebView2',
+            'HKLM:\SOFTWARE\WOW6432Node\Policies\Microsoft\Edge\WebView2' |
+            Where-Object { Test-Path $_ } |
+            ForEach-Object { "Policy $_"; Get-ChildItem $_ -Recurse | Out-String; Get-ItemProperty $_ | Out-String }
+          Get-ChildItem env: | Where-Object Name -like 'WEBVIEW2*' | Format-Table -AutoSize | Out-String
 
       # A quick first check: if the app cannot start on the runner at all, the diagnostics below run
       # instead of every test waiting for its timeout.
@@ -110,16 +116,18 @@ jobs:
         if: failure()
         shell: pwsh
         run: |
-          $profile = Join-Path $env:RUNNER_TEMP "kladde-diag"
-          $env:KLADDE_DATA_DIR = "$profile\data"
-          $env:WEBVIEW2_USER_DATA_FOLDER = "$profile\webview"
-          $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9399 --enable-logging --v=1"
+          $diag = Join-Path $env:RUNNER_TEMP "kladde-diag"
+          $env:KLADDE_DATA_DIR = "$diag\data"
+          $env:KLADDE_DEVTOOLS_PORT = "9399"
           "Interactive: $([Environment]::UserInteractive), session: $((Get-Process -Id $PID).SessionId)"
-          $p = Start-Process src-tauri\target\debug\kladde.exe -PassThru -RedirectStandardError "$profile-stderr.txt"
+          $p = Start-Process src-tauri\target\debug\kladde.exe -PassThru -RedirectStandardError "$diag-stderr.txt"
           Start-Sleep -Seconds 30
           Get-Process kladde, msedgewebview2 -ErrorAction SilentlyContinue | Format-Table Id, ProcessName, SessionId, MainWindowTitle -AutoSize | Out-String
+          # The browser process (the one without --type) shows the arguments and profile WebView2 really got.
+          Get-CimInstance Win32_Process -Filter "Name = 'msedgewebview2.exe'" |
+            Where-Object CommandLine -notmatch '--type=' | ForEach-Object { $_.CommandLine }
           netstat -ano | Select-String "LISTENING" | Select-String ":93"
           try { (Invoke-WebRequest http://127.0.0.1:9399/json -UseBasicParsing -TimeoutSec 5).Content } catch { "DevTools endpoint: $_" }
-          "--- stderr"; Get-Content "$profile-stderr.txt" -ErrorAction SilentlyContinue
-          "--- WebView2 log"; Get-ChildItem $profile -Recurse -Filter "*debug.log" -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName -Tail 60 }
+          "--- profile"; Get-ChildItem $diag -Depth 2 -Name -ErrorAction SilentlyContinue
+          "--- stderr"; Get-Content "$diag-stderr.txt" -ErrorAction SilentlyContinue
           Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
