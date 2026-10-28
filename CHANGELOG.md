@@ -2,6 +2,51 @@
 
 All notable changes to Kladde. Versions follow [Semantic Versioning](https://semver.org), commit messages
 [Conventional Commits](https://www.conventionalcommits.org).
+## [0.2.0](https://github.com/LukasDoubleU/Kladde/releases/tag/v0.2.0) – 2026-10-28
+
+### 🚀 Features
+
+- **updater:** Add update check and install commands to the core ([1c7f88a](https://github.com/LukasDoubleU/Kladde/commit/1c7f88aa10c0b3ea83209d70cdaa9f34869d1452))
+- **updater:** Announce updates with a banner and a command ([9bb1a7c](https://github.com/LukasDoubleU/Kladde/commit/9bb1a7cf09f3a6b0b08ccc8ba1e11244fa77507f))
+- **theme:** Ship all Catppuccin flavors, accent colors and a custom theme.css ([5389bf3](https://github.com/LukasDoubleU/Kladde/commit/5389bf3351e961e05167bbac308107898e64c5cc))
+- **large:** UTF-16, regex and Unicode search, growing index ([7f85ded](https://github.com/LukasDoubleU/Kladde/commit/7f85ded874893cb450f6ab1f04743a00b963c1bb))
+- **large:** Search options, highlighting, following and open in editor ([ca37b8a](https://github.com/LukasDoubleU/Kladde/commit/ca37b8ab6d30605b24ad148fd914258bfe9bfc21))
+- **keys:** Bind CodeMirror's editing commands as actions ([16af8ce](https://github.com/LukasDoubleU/Kladde/commit/16af8ce66a3177a74036ab8892f68866309d8c0b))
+- **keys:** Keymap presets, chords and a shortcut editor ([a7a1203](https://github.com/LukasDoubleU/Kladde/commit/a7a120323b1c1cb9efecf77bfa858813bdae8528))
+- **grammar:** Add a LanguageTool client in the Rust core ([2653f6e](https://github.com/LukasDoubleU/Kladde/commit/2653f6e82c3460b6145bac7f8212dd30b1b4478d))
+- **grammar:** Prepare text for LanguageTool and map findings back ([cde7ef8](https://github.com/LukasDoubleU/Kladde/commit/cde7ef84a8b1e5a45577211b60e691cc68132f54))
+- **grammar:** Underline LanguageTool findings with quick fixes ([462d6ae](https://github.com/LukasDoubleU/Kladde/commit/462d6aeabf68ece72dfb4aa79a564dedbab77cc9))
+
+### 🐛 Bug fixes
+
+- **updater:** Keep isolated profiles away from the real update server ([a7ff8bb](https://github.com/LukasDoubleU/Kladde/commit/a7ff8bb293f840d3bb5588092938227aed3715c3))
+- **grammar:** Color findings from the theme in every flavor ([7566247](https://github.com/LukasDoubleU/Kladde/commit/75662478082cb04ea59a938e1734e40252b927d8))
+
+### 📚 Documentation
+
+- **updater:** Describe updates, the setting and the release secret ([62869b1](https://github.com/LukasDoubleU/Kladde/commit/62869b1e8326e26c6bb70c832ce5c8eaa55fc589))
+- **theme:** Document the theme settings and the theme.css variables ([8a114f8](https://github.com/LukasDoubleU/Kladde/commit/8a114f85f955200426d298b822d11d78437f6c32))
+- **keys:** Document presets, chords and the shortcut editor ([41b792e](https://github.com/LukasDoubleU/Kladde/commit/41b792e297fbb80fa4705df4dc27318753058c0f))
+- **grammar:** Describe grammar checking and its settings ([025d615](https://github.com/LukasDoubleU/Kladde/commit/025d615a8f05d9a7f8392318f91cce80a1968a3d))
+- Collect architecture, decisions, testing, workflow and roadmap ([30b2bef](https://github.com/LukasDoubleU/Kladde/commit/30b2befcef70000ccab5193eccdee9241b637f8c))
+- Don't push to main while a release runs ([337ee8d](https://github.com/LukasDoubleU/Kladde/commit/337ee8d48780d8b91ad2bf77408349853a5da255))
+
+### 🧪 Tests
+
+- **updater:** Cover banner, portable decision and daily limit end to end ([d64cff0](https://github.com/LukasDoubleU/Kladde/commit/d64cff01916d08aa0d1d065aa0821d20103f55dd))
+- **theme:** Cover flavors, accents, theme.css and the Windows mode ([9b3f4a1](https://github.com/LukasDoubleU/Kladde/commit/9b3f4a1e4a9ed2ba5918f6a7169be9277ae5b716))
+- **large:** Cover the viewer end to end and document the new features ([8fd2f88](https://github.com/LukasDoubleU/Kladde/commit/8fd2f881229826b815692ebe67d107751ef8f085))
+- **keys:** Cover presets, chords, the shortcut editor and unbinding end to end ([35fc4e0](https://github.com/LukasDoubleU/Kladde/commit/35fc4e0cba936d004c506df9cdc07e47fbab13e5))
+- Wait for the command palette before typing into it ([5e8610d](https://github.com/LukasDoubleU/Kladde/commit/5e8610d030a95f184a22db95ff8ac9bf90549e8f))
+- **grammar:** Cover grammar checking end to end with a fake server ([be844ff](https://github.com/LukasDoubleU/Kladde/commit/be844ff78f8441a920f95729b4c8fdf2168f33e6))
+
+### 🏗️ Build and CI
+
+- **e2e:** Run end-to-end tests one at a time with a longer start timeout ([d6da332](https://github.com/LukasDoubleU/Kladde/commit/d6da332d520a4e0c238a7caeaeeece3a791f312f))
+- **release:** Sign the installer and publish update data ([30ed0b6](https://github.com/LukasDoubleU/Kladde/commit/30ed0b613208d1a0f8d9c29f1e55e5969824b997))
+- **e2e:** Run the smoke test first and collect diagnostics on failure ([3661e86](https://github.com/LukasDoubleU/Kladde/commit/3661e8625710f062d0d25081e357db2801dbedb4))
+- **e2e:** Make the end-to-end job non-blocking until it runs on the runner ([e9a168a](https://github.com/LukasDoubleU/Kladde/commit/e9a168a40b29bb29a2027de590a7a64659cc8fe2))
+- **release:** Push the release commit and the tag atomically ([536fbf1](https://github.com/LukasDoubleU/Kladde/commit/536fbf190db282516877f59ab30a1bec8bc17b99))
 ## [0.1.0](https://github.com/LukasDoubleU/Kladde/releases/tag/v0.1.0) – 2026-10-27
 
 ### 🚀 Features

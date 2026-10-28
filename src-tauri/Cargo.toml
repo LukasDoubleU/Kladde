@@ -1,6 +1,6 @@
 [package]
 name = "kladde"
-version = "0.1.0"
+version = "0.2.0"
 description = "A lightweight text editor for Windows with first-class Markdown"
 license = "MIT"
 repository = "https://github.com/LukasDoubleU/Kladde"
