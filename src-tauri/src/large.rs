@@ -15,17 +15,33 @@
 //! match cannot span two chunks (a multi-line pattern only works within one chunk);
 //! inside a single line longer than a chunk, chunks overlap by 64 KB, so matches
 //! longer than that can be missed there.
+//!
+//! Editing: the first edit (once the index is complete) puts a piece table (pieces.rs) over
+//! the file, and from then on every read, line lookup and search goes through it. Inserted
+//! text is encoded into the file's encoding and line ending, so untouched bytes (including
+//! invalid ones and mixed line endings) are saved exactly as they were. Saving streams the
+//! pieces into a temporary file next to the original, which then replaces it; the viewer
+//! continues on the new file with an index derived from the piece table. While there are
+//! unsaved edits, the file is not followed when it grows, and Kladde keeps a handle that
+//! denies other programs write access, so the original the edits refer to stays intact.
+//! Hot exit backs up a journal of the pieces plus the add buffer (append-only, like the
+//! buffer itself), checked against the original's size, time and fingerprint on restore.
+//!
+//! Lines: a file that ends with a line break has an empty last line, like in the editor.
 
-use crate::files::{guess_encoding, mtime_ms, sniff_bom};
+use crate::files::{detect_eol, encode_text, guess_encoding, mtime_ms, replace_file, sniff_bom, write_safely};
+use crate::pieces::{EditKind, PieceTable, Replace, Source};
+use base64::Engine;
 use encoding_rs::{Encoding, UTF_16BE, UTF_16LE, UTF_8};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::fs::File;
-use std::path::Path;
+use std::fs::{self, File};
+use std::io::{BufWriter, Write};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const CHUNK: usize = 8 << 20;
 /// How far to look for a line break to end a search chunk at.
@@ -36,6 +52,8 @@ const OVERLAP: u64 = 64 << 10;
 const MAX_LINE_BYTES: u64 = 64 << 10;
 /// Bytes at the start and at the end of the indexed part that tell whether the file was rewritten.
 const FINGERPRINT: u64 = 4096;
+/// Largest selection that is copied to the clipboard.
+const MAX_COPY: u64 = 64 << 20;
 
 /// How line breaks look in the file's encoding.
 #[derive(Clone, Copy, PartialEq)]
@@ -55,7 +73,21 @@ struct Fingerprint {
     tail: Vec<u8>,
 }
 
+/// The edited document.
+struct Edits {
+    table: PieceTable,
+    /// Modification time of the original when editing began (for the journal).
+    mtime: u64,
+}
+
+/// The add buffer's backup file: its name part and how many bytes of the buffer it holds.
+struct JournalState {
+    generation: String,
+    written: u64,
+}
+
 pub struct LargeFile {
+    path: PathBuf,
     file: File,
     size: AtomicU64,
     encoding: &'static Encoding,
@@ -63,6 +95,8 @@ pub struct LargeFile {
     /// Bytes per code unit: 2 for UTF-16, else 1.
     unit: u64,
     bom_len: u64,
+    /// Line ending of inserted line breaks, the one the file uses most: "CRLF" or "LF".
+    eol: &'static str,
     index: RwLock<Vec<u64>>,
     /// Everything before this offset has been scanned for line breaks.
     indexed_to: AtomicU64,
@@ -70,18 +104,24 @@ pub struct LargeFile {
     cancelled: AtomicBool,
     /// An index worker is running (guards starting a second one when the file grows).
     worker: Mutex<bool>,
-    /// The last scan ended in a line break exactly at the end of the file; the line after it is
-    /// only added once the file grows.
-    eof_break: AtomicBool,
     fingerprint: Mutex<Fingerprint>,
-    /// Bumped by every search and by cancelling; a running search stops when it changes.
+    /// Bumped by every search, by cancelling and by edits; a running search stops when it changes.
     search_gen: AtomicU64,
+    /// None until the first edit. Lock order: `edits` before `index`.
+    edits: RwLock<Option<Edits>>,
+    /// A save is streaming the document; edits wait until it is done.
+    saving: AtomicBool,
+    /// While there are unsaved edits: a handle that lets others read, rename and delete the file,
+    /// but not write it, so the original the edits refer to cannot change underneath them.
+    guard: Mutex<Option<File>>,
+    journal: Mutex<JournalState>,
 }
 
-#[derive(Default)]
+/// The open large files. Cheap to clone (shared), so a save can run on the blocking pool.
+#[derive(Default, Clone)]
 pub struct LargeFiles {
-    next_id: AtomicU32,
-    open: Mutex<HashMap<u32, Arc<LargeFile>>>,
+    next_id: Arc<AtomicU32>,
+    open: Arc<Mutex<HashMap<u32, Arc<LargeFile>>>>,
 }
 
 #[derive(Serialize)]
@@ -90,6 +130,8 @@ pub struct LargeOpened {
     pub id: u32,
     pub size: u64,
     pub encoding: String,
+    pub bom: bool,
+    pub eol: String,
     pub mtime: u64,
 }
 
@@ -98,7 +140,114 @@ pub struct LargeOpened {
 pub struct LargeInfo {
     pub lines: u64,
     pub done: bool,
+    /// Size of the document (with edits).
     pub size: u64,
+    pub dirty: bool,
+}
+
+/// A position: line and column, both 0-based; the column counts UTF-16 code units of the
+/// decoded line, like JavaScript strings.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+pub struct Pos {
+    pub line: u64,
+    pub col: u64,
+}
+
+#[derive(Deserialize)]
+pub struct Change {
+    pub from: Pos,
+    pub to: Pos,
+    /// Text with `\n` line breaks; inserted with the file's line ending.
+    pub text: String,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Edited {
+    pub lines: u64,
+    pub size: u64,
+    pub dirty: bool,
+    pub can_undo: bool,
+    pub can_redo: bool,
+    /// Undo/redo: where the caret goes (the end of the restored text).
+    pub caret: Option<Pos>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Restored {
+    /// "applied", "conflict" (the file changed since the edits were made; nothing applied) or
+    /// "missing" (no journal).
+    pub status: &'static str,
+    pub lines: u64,
+    pub size: u64,
+    pub dirty: bool,
+}
+
+/// The hot-exit backup of an edited large file. The pieces only make sense on top of exactly the
+/// original they were made for, so that is recorded too.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Journal {
+    version: u32,
+    size: u64,
+    mtime: u64,
+    head: String,
+    tail_at: u64,
+    tail: String,
+    /// The add buffer is `<tab>.<added>.add` next to the journal; only its first `added_len` bytes count.
+    added: String,
+    added_len: u64,
+    /// The document as (0 = original, 1 = add buffer, start, length).
+    pieces: Vec<(u8, u64, u64)>,
+}
+
+fn journal_path(dir: &Path, tab: &str) -> PathBuf {
+    dir.join(format!("{tab}.large.json"))
+}
+
+fn added_path(dir: &Path, tab: &str, generation: &str) -> PathBuf {
+    dir.join(format!("{tab}.{generation}.add"))
+}
+
+/// Removes the journal and add buffers of a tab, e.g. after its edits were saved.
+pub fn remove_journal(dir: &Path, tab: &str) {
+    let _ = fs::remove_file(journal_path(dir, tab));
+    remove_added(dir, tab, None);
+}
+
+/// Removes the add buffers of a tab except the one named `keep`.
+fn remove_added(dir: &Path, tab: &str, keep: Option<&str>) {
+    let prefix = format!("{tab}.");
+    for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with(&prefix) && name.ends_with(".add") && Some(name.as_str()) != keep {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+}
+
+fn base64(bytes: &[u8]) -> String {
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+/// A name part that is unique enough for this tab's add buffer files.
+fn new_generation(id: u32) -> String {
+    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    format!("{:x}{:x}", nanos as u64, id)
+}
+
+#[cfg(windows)]
+fn open_guard(path: &Path) -> std::io::Result<File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_SHARE_READ: u32 = 0x1;
+    const FILE_SHARE_DELETE: u32 = 0x4;
+    std::fs::OpenOptions::new().read(true).share_mode(FILE_SHARE_READ | FILE_SHARE_DELETE).open(path)
+}
+
+#[cfg(not(windows))]
+fn open_guard(path: &Path) -> std::io::Result<File> {
+    File::open(path)
 }
 
 #[derive(Serialize)]
@@ -214,11 +363,20 @@ fn regex_error(e: regex::Error) -> String {
 }
 
 impl LargeFile {
-    fn read_range(&self, start: u64, end: u64) -> Vec<u8> {
+    /// Bytes of the file on disk.
+    fn read_file(&self, start: u64, end: u64) -> Vec<u8> {
         let mut buf = vec![0u8; end.saturating_sub(start) as usize];
         let n = read_at(&self.file, &mut buf, start).unwrap_or(0);
         buf.truncate(n);
         buf
+    }
+
+    /// Bytes of the document: the file, or the piece table over it once edited.
+    fn read_range(&self, start: u64, end: u64) -> Vec<u8> {
+        match &*self.edits.read().unwrap() {
+            Some(e) => e.table.read(start, end, |at, buf| read_at(&self.file, buf, at).unwrap_or(0)),
+            None => self.read_file(start, end),
+        }
     }
 
     /// File size cut down to whole code units.
@@ -227,15 +385,52 @@ impl LargeFile {
         size - size % self.unit
     }
 
-    /// Byte range of line `i` without its line break, or None if not indexed yet.
-    fn line_range(&self, index: &[u64], i: usize) -> Option<(u64, u64)> {
-        let start = (*index.get(i)?).max(self.bom_len);
-        let end = match index.get(i + 1) {
+    /// Size of the document.
+    fn doc_size(&self) -> u64 {
+        match &*self.edits.read().unwrap() {
+            Some(e) => e.table.len(),
+            None => self.size(),
+        }
+    }
+
+    fn line_count(&self) -> u64 {
+        match &*self.edits.read().unwrap() {
+            Some(e) => e.table.lines(),
+            None => self.index.read().unwrap().len() as u64,
+        }
+    }
+
+    fn is_dirty(&self) -> bool {
+        self.edits.read().unwrap().as_ref().is_some_and(|e| e.table.is_modified())
+    }
+
+    /// Byte range of line `i` of the document, including its line break; None past the end. Unedited
+    /// and still indexing, the last line found so far has no known end: None, or with `partial` the
+    /// end of the file.
+    fn line_bounds(&self, i: u64, partial: bool) -> Option<(u64, u64)> {
+        if let Some(e) = &*self.edits.read().unwrap() {
+            let index = self.index.read().unwrap();
+            let start = e.table.line_start(&index, i)?;
+            let end = e.table.line_start(&index, i + 1).unwrap_or(e.table.len());
+            return Some((start.max(self.bom_len), end));
+        }
+        let index = self.index.read().unwrap();
+        let start = (*index.get(i as usize)?).max(self.bom_len);
+        let end = match index.get(i as usize + 1) {
             Some(&next) => next,
-            None if self.done.load(Ordering::Acquire) => self.size(),
+            None if partial || self.done.load(Ordering::Acquire) => self.size(),
             None => return None,
         };
         Some((start, end))
+    }
+
+    /// The line containing a document offset (the index must have reached it).
+    fn line_at(&self, offset: u64) -> u64 {
+        if let Some(e) = &*self.edits.read().unwrap() {
+            return e.table.line_of(&self.index.read().unwrap(), offset);
+        }
+        let index = self.index.read().unwrap();
+        index.partition_point(|&o| o <= offset).saturating_sub(1) as u64
     }
 
     fn trim_break(&self, bytes: &mut Vec<u8>) {
@@ -280,6 +475,82 @@ impl LargeFile {
         }
     }
 
+    /// How many bytes of `bytes` (a line from its start) make up the first `col` UTF-16 code units
+    /// of its decoded text; all of them if the text is shorter. Exact for valid text; inside
+    /// invalid sequences (shown as U+FFFD) the position may move to the end of the sequence.
+    fn units_to_bytes(&self, bytes: &[u8], col: u64) -> usize {
+        if col == 0 {
+            return 0;
+        }
+        if self.encoding == UTF_8 {
+            let (mut units, mut at) = (0u64, 0usize);
+            for chunk in bytes.utf8_chunks() {
+                for c in chunk.valid().chars() {
+                    if units >= col {
+                        return at;
+                    }
+                    units += c.len_utf16() as u64;
+                    at += c.len_utf8();
+                }
+                // One U+FFFD per invalid sequence, as the decoder shows it.
+                if !chunk.invalid().is_empty() {
+                    if units >= col {
+                        return at;
+                    }
+                    units += 1;
+                    at += chunk.invalid().len();
+                }
+            }
+            return at;
+        }
+        if self.encoding.is_single_byte() {
+            return (col as usize).min(bytes.len());
+        }
+        // UTF-16 and the multi-byte code pages: feed the decoder byte by byte and count what it emits.
+        let mut decoder = self.encoding.new_decoder_without_bom_handling();
+        let mut out = String::with_capacity(32);
+        let mut units = 0u64;
+        for i in 0..bytes.len() {
+            if units >= col {
+                return i;
+            }
+            out.clear();
+            let _ = decoder.decode_to_string(&bytes[i..i + 1], &mut out, false);
+            units += out.encode_utf16().count() as u64;
+        }
+        bytes.len()
+    }
+
+    /// Document offset of a position. The column is clamped to the end of the line's text (before
+    /// its line break); lines of any length work, only the bytes up to the column are read.
+    fn offset_of(&self, pos: Pos) -> Result<u64, String> {
+        let (start, end) = self.line_bounds(pos.line, false).ok_or_else(|| format!("Line {} does not exist.", pos.line + 1))?;
+        // At most 4 bytes per UTF-16 code unit (GB18030), plus room to see the line break.
+        let want = pos.col.saturating_mul(4).saturating_add(8).min(end - start);
+        let mut bytes = self.read_range(start, start + want);
+        if start + want == end {
+            self.trim_break(&mut bytes);
+        }
+        bytes.truncate(bytes.len() - bytes.len() % self.unit as usize);
+        Ok(start + self.units_to_bytes(&bytes, pos.col) as u64)
+    }
+
+    fn position_of(&self, offset: u64) -> Pos {
+        let line = self.line_at(offset);
+        let start = self.line_bounds(line, true).map_or(offset, |(s, _)| s);
+        let bytes = self.read_range(start, offset.max(start));
+        Pos { line, col: self.decode(&bytes).encode_utf16().count() as u64 }
+    }
+
+    /// Text to insert, in the file's encoding and line ending, and where its line breaks end.
+    fn encode_insert(&self, text: &str) -> Result<(Vec<u8>, Vec<u64>), String> {
+        let text = if text.contains('\r') { Cow::Owned(text.replace("\r\n", "\n").replace('\r', "\n")) } else { Cow::Borrowed(text) };
+        let bytes = encode_text(&text, self.encoding, self.eol)?;
+        let mut breaks = Vec::new();
+        for_each_line_end(self.breaks, &bytes, 0, |end| breaks.push(end as u64));
+        Ok((bytes, breaks))
+    }
+
     // ------------------------------------------------------------------ index
 
     /// Scans the not yet indexed part of the file; runs until it has caught up with the size, which
@@ -290,9 +561,6 @@ impl LargeFile {
         loop {
             let size = self.size.load(Ordering::Acquire);
             let mut offset = self.indexed_to.load(Ordering::Acquire);
-            if self.eof_break.swap(false, Ordering::Relaxed) && offset < size {
-                batch.push(offset);
-            }
             let mut stalled = false;
             while offset + self.unit <= size && !self.cancelled.load(Ordering::Relaxed) {
                 let want = (size - offset).min(CHUNK as u64) as usize;
@@ -302,15 +570,8 @@ impl LargeFile {
                     stalled = true;
                     break;
                 }
-                for_each_line_end(self.breaks, &buf[..usable], offset, |end| {
-                    let next = offset + end as u64;
-                    // A line starting at the very end of the file is not a line (yet).
-                    if next < size {
-                        batch.push(next);
-                    } else {
-                        self.eof_break.store(true, Ordering::Relaxed);
-                    }
-                });
+                // A break at the very end of the file starts an empty last line (filled when it grows).
+                for_each_line_end(self.breaks, &buf[..usable], offset, |end| batch.push(offset + end as u64));
                 self.index.write().unwrap().append(&mut batch);
                 offset += usable as u64;
                 self.indexed_to.store(offset, Ordering::Release);
@@ -334,10 +595,11 @@ impl LargeFile {
 
     fn fingerprint_now(&self, size: u64) -> Fingerprint {
         let tail_at = size.saturating_sub(FINGERPRINT);
-        Fingerprint { head: self.read_range(0, size.min(FINGERPRINT)), tail_at, tail: self.read_range(tail_at, size) }
+        Fingerprint { head: self.read_file(0, size.min(FINGERPRINT)), tail_at, tail: self.read_file(tail_at, size) }
     }
 
-    /// Checks whether the file grew (the index is extended), shrank or was rewritten.
+    /// Checks whether the file grew (the index is extended), shrank or was rewritten. With unsaved
+    /// edits the document stays as it is: growth is not followed, the caller warns instead.
     fn refresh(self: &Arc<Self>) -> Result<LargeRefresh, String> {
         let meta = self.file.metadata().map_err(|e| e.to_string())?;
         let new_size = meta.len();
@@ -345,10 +607,21 @@ impl LargeFile {
         let old_size = self.size.load(Ordering::Acquire);
         let unchanged_content = {
             let fp = self.fingerprint.lock().unwrap();
-            self.read_range(0, fp.head.len() as u64) == fp.head
-                && self.read_range(fp.tail_at, fp.tail_at + fp.tail.len() as u64) == fp.tail
+            self.read_file(0, fp.head.len() as u64) == fp.head
+                && self.read_file(fp.tail_at, fp.tail_at + fp.tail.len() as u64) == fp.tail
         };
-        if new_size < old_size || !unchanged_content {
+        let changed = new_size < old_size || !unchanged_content;
+        {
+            let mut edits = self.edits.write().unwrap();
+            if edits.as_ref().is_some_and(|e| e.table.is_modified()) {
+                return Ok(LargeRefresh { size: new_size, mtime, changed });
+            }
+            // Only undo history is left; following the file wins over it.
+            if changed || new_size != old_size {
+                *edits = None;
+            }
+        }
+        if changed {
             return Ok(LargeRefresh { size: new_size, mtime, changed: true });
         }
         if new_size > old_size {
@@ -446,8 +719,13 @@ impl LargeFile {
         Ok(())
     }
 
-    /// The line containing a byte offset; waits until the index has reached it.
+    /// The line containing a byte offset and its start; waits until the index has reached it.
     fn line_of(&self, generation: u64, offset: u64) -> Result<(usize, u64), Stop> {
+        if let Some(e) = &*self.edits.read().unwrap() {
+            let index = self.index.read().unwrap();
+            let line = e.table.line_of(&index, offset);
+            return Ok((line as usize, e.table.line_start(&index, line).unwrap_or(0)));
+        }
         self.wait_until(generation, || {
             self.done.load(Ordering::Acquire) || self.indexed_to.load(Ordering::Acquire) > offset
         })?;
@@ -535,19 +813,13 @@ impl LargeFile {
     /// Where to start: the start of the line (a chunk always starts at a line start), the position
     /// in it, and the end of that line.
     fn anchor(&self, generation: u64, req: &SearchRequest) -> Result<(u64, u64, u64), Stop> {
-        let size = self.size();
-        let line = req.line as usize;
-        if line >= self.index.read().unwrap().len() {
+        let size = self.doc_size();
+        if req.line >= self.line_count() {
             // Past the end, e.g. a backward search starting at the end of the file: needs all lines.
             self.wait_until(generation, || self.done.load(Ordering::Acquire))?;
         }
-        let (start, end) = {
-            let index = self.index.read().unwrap();
-            if line >= index.len() {
-                return Ok((size, size, size));
-            }
-            let start = index[line].max(self.bom_len);
-            (start, index.get(line + 1).copied().unwrap_or(size))
+        let Some((start, end)) = self.line_bounds(req.line, true) else {
+            return Ok((size, size, size));
         };
         let target = req.col + (req.forward && !req.inclusive) as u64;
         let text = self.decode(&self.read_line(start, end).0);
@@ -570,6 +842,8 @@ impl LargeFile {
         let matcher = self.matcher(req)?;
         let outcome = if req.forward { self.search_forward(generation, &matcher, req) } else { self.search_backward(generation, &matcher, req) };
         match outcome {
+            // An edit meanwhile makes the position meaningless.
+            Ok(Some(_)) if self.check(generation).is_err() => Ok(SearchResult { found: None, cancelled: true }),
             Ok(found) => done(found),
             Err(Stop::Cancelled) => Ok(SearchResult { found: None, cancelled: true }),
         }
@@ -577,7 +851,7 @@ impl LargeFile {
 
     fn search_forward(&self, generation: u64, matcher: &Matcher, req: &SearchRequest) -> Result<Option<Match>, Stop> {
         let (mut pos, from, _) = self.anchor(generation, req)?;
-        let size = self.size();
+        let size = self.doc_size();
         let mut anchor = Some(from);
         while pos < size {
             self.check(generation)?;
@@ -615,6 +889,299 @@ impl LargeFile {
     }
 }
 
+impl LargeFile {
+    // ------------------------------------------------------------------ editing
+
+    fn check_editable(&self) -> Result<(), String> {
+        if self.saving.load(Ordering::Acquire) {
+            return Err("The file is being saved; try again when that is done.".into());
+        }
+        if !self.done.load(Ordering::Acquire) {
+            return Err("The file is still being indexed; editing works once that is done.".into());
+        }
+        Ok(())
+    }
+
+    fn edited(&self, caret: Option<Pos>) -> Edited {
+        let edits = self.edits.read().unwrap();
+        let table = edits.as_ref().map(|e| &e.table);
+        Edited {
+            lines: table.map_or_else(|| self.index.read().unwrap().len() as u64, |t| t.lines()),
+            size: table.map_or_else(|| self.size(), |t| t.len()),
+            dirty: table.is_some_and(|t| t.is_modified()),
+            can_undo: table.is_some_and(|t| t.can_undo()),
+            can_redo: table.is_some_and(|t| t.can_redo()),
+            caret,
+        }
+    }
+
+    /// Takes or releases the write guard as the document becomes dirty or clean again.
+    fn update_guard(&self, dirty: bool) {
+        let mut guard = self.guard.lock().unwrap();
+        if !dirty {
+            *guard = None;
+        } else if guard.is_none() {
+            // Fails when another program has the file open for writing right now (e.g. a logger);
+            // then changes are only noticed, not prevented.
+            *guard = open_guard(&self.path).ok();
+        }
+    }
+
+    /// Applies changes (positions refer to the document before them) as one undo step.
+    pub fn edit(&self, changes: &[Change], kind: EditKind) -> Result<Edited, String> {
+        self.check_editable()?;
+        let mut list = Vec::with_capacity(changes.len());
+        for change in changes {
+            let (a, b) = (self.offset_of(change.from)?, self.offset_of(change.to)?);
+            let (bytes, breaks) = self.encode_insert(&change.text)?;
+            list.push(Replace { from: a.min(b), to: a.max(b), bytes, breaks });
+        }
+        {
+            let mut edits = self.edits.write().unwrap();
+            let index = self.index.read().unwrap();
+            let edits = edits.get_or_insert_with(|| Edits {
+                table: PieceTable::new(&index, self.size()),
+                mtime: self.file.metadata().map(|m| mtime_ms(&m)).unwrap_or(0),
+            });
+            if !edits.table.edit(&index, list, kind, Instant::now()) {
+                return Err("The changes overlap.".into());
+            }
+        }
+        // A running search would report positions in the old text.
+        self.search_gen.fetch_add(1, Ordering::Relaxed);
+        let result = self.edited(None);
+        self.update_guard(result.dirty);
+        Ok(result)
+    }
+
+    pub fn undo(&self, redo: bool) -> Result<Edited, String> {
+        self.check_editable()?;
+        let range = {
+            let mut edits = self.edits.write().unwrap();
+            let index = self.index.read().unwrap();
+            match edits.as_mut() {
+                Some(e) if redo => e.table.redo(&index),
+                Some(e) => e.table.undo(&index),
+                None => None,
+            }
+        };
+        self.search_gen.fetch_add(1, Ordering::Relaxed);
+        let result = self.edited(range.map(|(_, end)| self.position_of(end)));
+        self.update_guard(result.dirty);
+        Ok(result)
+    }
+
+    /// The text between two positions, e.g. for the clipboard.
+    pub fn text(&self, from: Pos, to: Pos) -> Result<String, String> {
+        let (a, b) = (self.offset_of(from)?, self.offset_of(to)?);
+        let (a, b) = (a.min(b), a.max(b));
+        if b - a > MAX_COPY {
+            return Err(format!(
+                "The selection is too large to copy ({} MB, at most {} MB).",
+                (b - a) >> 20,
+                MAX_COPY >> 20
+            ));
+        }
+        Ok(self.decode(&self.read_range(a, b)))
+    }
+
+    // ------------------------------------------------------------------ saving
+
+    /// Writes the document to `tmp`: original pieces are copied from the file in chunks, inserted
+    /// ones from the add buffer.
+    fn stream_to(&self, table: Option<&PieceTable>, tmp: &Path) -> std::io::Result<()> {
+        let mut out = BufWriter::with_capacity(1 << 20, File::create(tmp)?);
+        let mut buf = vec![0u8; CHUNK];
+        let mut copy = |out: &mut BufWriter<File>, start: u64, len: u64| -> std::io::Result<()> {
+            let mut at = start;
+            while at < start + len {
+                let n = ((start + len - at) as usize).min(CHUNK);
+                if read_at(&self.file, &mut buf[..n], at)? < n {
+                    // Never write a shortened copy: the original changed underneath.
+                    return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "the file became shorter while saving"));
+                }
+                out.write_all(&buf[..n])?;
+                at += n as u64;
+            }
+            Ok(())
+        };
+        match table {
+            Some(table) => {
+                for p in table.pieces() {
+                    match p.source {
+                        Source::Original => copy(&mut out, p.start, p.len)?,
+                        Source::Added => out.write_all(&table.added()[p.start as usize..p.end() as usize])?,
+                    }
+                }
+            }
+            None => copy(&mut out, 0, self.size())?,
+        }
+        out.into_inner().map_err(|e| e.into_error())?.sync_all()
+    }
+
+    /// Saves the document to `target` like `write_safely`: a temporary file next to it, flushed to
+    /// disk, then swapped in with ReplaceFileW (keeping attributes and permissions). Unlike
+    /// `write_safely` there is no fallback to writing in place, because the document is partly read
+    /// from the very file that would be overwritten. Returns the line index of the written file.
+    fn write_to(&self, target: &Path) -> Result<Vec<u64>, String> {
+        let (Some(dir), Some(name)) = (target.parent(), target.file_name()) else {
+            return Err("Invalid file name.".into());
+        };
+        let name = name.to_string_lossy();
+        let tmp = dir.join(format!(".{name}.kladde-save"));
+        let edits = self.edits.read().unwrap();
+        let index = match &*edits {
+            Some(e) => e.table.line_starts(&self.index.read().unwrap()),
+            None => self.index.read().unwrap().clone(),
+        };
+        if let Err(e) = self.stream_to(edits.as_ref().map(|e| &e.table), &tmp) {
+            let _ = fs::remove_file(&tmp);
+            return Err(format!("Could not write a temporary file next to {name}: {e}"));
+        }
+        let dirty = edits.as_ref().is_some_and(|e| e.table.is_modified());
+        drop(edits);
+        // The guard denies writing, which the replacement needs.
+        *self.guard.lock().unwrap() = None;
+        let swapped = if target.exists() {
+            replace_file(target, &tmp).or_else(|_| fs::rename(&tmp, target))
+        } else {
+            fs::rename(&tmp, target)
+        };
+        if let Err(e) = swapped {
+            let _ = fs::remove_file(&tmp);
+            self.update_guard(dirty);
+            return Err(format!("Could not replace {name}: {e}"));
+        }
+        Ok(index)
+    }
+
+    // ------------------------------------------------------------------ hot exit
+
+    /// Writes the journal of the edits into the backup folder: the add buffer is appended to its
+    /// own file (it only ever grows), then the piece list is written atomically. A crash in between
+    /// leaves the previous journal, which only refers to bytes that are already on disk.
+    pub fn backup(&self, dir: &Path, tab: &str) -> Result<(), String> {
+        let edits = self.edits.read().unwrap();
+        let Some(e) = edits.as_ref() else { return Ok(()) };
+        let mut state = self.journal.lock().unwrap();
+        let added = e.table.added();
+        let path = added_path(dir, tab, &state.generation);
+        let on_disk = fs::metadata(&path).map(|m| m.len()).ok();
+        let written = (|| -> std::io::Result<()> {
+            if on_disk == Some(state.written) && state.written <= added.len() as u64 {
+                if state.written < added.len() as u64 {
+                    let mut file = fs::OpenOptions::new().append(true).open(&path)?;
+                    file.write_all(&added[state.written as usize..])?;
+                    file.sync_data()?;
+                }
+            } else {
+                // The first backup, or the file was removed meanwhile (the tab was clean for a moment).
+                let mut file = File::create(&path)?;
+                file.write_all(added)?;
+                file.sync_data()?;
+            }
+            Ok(())
+        })();
+        written.map_err(|e| e.to_string())?;
+        state.written = added.len() as u64;
+        let journal = {
+            let fp = self.fingerprint.lock().unwrap();
+            Journal {
+                version: 1,
+                size: e.table.original_len(),
+                mtime: e.mtime,
+                head: base64(&fp.head),
+                tail_at: fp.tail_at,
+                tail: base64(&fp.tail),
+                added: state.generation.clone(),
+                added_len: state.written,
+                pieces: e.table.pieces().iter().map(|p| ((p.source == Source::Added) as u8, p.start, p.len)).collect(),
+            }
+        };
+        let json = serde_json::to_vec(&journal).map_err(|e| e.to_string())?;
+        write_safely(&journal_path(dir, tab), &json).map_err(|e| e.to_string())?;
+        // Buffers of earlier documents of this tab (before a save or a reload).
+        remove_added(dir, tab, path.file_name().and_then(|n| n.to_str()));
+        Ok(())
+    }
+
+    /// Applies the journal of a tab to this (freshly opened) file. Without `force`, only if the
+    /// file is still exactly the one the edits were made to; otherwise nothing changes and the
+    /// journal stays, so the user can decide.
+    pub fn restore(&self, dir: &Path, tab: &str, force: bool) -> Result<Restored, String> {
+        let json = match fs::read(journal_path(dir, tab)) {
+            Ok(json) => json,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                let state = self.edited(None);
+                return Ok(Restored { status: "missing", lines: state.lines, size: state.size, dirty: state.dirty });
+            }
+            Err(e) => return Err(e.to_string()),
+        };
+        let journal: Journal = serde_json::from_slice(&json).map_err(|e| format!("Unreadable backup: {e}"))?;
+        if journal.version != 1 || !journal.added.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return Err("Unknown backup format.".into());
+        }
+        while !self.done.load(Ordering::Acquire) {
+            if self.cancelled.load(Ordering::Relaxed) {
+                return Err("File is no longer open".into());
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let mtime = self.file.metadata().map(|m| mtime_ms(&m)).unwrap_or(0);
+        let same = {
+            let fp = self.fingerprint.lock().unwrap();
+            journal.size == self.size()
+                && journal.mtime == mtime
+                && journal.head == base64(&fp.head)
+                && journal.tail_at == fp.tail_at
+                && journal.tail == base64(&fp.tail)
+        };
+        if !same && !force {
+            return Ok(Restored { status: "conflict", lines: self.line_count(), size: self.doc_size(), dirty: false });
+        }
+        let mut added = if journal.added_len == 0 {
+            Vec::new()
+        } else {
+            fs::read(added_path(dir, tab, &journal.added)).map_err(|e| format!("The backup is incomplete: {e}"))?
+        };
+        if (added.len() as u64) < journal.added_len {
+            return Err("The backup is incomplete.".into());
+        }
+        added.truncate(journal.added_len as usize);
+        let mut breaks = Vec::new();
+        for_each_line_end(self.breaks, &added, 0, |end| breaks.push(end as u64));
+        let pieces: Vec<(Source, u64, u64)> = journal
+            .pieces
+            .iter()
+            .map(|&(source, start, len)| (if source == 1 { Source::Added } else { Source::Original }, start, len))
+            .collect();
+        {
+            let mut edits = self.edits.write().unwrap();
+            let index = self.index.read().unwrap();
+            let table = PieceTable::restore(&index, self.size(), added, breaks, &pieces)?;
+            *edits = Some(Edits { table, mtime });
+        }
+        *self.journal.lock().unwrap() = JournalState { generation: journal.added, written: journal.added_len };
+        self.search_gen.fetch_add(1, Ordering::Relaxed);
+        let state = self.edited(None);
+        self.update_guard(state.dirty);
+        Ok(Restored { status: "applied", lines: state.lines, size: state.size, dirty: state.dirty })
+    }
+}
+
+/// What `LargeFiles::register` needs to know about a file that was just opened.
+struct Opening {
+    path: PathBuf,
+    file: File,
+    size: u64,
+    mtime: u64,
+    encoding: &'static Encoding,
+    bom_len: u64,
+    eol: &'static str,
+    /// A complete line index (after saving); None starts the background indexer.
+    index: Option<Vec<u64>>,
+}
+
 impl LargeFiles {
     pub fn open(&self, path: &Path) -> Result<LargeOpened, String> {
         let file = File::open(path).map_err(|e| e.to_string())?;
@@ -628,6 +1195,14 @@ impl LargeFiles {
             Some((enc, len)) => (enc, len as u64),
             None => (guess_encoding(&head, n as u64 == size), 0),
         };
+        // Lines are split at LF only, so a classic Mac (CR) file gets LF for new lines.
+        let decoded = encoding.decode_without_bom_handling(&head[bom_len as usize..]).0;
+        let eol = if detect_eol(&decoded) == "CRLF" { "CRLF" } else { "LF" };
+        Ok(self.register(Opening { path: path.to_path_buf(), file, size, mtime: mtime_ms(&meta), encoding, bom_len, eol, index: None }))
+    }
+
+    fn register(&self, opening: Opening) -> LargeOpened {
+        let Opening { path, file, size, mtime, encoding, bom_len, eol, index } = opening;
         let breaks = if encoding == UTF_16LE {
             Breaks::Utf16Le
         } else if encoding == UTF_16BE {
@@ -635,29 +1210,35 @@ impl LargeFiles {
         } else {
             Breaks::Byte
         };
-
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
+        let indexed = index.is_some();
         let large = Arc::new(LargeFile {
+            path,
             file,
             size: AtomicU64::new(size),
             encoding,
             breaks,
             unit: if breaks == Breaks::Byte { 1 } else { 2 },
             bom_len,
-            index: RwLock::new(vec![0]),
-            indexed_to: AtomicU64::new(0),
-            done: AtomicBool::new(false),
+            eol,
+            index: RwLock::new(index.unwrap_or_else(|| vec![0])),
+            indexed_to: AtomicU64::new(if indexed { size } else { 0 }),
+            done: AtomicBool::new(indexed),
             cancelled: AtomicBool::new(false),
-            worker: Mutex::new(true),
-            eof_break: AtomicBool::new(false),
+            worker: Mutex::new(!indexed),
             fingerprint: Mutex::new(Fingerprint { head: Vec::new(), tail_at: 0, tail: Vec::new() }),
             search_gen: AtomicU64::new(0),
+            edits: RwLock::new(None),
+            saving: AtomicBool::new(false),
+            guard: Mutex::new(None),
+            journal: Mutex::new(JournalState { generation: new_generation(id), written: 0 }),
         });
         *large.fingerprint.lock().unwrap() = large.fingerprint_now(size);
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
         self.open.lock().unwrap().insert(id, large.clone());
-        std::thread::spawn(move || large.index_worker());
-
-        Ok(LargeOpened { id, size, encoding: encoding.name().to_string(), mtime: mtime_ms(&meta) })
+        if !indexed {
+            std::thread::spawn(move || large.index_worker());
+        }
+        LargeOpened { id, size, encoding: encoding.name().to_string(), bom: bom_len > 0, eol: eol.to_string(), mtime }
     }
 
     pub fn get(&self, id: u32) -> Result<Arc<LargeFile>, String> {
@@ -666,18 +1247,18 @@ impl LargeFiles {
 
     pub fn info(&self, id: u32) -> Result<LargeInfo, String> {
         let file = self.get(id)?;
-        let lines = file.index.read().unwrap().len() as u64;
-        Ok(LargeInfo { lines, done: file.done.load(Ordering::Acquire), size: file.size.load(Ordering::Acquire) })
+        Ok(LargeInfo {
+            lines: file.line_count(),
+            done: file.done.load(Ordering::Acquire),
+            size: file.doc_size(),
+            dirty: file.is_dirty(),
+        })
     }
 
     pub fn lines(&self, id: u32, start: u64, count: u64) -> Result<Vec<Line>, String> {
         let file = self.get(id)?;
-        let ranges: Vec<(u64, u64)> = {
-            let index = file.index.read().unwrap();
-            (start..start + count).map_while(|i| file.line_range(&index, i as usize)).collect()
-        };
-        Ok(ranges
-            .into_iter()
+        Ok((start..start.saturating_add(count))
+            .map_while(|i| file.line_bounds(i, false))
             .map(|(s, e)| {
                 let (bytes, truncated) = file.read_line(s, e);
                 Line { text: file.decode(&bytes), truncated }
@@ -697,9 +1278,51 @@ impl LargeFiles {
         }
     }
 
+    /// Saves the document to its file, or to `target` (save as), and opens the result in place of
+    /// the old one: the returned id replaces `id`, which is closed. `journal` (backup folder and tab
+    /// id) is removed once the file is replaced, so a crash right after the save does not restore
+    /// edits that are already in the file.
+    pub fn save(&self, id: u32, target: Option<&Path>, journal: Option<(&Path, &str)>) -> Result<LargeOpened, String> {
+        let file = self.get(id)?;
+        if !file.done.load(Ordering::Acquire) {
+            return Err("The file is still being indexed; save once that is done.".into());
+        }
+        if file.saving.swap(true, Ordering::AcqRel) {
+            return Err("The file is already being saved.".into());
+        }
+        let path = target.map_or_else(|| file.path.clone(), Path::to_path_buf);
+        // Follow symlinks like write_safely: the link stays, its target gets the content.
+        let real = fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+        let expected = file.doc_size();
+        let written = file.write_to(&real);
+        file.saving.store(false, Ordering::Release);
+        let index = written?;
+        if let Some((dir, tab)) = journal {
+            remove_journal(dir, tab);
+        }
+        let reopened = File::open(&path).and_then(|f| Ok((f.metadata()?, f))).map_err(|e| e.to_string());
+        self.close(id);
+        let (meta, handle) = reopened?;
+        // The index of the document is the index of the saved file, unless the file is not what was
+        // written (another program got in between): then it is indexed again.
+        let size = meta.len();
+        let index = (size == expected).then_some(index);
+        Ok(self.register(Opening {
+            path,
+            file: handle,
+            size,
+            mtime: mtime_ms(&meta),
+            encoding: file.encoding,
+            bom_len: file.bom_len,
+            eol: file.eol,
+            index,
+        }))
+    }
+
     pub fn close(&self, id: u32) {
         if let Some(file) = self.open.lock().unwrap().remove(&id) {
             file.cancelled.store(true, Ordering::Relaxed);
+            *file.guard.lock().unwrap() = None;
         }
     }
 }
@@ -861,8 +1484,9 @@ mod tests {
         std::fs::write(&path, &bytes).unwrap();
         let files = LargeFiles::default();
         let (id, _) = open(&files, &path);
-        // The empty line after the last break is not a line.
-        assert_eq!(files.info(id).unwrap().lines, 2);
+        // A final break is followed by an empty line, like in the editor.
+        assert_eq!(files.info(id).unwrap().lines, 3);
+        assert_eq!(files.lines(id, 2, 1).unwrap()[0].text, "");
         files.close(id);
 
         // A half written code unit at the end is ignored.
@@ -882,9 +1506,9 @@ mod tests {
         std::fs::write(&path, "one\ntwo\n").unwrap();
         let files = LargeFiles::default();
         let (id, file) = open(&files, &path);
-        assert_eq!(files.info(id).unwrap().lines, 2);
+        assert_eq!(files.info(id).unwrap().lines, 3);
 
-        // Append a partial line, then complete it: the last line grows in place.
+        // Append a partial line, then complete it: the empty last line grows in place.
         let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
         f.write_all(b"thr").unwrap();
         let r = files.refresh(id).unwrap();
@@ -897,7 +1521,7 @@ mod tests {
         f.write_all(b"ee\nfour\n").unwrap();
         assert!(!files.refresh(id).unwrap().changed);
         file.wait_for_index();
-        assert_eq!(files.info(id).unwrap().lines, 4);
+        assert_eq!(files.info(id).unwrap().lines, 5);
         assert_eq!(files.lines(id, 2, 2).unwrap().iter().map(|l| l.text.as_str()).collect::<Vec<_>>(), ["three", "four"]);
         assert_eq!(find(&file, query("four", 0, 0, true, true, true, false)), Some((3, 0, 4)));
 
@@ -921,7 +1545,7 @@ mod tests {
         std::fs::write(&path, utf16("eins\r\n", false, true)).unwrap();
         let files = LargeFiles::default();
         let (id, file) = open(&files, &path);
-        assert_eq!(files.info(id).unwrap().lines, 1);
+        assert_eq!(files.info(id).unwrap().lines, 2);
         let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
         f.write_all(&utf16("zwei\r\ndrei", false, false)).unwrap();
         assert!(!files.refresh(id).unwrap().changed);
@@ -959,6 +1583,231 @@ mod tests {
         assert!(matches!(file.check(generation - 1), Err(Stop::Cancelled)));
         files.cancel_search(id);
         assert!(matches!(file.check(generation), Err(Stop::Cancelled)));
+        files.close(id);
+    }
+
+    fn pos(line: u64, col: u64) -> Pos {
+        Pos { line, col }
+    }
+
+    fn insert(file: &LargeFile, line: u64, col: u64, text: &str) -> Edited {
+        file.edit(&[Change { from: pos(line, col), to: pos(line, col), text: text.into() }], EditKind::Other).unwrap()
+    }
+
+    fn delete(file: &LargeFile, from: Pos, to: Pos) -> Edited {
+        file.edit(&[Change { from, to, text: String::new() }], EditKind::Other).unwrap()
+    }
+
+    fn texts(files: &LargeFiles, id: u32, start: u64, count: u64) -> Vec<String> {
+        files.lines(id, start, count).unwrap().into_iter().map(|l| l.text).collect()
+    }
+
+    #[test]
+    fn edit_utf8_crlf_search_undo_and_save() {
+        let path = temp("edit-crlf.txt");
+        let row = |i: usize| format!("line {i} äöü");
+        let text: String = (0..1000).map(|i| row(i) + "\r\n").collect();
+        std::fs::write(&path, &text).unwrap();
+        let files = LargeFiles::default();
+        let (id, file) = open(&files, &path);
+        assert_eq!(files.info(id).unwrap().lines, 1001);
+
+        // Columns count UTF-16 code units: after "line 10 ä".
+        let r = insert(&file, 10, 9, "X\nY");
+        assert!(r.dirty && r.can_undo);
+        assert_eq!(r.lines, 1002);
+        assert_eq!(texts(&files, id, 10, 3), ["line 10 äX", "Yöü", "line 11 äöü"]);
+        // Join the first two lines (a column past the end means the end), then type at both ends.
+        delete(&file, pos(0, 100), pos(1, 0));
+        assert_eq!(texts(&files, id, 0, 1), ["line 0 äöüline 1 äöü"]);
+        let last = files.info(id).unwrap().lines - 1;
+        assert_eq!(texts(&files, id, last, 1), [""]);
+        insert(&file, last, 0, "end");
+        insert(&file, 0, 0, "start ");
+
+        // Search and copying see the edited document.
+        assert_eq!(find(&file, query("äX", 0, 0, true, true, true, false)), Some((9, 8, 2)));
+        assert_eq!(find(&file, query("end", u64::MAX, 0, false, false, true, false)), Some((last, 0, 3)));
+        assert_eq!(file.text(pos(9, 8), pos(10, 1)).unwrap(), "äX\r\nY");
+
+        // Undo and redo the last step.
+        let undone = file.undo(false).unwrap();
+        assert_eq!(undone.caret, Some(pos(0, 0)));
+        assert_eq!(texts(&files, id, 0, 1), ["line 0 äöüline 1 äöü"]);
+        let redone = file.undo(true).unwrap();
+        assert_eq!(redone.caret, Some(pos(0, 6)));
+
+        let mut expected = format!("start {}{}\r\n", row(0), row(1));
+        for i in 2..1000 {
+            expected += &if i == 10 { "line 10 äX\r\nYöü".to_string() } else { row(i) };
+            expected += "\r\n";
+        }
+        expected += "end";
+        let saved = files.save(id, None, None).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
+        assert!(!path.with_file_name(".edit-crlf.txt.kladde-save").exists());
+        // The viewer continues on the saved file, with the index it already knew.
+        assert!(files.get(id).is_err());
+        let info = files.info(saved.id).unwrap();
+        assert!(info.done && !info.dirty);
+        assert_eq!(info.lines, 1001);
+        assert_eq!(texts(&files, saved.id, 9, 2), ["line 10 äX", "Yöü"]);
+        assert_eq!(texts(&files, saved.id, 1000, 1), ["end"]);
+        assert_eq!(saved.eol, "CRLF");
+        // Editing goes on in the new file.
+        insert(&files.get(saved.id).unwrap(), 1000, 3, "!");
+        assert_eq!(texts(&files, saved.id, 1000, 1), ["end!"]);
+        files.close(saved.id);
+    }
+
+    #[test]
+    fn utf16_edits_and_save() {
+        for little_endian in [true, false] {
+            let path = temp(if little_endian { "edit16le.txt" } else { "edit16be.txt" });
+            std::fs::write(&path, utf16("eins\r\nzwei 😀 drei\r\nletzte", little_endian, true)).unwrap();
+            let files = LargeFiles::default();
+            let (id, file) = open(&files, &path);
+            assert_eq!(files.info(id).unwrap().lines, 3);
+            // After the emoji: 5 + 2 code units.
+            insert(&file, 1, 7, "ä\n");
+            assert_eq!(texts(&files, id, 1, 2), ["zwei 😀ä", " drei"]);
+            // Right after the BOM, and joining lines over a CRLF.
+            insert(&file, 0, 0, "> ");
+            delete(&file, pos(0, 6), pos(1, 0));
+            assert_eq!(texts(&files, id, 0, 1), ["> einszwei 😀ä"]);
+            // Delete the emoji (two code units) and type at the end of the file.
+            delete(&file, pos(0, 11), pos(0, 13));
+            insert(&file, 2, 6, " ende");
+            assert_eq!(file.text(pos(0, 0), pos(2, 11)).unwrap(), "> einszwei ä\r\n drei\r\nletzte ende");
+            files.save(id, None, None).unwrap();
+            assert_eq!(std::fs::read(&path).unwrap(), utf16("> einszwei ä\r\n drei\r\nletzte ende", little_endian, true));
+        }
+    }
+
+    #[test]
+    fn legacy_encoding_edits() {
+        let path = temp("edit1252.txt");
+        // "Größe" in windows-1252, LF line endings.
+        std::fs::write(&path, b"Gr\xF6\xDFe\nzwei\n").unwrap();
+        let files = LargeFiles::default();
+        let (id, file) = open(&files, &path);
+        assert_eq!(file.encoding.name(), "windows-1252");
+        insert(&file, 0, 5, "nä\nneu");
+        let err = file.edit(&[Change { from: pos(0, 0), to: pos(0, 0), text: "日本".into() }], EditKind::Type).unwrap_err();
+        assert!(err.contains("cannot be saved"), "{err}");
+        files.save(id, None, None).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"Gr\xF6\xDFen\xE4\nneu\nzwei\n");
+    }
+
+    #[test]
+    fn save_as_leaves_the_original() {
+        let path = temp("save-as-src.txt");
+        let target = temp("save-as-dst.txt");
+        let _ = std::fs::remove_file(&target);
+        std::fs::write(&path, "a\nb\n").unwrap();
+        let files = LargeFiles::default();
+        let (id, file) = open(&files, &path);
+        insert(&file, 1, 1, "c");
+        let saved = files.save(id, Some(&target), None).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"a\nb\n");
+        assert_eq!(std::fs::read(&target).unwrap(), b"a\nbc\n");
+        assert!(!files.info(saved.id).unwrap().dirty);
+        files.close(saved.id);
+    }
+
+    #[test]
+    fn journal_backup_and_restore() {
+        let dir = temp("journal");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = temp("journal.log");
+        let text: String = (0..500).map(|i| format!("entry {i}\n")).collect();
+        std::fs::write(&path, &text).unwrap();
+
+        let files = LargeFiles::default();
+        let (id, file) = open(&files, &path);
+        insert(&file, 3, 0, "first ");
+        file.backup(&dir, "tab").unwrap();
+        // More edits: the add buffer file is appended to, the piece list rewritten.
+        insert(&file, 499, 9, "\nadded at the end");
+        delete(&file, pos(0, 0), pos(2, 0));
+        file.backup(&dir, "tab").unwrap();
+        let expected: Vec<String> = texts(&files, id, 0, 1000);
+        files.close(id);
+
+        // Like the next start after a crash: the file is opened again and the journal applied.
+        let files = LargeFiles::default();
+        let (id, file) = open(&files, &path);
+        let restored = file.restore(&dir, "tab", false).unwrap();
+        assert_eq!(restored.status, "applied");
+        assert!(restored.dirty);
+        assert_eq!(texts(&files, id, 0, 1000), expected);
+        assert_eq!(texts(&files, id, 1, 1), ["first entry 3"]);
+        // Editing and backing up go on from the restored state.
+        insert(&file, 0, 0, "x");
+        file.backup(&dir, "tab").unwrap();
+        files.close(id);
+
+        // The file changed meanwhile: nothing is applied unless forced, and the journal stays.
+        std::fs::write(&path, text.replace("entry 7\n", "ENTRY 7\n")).unwrap();
+        let (id, file) = open(&files, &path);
+        assert_eq!(file.restore(&dir, "tab", false).unwrap().status, "conflict");
+        assert!(!files.info(id).unwrap().dirty);
+        let forced = file.restore(&dir, "tab", true).unwrap();
+        assert_eq!(forced.status, "applied");
+        assert_eq!(texts(&files, id, 0, 1), ["xentry 2"]);
+        files.close(id);
+
+        // Saved (or discarded): nothing left to restore.
+        remove_journal(&dir, "tab");
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+        let (id, file) = open(&files, &path);
+        assert_eq!(file.restore(&dir, "tab", false).unwrap().status, "missing");
+        files.close(id);
+    }
+
+    #[test]
+    fn saving_removes_the_journal() {
+        let dir = temp("journal-save");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = temp("journal-save.txt");
+        std::fs::write(&path, "one\ntwo\n").unwrap();
+        let files = LargeFiles::default();
+        let (id, file) = open(&files, &path);
+        insert(&file, 0, 3, "!");
+        file.backup(&dir, "tab").unwrap();
+        assert!(journal_path(&dir, "tab").exists());
+        let saved = files.save(id, None, Some((&dir, "tab"))).unwrap();
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+        assert_eq!(std::fs::read(&path).unwrap(), b"one!\ntwo\n");
+        files.close(saved.id);
+    }
+
+    #[test]
+    fn growth_is_not_followed_while_edited() {
+        let path = temp("guarded.log");
+        std::fs::write(&path, "a\nb\n").unwrap();
+        let files = LargeFiles::default();
+        let (id, file) = open(&files, &path);
+        insert(&file, 2, 0, "c");
+        assert_eq!(texts(&files, id, 0, 5), ["a", "b", "c"]);
+
+        // While edited, other programs cannot write the original underneath the edits (Windows).
+        #[cfg(windows)]
+        assert!(std::fs::OpenOptions::new().append(true).open(&path).is_err());
+        let refreshed = files.refresh(id).unwrap();
+        assert!(!refreshed.changed);
+        assert_eq!(texts(&files, id, 0, 5), ["a", "b", "c"]);
+
+        // Undone: the guard is gone, and growth is followed again (the undo history goes).
+        assert!(!file.undo(false).unwrap().dirty);
+        let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+        f.write_all(b"d\n").unwrap();
+        assert!(!files.refresh(id).unwrap().changed);
+        file.wait_for_index();
+        assert_eq!(texts(&files, id, 0, 5), ["a", "b", "d", ""]);
+        assert!(!file.edited(None).can_redo);
         files.close(id);
     }
 }

@@ -151,30 +151,23 @@ pub fn read(path: &Path, forced_encoding: Option<&str>) -> Result<FileContent, S
     })
 }
 
-/// Encodes `text` (with `\n` line breaks) and writes it. Returns the new modification time.
-pub fn write(path: &Path, text: &str, encoding: &str, bom: bool, eol: &str) -> Result<u64, String> {
+/// Encodes `text` (with `\n` line breaks) with the given line ending, without a BOM.
+pub fn encode_text(text: &str, enc: &'static Encoding, eol: &str) -> Result<Vec<u8>, String> {
     let text = match eol {
         "CRLF" => text.replace('\n', "\r\n"),
         "CR" => text.replace('\n', "\r"),
         _ => text.to_string(),
     };
-
-    let enc = encoding_by_label(encoding)?;
-    let mut out: Vec<u8> = Vec::with_capacity(text.len() + 3);
     if enc == UTF_8 {
-        if bom {
-            out.extend_from_slice(b"\xEF\xBB\xBF");
-        }
-        out.extend_from_slice(text.as_bytes());
+        Ok(text.into_bytes())
     } else if enc == UTF_16LE || enc == UTF_16BE {
         // encoding_rs only decodes UTF-16 (per the WHATWG spec), so encode by hand.
         let le = enc == UTF_16LE;
-        if bom {
-            out.extend_from_slice(if le { b"\xFF\xFE" } else { b"\xFE\xFF" });
-        }
+        let mut out = Vec::with_capacity(text.len() * 2);
         for unit in text.encode_utf16() {
             out.extend_from_slice(&if le { unit.to_le_bytes() } else { unit.to_be_bytes() });
         }
+        Ok(out)
     } else {
         let (encoded, _, unmappable) = enc.encode(&text);
         if unmappable {
@@ -183,8 +176,28 @@ pub fn write(path: &Path, text: &str, encoding: &str, bom: bool, eol: &str) -> R
                 enc.name()
             ));
         }
-        out.extend_from_slice(&encoded);
+        Ok(encoded.into_owned())
     }
+}
+
+/// The byte order mark of an encoding (empty for encodings without one).
+pub fn bom_of(enc: &'static Encoding) -> &'static [u8] {
+    if enc == UTF_8 {
+        b"\xEF\xBB\xBF"
+    } else if enc == UTF_16LE {
+        b"\xFF\xFE"
+    } else if enc == UTF_16BE {
+        b"\xFE\xFF"
+    } else {
+        b""
+    }
+}
+
+/// Encodes `text` (with `\n` line breaks) and writes it. Returns the new modification time.
+pub fn write(path: &Path, text: &str, encoding: &str, bom: bool, eol: &str) -> Result<u64, String> {
+    let enc = encoding_by_label(encoding)?;
+    let body = encode_text(text, enc, eol)?;
+    let out = if bom { [bom_of(enc), &body].concat() } else { body };
 
     write_safely(path, &out).map_err(|e| e.to_string())?;
     let meta = fs::metadata(path).map_err(|e| e.to_string())?;
@@ -220,7 +233,7 @@ pub fn write_safely(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 }
 
 #[cfg(windows)]
-fn replace_file(target: &Path, replacement: &Path) -> std::io::Result<()> {
+pub fn replace_file(target: &Path, replacement: &Path) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::{
         ReplaceFileW, REPLACEFILE_IGNORE_ACL_ERRORS, REPLACEFILE_IGNORE_MERGE_ERRORS,
@@ -247,7 +260,7 @@ fn replace_file(target: &Path, replacement: &Path) -> std::io::Result<()> {
 }
 
 #[cfg(not(windows))]
-fn replace_file(target: &Path, replacement: &Path) -> std::io::Result<()> {
+pub fn replace_file(target: &Path, replacement: &Path) -> std::io::Result<()> {
     fs::rename(replacement, target)
 }
 

@@ -42,7 +42,7 @@ pub fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-fn backup_dir(app: &AppHandle) -> Result<PathBuf, String> {
+pub fn backup_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = data_dir(app)?.join("backup");
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     Ok(dir)
@@ -58,7 +58,7 @@ pub fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 /// Only plain names may reach the file system, never paths.
-fn check_name(name: &str) -> Result<&str, String> {
+pub fn check_name(name: &str) -> Result<&str, String> {
     let valid = !name.is_empty()
         && name.len() <= 64
         && !name.starts_with('.')

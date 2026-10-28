@@ -2,6 +2,7 @@ mod files;
 mod integration;
 mod languagetool;
 mod large;
+mod pieces;
 mod session;
 mod update;
 
@@ -120,6 +121,67 @@ async fn large_refresh(id: u32, state: State<'_, large::LargeFiles>) -> Result<l
 async fn large_close(id: u32, state: State<'_, large::LargeFiles>) -> Result<(), String> {
     state.close(id);
     Ok(())
+}
+
+#[tauri::command]
+async fn large_edit(
+    id: u32,
+    changes: Vec<large::Change>,
+    kind: pieces::EditKind,
+    state: State<'_, large::LargeFiles>,
+) -> Result<large::Edited, String> {
+    state.get(id)?.edit(&changes, kind)
+}
+
+#[tauri::command]
+async fn large_undo(id: u32, redo: bool, state: State<'_, large::LargeFiles>) -> Result<large::Edited, String> {
+    state.get(id)?.undo(redo)
+}
+
+#[tauri::command]
+async fn large_text(id: u32, from: large::Pos, to: large::Pos, state: State<'_, large::LargeFiles>) -> Result<String, String> {
+    state.get(id)?.text(from, to)
+}
+
+/// Streams a multi-GB document to disk: on the blocking pool. `tab` names the journal to remove
+/// once the file is replaced.
+#[tauri::command]
+async fn large_save(
+    app: AppHandle,
+    id: u32,
+    path: Option<String>,
+    tab: String,
+    state: State<'_, large::LargeFiles>,
+) -> Result<large::LargeOpened, String> {
+    let dir = session::backup_dir(&app)?;
+    let tab = session::check_name(&tab)?.to_string();
+    let files = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || files.save(id, path.as_deref().map(Path::new), Some((&dir, &tab))))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn large_backup(app: AppHandle, id: u32, tab: String, state: State<'_, large::LargeFiles>) -> Result<(), String> {
+    let dir = session::backup_dir(&app)?;
+    let tab = session::check_name(&tab)?.to_string();
+    let file = state.get(id)?;
+    tauri::async_runtime::spawn_blocking(move || file.backup(&dir, &tab)).await.map_err(|e| e.to_string())?
+}
+
+/// Waits for the index of the freshly opened file, so it runs on the blocking pool.
+#[tauri::command]
+async fn large_restore(
+    app: AppHandle,
+    id: u32,
+    tab: String,
+    force: bool,
+    state: State<'_, large::LargeFiles>,
+) -> Result<large::Restored, String> {
+    let dir = session::backup_dir(&app)?;
+    let tab = session::check_name(&tab)?.to_string();
+    let file = state.get(id)?;
+    tauri::async_runtime::spawn_blocking(move || file.restore(&dir, &tab, force)).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -395,6 +457,12 @@ pub fn run() {
             large_search_cancel,
             large_refresh,
             large_close,
+            large_edit,
+            large_undo,
+            large_text,
+            large_save,
+            large_backup,
+            large_restore,
             session_load,
             session_save,
             backup_write,
