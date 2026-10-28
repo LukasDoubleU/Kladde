@@ -213,7 +213,16 @@ export async function launch({ exe = DEBUG_EXE, port = 9341, profile = tempProfi
       await exited(child, 10000);
     },
   };
-  await app.waitFor("document.querySelector('.tab')", 10000);
+  // The page can come up long before the app has mounted (slow CI runners), so the start timeout applies
+  // here too. A failed start must not leave the process or the socket behind: the test runner would wait
+  // for them forever.
+  try {
+    await app.waitFor("document.querySelector('.tab')", Math.max(10000, startTimeout - (Date.now() - started)));
+  } catch (e) {
+    await app.kill();
+    throw new Error(`${e.message} (port ${port}). stderr:
+${stderr}`);
+  }
   return app;
 }
 

@@ -102,15 +102,18 @@ jobs:
       # A quick first check: if the app cannot start on the runner at all, the diagnostics below run
       # instead of every test waiting for its timeout.
       - name: Smoke test
+        timeout-minutes: 5
         env:
           KLADDE_E2E_START_TIMEOUT: "90000"
         run: node --test tests/e2e/smoke.test.mjs
 
       # One app at a time: the runner has few cores, and a cold WebView2 start is slow.
+      # A hanging test fails after 3 minutes instead of blocking the job until GitHub's 6-hour limit.
       - name: End-to-end tests
+        timeout-minutes: 30
         env:
           KLADDE_E2E_START_TIMEOUT: "90000"
-        run: node --test --test-concurrency=1 "tests/e2e/*.test.mjs"
+        run: node --test --test-concurrency=1 --test-timeout=180000 "tests/e2e/*.test.mjs"
 
       - name: Diagnostics when the app does not start
         if: failure()
