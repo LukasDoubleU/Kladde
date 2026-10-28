@@ -97,6 +97,8 @@ export type UpdateProgress =
   | { event: "installing" };
 
 export const api = {
+  /** Shows and focuses the main window (a test instance stays in the background). */
+  showWindow: () => invoke<void>("show_window"),
   initialPaths: () => invoke<string[]>("initial_paths"),
   readFile: (path: string, encoding?: string) => invoke<FileContent>("read_file", { path, encoding }),
   writeFile: (path: string, text: string, encoding: string, bom: boolean, eol: Eol) =>

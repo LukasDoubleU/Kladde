@@ -243,12 +243,29 @@ async fn integration_dismiss_offer(app: AppHandle) -> Result<(), String> {
     integration::set_offer_dismissed(&session::data_dir(&app)?)
 }
 
-/// wry's default WebView2 arguments (no mini menu, no SmartScreen); setting own arguments replaces them.
-const WEBVIEW_DEFAULT_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection";
+/// WebView2 features wry turns off by default (mini menu, SmartScreen); own browser arguments replace wry's.
+const WEBVIEW_DISABLED_FEATURES: &str = "msWebOOUI,msPdfOOUI,msSmartScreenProtection";
+
+/// Where a test instance's window lives: far outside any monitor, so it never shows up on the user's screen.
+/// Logical pixels; even at 300 % scaling this stays clear of -32000, which Windows uses for minimized windows.
+const BACKGROUND_POSITION: f64 = -10000.0;
+
+/// Browser arguments of a test instance. Its window is off screen, which Chromium treats as occluded and
+/// would stop painting and throttle timers for; tests also run while other windows cover it.
+fn background_browser_args(devtools_port: Option<u16>) -> String {
+    let mut args = format!(
+        "--disable-features={WEBVIEW_DISABLED_FEATURES},CalculateNativeWinOcclusion \
+         --disable-backgrounding-occluded-windows --disable-renderer-backgrounding \
+         --disable-background-timer-throttling"
+    );
+    if let Some(port) = devtools_port {
+        args.push_str(&format!(" --remote-debugging-port={port}"));
+    }
+    args
+}
 
 /// Creates the main window from its config (`create: false` there), so an isolated profile can set up
-/// WebView2 itself: the environment variables WebView2 offers for that are not honored everywhere (the
-/// GitHub Windows runner ignores them).
+/// the window and WebView2 itself.
 fn create_main_window(app: &AppHandle) -> tauri::Result<()> {
     let config = app
         .config()
@@ -260,15 +277,35 @@ fn create_main_window(app: &AppHandle) -> tauri::Result<()> {
         .expect("tauri.conf.json defines the main window");
     let mut window = tauri::WebviewWindowBuilder::from_config(app, &config)?;
     if let Some(dir) = session::isolated_profile() {
-        // Its own WebView2 profile too (local storage, caches), never the one of the normal installation.
-        window = window.data_directory(dir.join("webview"));
-    }
-    if let Some(port) = session::devtools_port() {
-        let base = config.additional_browser_args.as_deref().unwrap_or(WEBVIEW_DEFAULT_ARGS);
-        window = window.additional_browser_args(&format!("{base} --remote-debugging-port={port}"));
+        // A test instance runs next to the user's work and must never take the focus or appear on screen.
+        // Shown right away: only at creation does the window open without being activated (a later
+        // `show()` activates it), and `show_window` leaves it alone.
+        window = window
+            .focused(false)
+            .focusable(false)
+            .skip_taskbar(true)
+            .position(BACKGROUND_POSITION, BACKGROUND_POSITION)
+            .visible(true)
+            // Its own WebView2 profile, never the one of the normal installation.
+            .data_directory(dir.join("webview"))
+            // WebView2's environment variables for browser arguments are not honored everywhere (the GitHub
+            // Windows runner ignores them), so the DevTools port for the e2e harness is passed here.
+            .additional_browser_args(&background_browser_args(session::devtools_port()));
     }
     window.build()?;
     Ok(())
+}
+
+/// Shows the main window once the first tab is rendered (it starts hidden to avoid a flash). A test
+/// instance is already shown, off screen and inactive, and must not be activated: `set_focus` even
+/// simulates an Alt key press to get the foreground.
+#[tauri::command]
+fn show_window(window: tauri::WebviewWindow) -> Result<(), String> {
+    if session::isolated_profile().is_some() {
+        return Ok(());
+    }
+    window.show().map_err(|e| e.to_string())?;
+    window.set_focus().map_err(|e| e.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -295,16 +332,19 @@ pub fn run() {
                 let _ = window.set_focus();
             }
         }));
+        // Not for an isolated profile: the window state lives in the normal config folder, and file dialogs,
+        // the browser or Explorer would pop up on the user's screen during a test.
+        builder = builder
+            .plugin(
+                tauri_plugin_window_state::Builder::default()
+                    // The frontend shows the window once the first tab is rendered.
+                    .with_state_flags(StateFlags::all() & !StateFlags::VISIBLE)
+                    .build(),
+            )
+            .plugin(tauri_plugin_dialog::init())
+            .plugin(tauri_plugin_opener::init());
     }
     builder
-        .plugin(
-            tauri_plugin_window_state::Builder::default()
-                // The frontend shows the window once the first tab is rendered.
-                .with_state_flags(StateFlags::all() & !StateFlags::VISIBLE)
-                .build(),
-        )
-        .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(large::LargeFiles::default())
         .manage(update::Pending::default())
@@ -314,6 +354,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             frontend_log,
+            show_window,
             initial_paths,
             read_file,
             write_file,
@@ -348,4 +389,20 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Kladde");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn background_instances_keep_rendering_and_open_devtools_only_on_request() {
+        let args = background_browser_args(None);
+        // One --disable-features switch: Chromium only reads the last one, so wry's defaults go in it too.
+        assert_eq!(args.matches("--disable-features=").count(), 1);
+        assert!(args.contains(WEBVIEW_DISABLED_FEATURES));
+        assert!(args.contains("CalculateNativeWinOcclusion"));
+        assert!(!args.contains("--remote-debugging-port"));
+        assert!(background_browser_args(Some(9340)).ends_with(" --remote-debugging-port=9340"));
+    }
 }

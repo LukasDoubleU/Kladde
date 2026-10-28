@@ -395,8 +395,7 @@
       workspace.attachView(editorHost);
       await workspace.restoreSession();
       await workspace.openPaths(await api.initialPaths());
-      await appWindow.show();
-      await appWindow.setFocus();
+      await api.showWindow();
       if (errors.length) workspace.showNotice("error", errors.join(" "));
       void integration.check();
       updates.scheduleCheck();
