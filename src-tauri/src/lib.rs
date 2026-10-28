@@ -247,8 +247,8 @@ async fn integration_dismiss_offer(app: AppHandle) -> Result<(), String> {
 const WEBVIEW_DISABLED_FEATURES: &str = "msWebOOUI,msPdfOOUI,msSmartScreenProtection";
 
 /// Where a test instance's window lives: far outside any monitor, so it never shows up on the user's screen.
-/// Logical pixels; even at 300 % scaling this stays clear of -32000, which Windows uses for minimized windows.
-const BACKGROUND_POSITION: f64 = -10000.0;
+/// Physical pixels, clear of -32000, which Windows uses for minimized windows.
+const BACKGROUND_POSITION: i32 = -20000;
 
 /// Browser arguments of a test instance. Its window is off screen, which Chromium treats as occluded and
 /// would stop painting and throttle timers for; tests also run while other windows cover it.
@@ -276,29 +276,56 @@ fn create_main_window(app: &AppHandle) -> tauri::Result<()> {
         .cloned()
         .expect("tauri.conf.json defines the main window");
     let mut window = tauri::WebviewWindowBuilder::from_config(app, &config)?;
-    if let Some(dir) = session::isolated_profile() {
+    let isolated = session::isolated_profile();
+    if let Some(dir) = &isolated {
         // A test instance runs next to the user's work and must never take the focus or appear on screen.
-        // Shown right away: only at creation does the window open without being activated (a later
-        // `show()` activates it), and `show_window` leaves it alone.
         window = window
             .focused(false)
             .focusable(false)
             .skip_taskbar(true)
-            .position(BACKGROUND_POSITION, BACKGROUND_POSITION)
-            .visible(true)
             // Its own WebView2 profile, never the one of the normal installation.
             .data_directory(dir.join("webview"))
             // WebView2's environment variables for browser arguments are not honored everywhere (the GitHub
             // Windows runner ignores them), so the DevTools port for the e2e harness is passed here.
             .additional_browser_args(&background_browser_args(session::devtools_port()));
     }
-    window.build()?;
+    let window = window.build()?;
+    if isolated.is_some() {
+        show_in_background(&window)?;
+    }
+    Ok(())
+}
+
+/// Shows a test instance's still hidden window off screen, without activating it and without a taskbar
+/// button. Done with Win32 directly: tao moves a window that is to be created outside every monitor back
+/// onto the primary one, and its `show()` activates the window.
+#[cfg(windows)]
+fn show_in_background(window: &tauri::WebviewWindow) -> tauri::Result<()> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWL_EXSTYLE, SWP_NOACTIVATE,
+        SWP_NOSIZE, SWP_NOZORDER, SW_SHOWNA, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
+    };
+    let hwnd = window.hwnd()?.0;
+    // SAFETY: plain Win32 calls on our own, live window, on the thread that owns it.
+    unsafe {
+        // A tool window has no taskbar button and is not in Alt+Tab.
+        let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, (style & !(WS_EX_APPWINDOW as isize)) | WS_EX_TOOLWINDOW as isize);
+        let flags = SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE;
+        SetWindowPos(hwnd, std::ptr::null_mut(), BACKGROUND_POSITION, BACKGROUND_POSITION, 0, 0, flags);
+        ShowWindow(hwnd, SW_SHOWNA);
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn show_in_background(_window: &tauri::WebviewWindow) -> tauri::Result<()> {
     Ok(())
 }
 
 /// Shows the main window once the first tab is rendered (it starts hidden to avoid a flash). A test
-/// instance is already shown, off screen and inactive, and must not be activated: `set_focus` even
-/// simulates an Alt key press to get the foreground.
+/// instance is already shown off screen (`show_in_background`) and must not be activated: `show()` would
+/// activate it and `set_focus` even simulates an Alt key press to get the foreground.
 #[tauri::command]
 fn show_window(window: tauri::WebviewWindow) -> Result<(), String> {
     if session::isolated_profile().is_some() {
