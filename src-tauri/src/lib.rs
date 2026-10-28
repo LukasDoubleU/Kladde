@@ -243,6 +243,34 @@ async fn integration_dismiss_offer(app: AppHandle) -> Result<(), String> {
     integration::set_offer_dismissed(&session::data_dir(&app)?)
 }
 
+/// wry's default WebView2 arguments (no mini menu, no SmartScreen); setting own arguments replaces them.
+const WEBVIEW_DEFAULT_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection";
+
+/// Creates the main window from its config (`create: false` there), so an isolated profile can set up
+/// WebView2 itself: the environment variables WebView2 offers for that are not honored everywhere (the
+/// GitHub Windows runner ignores them).
+fn create_main_window(app: &AppHandle) -> tauri::Result<()> {
+    let config = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|w| w.label == "main")
+        .cloned()
+        .expect("tauri.conf.json defines the main window");
+    let mut window = tauri::WebviewWindowBuilder::from_config(app, &config)?;
+    if let Some(dir) = session::isolated_profile() {
+        // Its own WebView2 profile too (local storage, caches), never the one of the normal installation.
+        window = window.data_directory(dir.join("webview"));
+    }
+    if let Some(port) = session::devtools_port() {
+        let base = config.additional_browser_args.as_deref().unwrap_or(WEBVIEW_DEFAULT_ARGS);
+        window = window.additional_browser_args(&format!("{base} --remote-debugging-port={port}"));
+    }
+    window.build()?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // The NSIS uninstaller runs this to remove the file associations before it deletes the exe. Handled
@@ -280,6 +308,10 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(large::LargeFiles::default())
         .manage(update::Pending::default())
+        .setup(|app| {
+            create_main_window(app.handle())?;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             frontend_log,
             initial_paths,

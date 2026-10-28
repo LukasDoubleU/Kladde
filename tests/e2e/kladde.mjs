@@ -74,12 +74,15 @@ class Cdp {
  * run), profile (folder; default: a fresh temporary one), files (paths to open), env (extra variables).
  */
 export async function launch({ exe = DEBUG_EXE, port = 9341, profile = tempProfile(), files = [], env = {} } = {}) {
+  // Kladde sets up WebView2 itself for an isolated profile (its own WebView2 folder inside the data folder,
+  // the DevTools port from KLADDE_DEVTOOLS_PORT): WebView2's own environment variables are ignored on the
+  // GitHub runner. Inherited ones are dropped so they cannot override what Kladde passes.
+  const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^WEBVIEW2_/i.test(name)));
   const child = spawn(exe, files, {
     env: {
-      ...process.env,
+      ...inherited,
       KLADDE_DATA_DIR: join(profile, "data"),
-      WEBVIEW2_USER_DATA_FOLDER: join(profile, "webview"),
-      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}`,
+      KLADDE_DEVTOOLS_PORT: String(port),
       ...env,
     },
     stdio: ["ignore", "ignore", "pipe"],

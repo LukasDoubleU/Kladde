@@ -18,6 +18,21 @@ pub fn isolated_profile() -> Option<PathBuf> {
     std::env::var_os(DATA_DIR_ENV).filter(|v| !v.is_empty()).map(PathBuf::from)
 }
 
+/// DevTools port for end-to-end tests. Kladde passes it to WebView2 itself because some machines (the
+/// GitHub Windows runner) ignore `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`.
+pub const DEVTOOLS_PORT_ENV: &str = "KLADDE_DEVTOOLS_PORT";
+
+/// The DevTools port requested by an isolated profile. Never set in a normal run: an open debugging port
+/// would let any local program drive the editor and read its files.
+pub fn devtools_port() -> Option<u16> {
+    devtools_port_for(isolated_profile().is_some(), std::env::var(DEVTOOLS_PORT_ENV).ok())
+}
+
+fn devtools_port_for(isolated: bool, value: Option<String>) -> Option<u16> {
+    // Port 0 would make WebView2 pick a random port the tests cannot find.
+    value.filter(|_| isolated)?.trim().parse().ok().filter(|&port| port != 0)
+}
+
 pub fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = match isolated_profile() {
         Some(dir) => dir,
@@ -150,4 +165,19 @@ pub fn config_file(app: &AppHandle, name: &str, default: &str) -> Result<String,
         fs::write(&path, default).map_err(|e| e.to_string())?;
     }
     Ok(path.to_string_lossy().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn devtools_port_needs_an_isolated_profile() {
+        assert_eq!(devtools_port_for(false, Some("9340".into())), None);
+        assert_eq!(devtools_port_for(true, Some("9340".into())), Some(9340));
+        assert_eq!(devtools_port_for(true, None), None);
+        assert_eq!(devtools_port_for(true, Some("".into())), None);
+        assert_eq!(devtools_port_for(true, Some("0".into())), None);
+        assert_eq!(devtools_port_for(true, Some("port".into())), None);
+    }
 }
