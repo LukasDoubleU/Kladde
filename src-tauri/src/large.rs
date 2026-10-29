@@ -893,11 +893,18 @@ impl LargeFile {
     // ------------------------------------------------------------------ editing
 
     fn check_editable(&self) -> Result<(), String> {
-        if self.saving.load(Ordering::Acquire) {
-            return Err("The file is being saved; try again when that is done.".into());
-        }
+        self.check_not_saving()?;
         if !self.done.load(Ordering::Acquire) {
             return Err("The file is still being indexed; editing works once that is done.".into());
+        }
+        Ok(())
+    }
+
+    /// Checked again under the write lock on the edits: an edit that slipped past the first check
+    /// while the save streamed the document would otherwise land in the table that `save` discards.
+    fn check_not_saving(&self) -> Result<(), String> {
+        if self.saving.load(Ordering::Acquire) {
+            return Err("The file is being saved; try again when that is done.".into());
         }
         Ok(())
     }
@@ -938,6 +945,7 @@ impl LargeFile {
         }
         {
             let mut edits = self.edits.write().unwrap();
+            self.check_not_saving()?;
             let index = self.index.read().unwrap();
             let edits = edits.get_or_insert_with(|| Edits {
                 table: PieceTable::new(&index, self.size()),
@@ -958,6 +966,7 @@ impl LargeFile {
         self.check_editable()?;
         let range = {
             let mut edits = self.edits.write().unwrap();
+            self.check_not_saving()?;
             let index = self.index.read().unwrap();
             match edits.as_mut() {
                 Some(e) if redo => e.table.redo(&index),
@@ -1334,9 +1343,9 @@ impl LargeFiles {
         // Follow symlinks like write_safely: the link stays, its target gets the content.
         let real = fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
         let expected = file.doc_size();
-        let written = file.write_to(&real);
-        file.saving.store(false, Ordering::Release);
-        let index = written?;
+        // `saving` stays set from here on when the save succeeds: the document is replaced by the
+        // written file below, so an edit to it now would be lost together with the journal.
+        let index = file.write_to(&real).inspect_err(|_| file.saving.store(false, Ordering::Release))?;
         if let Some((dir, tab)) = journal {
             remove_journal(dir, tab);
         }
