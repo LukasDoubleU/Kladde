@@ -122,7 +122,7 @@
     // Also on the mouse's back/forward buttons.
     { id: "tab.back", label: "Go back to the previous tab", keys: ["Alt+Left"], run: () => workspace.navigate(-1) },
     { id: "tab.forward", label: "Go forward to the next tab", keys: ["Alt+Right"], run: () => workspace.navigate(1) },
-    { id: "view.commandPalette", label: "Show all commands", keys: ["Ctrl+Shift+P", "F1"], run: commandPalette },
+    { id: "view.commandPalette", label: "Show all commands", keys: ["Ctrl+Shift+P", "F1", "Ctrl+Shift+A", "Ctrl+3"], run: commandPalette },
     {
       id: "view.togglePreview",
       label: "Toggle Markdown preview",

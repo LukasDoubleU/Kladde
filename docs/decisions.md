@@ -43,7 +43,8 @@ The default preset contains deliberate choices; presets (Notepad++, VS Code) and
   back/forward buttons), `Ctrl+PageDown` / `Ctrl+PageUp` (next/previous tab, sent for right button + wheel), and
   `Alt+F4` closes the window via hot exit.
 - `Shift+Alt+F` formats by language; `Ctrl+Shift+V` cycles the Markdown preview; `F7`/`Shift+F7` move between
-  changes in compare tabs; `Ctrl+Shift+P`/`F1` open the command palette, which lists every command with its keys.
+  changes in compare tabs; `Ctrl+Shift+P`/`F1` open the command palette, which lists every command with its keys;
+  the owner also wants `Ctrl+Shift+A` (IntelliJ's "Find Action") and `Ctrl+3` (Eclipse's "Quick Access") for it.
 
 ## Privacy and the outside world
 

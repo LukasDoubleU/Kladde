@@ -121,6 +121,12 @@ test("default keys: Ctrl+/ toggles a comment, other owner defaults keep working"
     await app.key("Alt+Left");
     await app.key("Alt+Left");
     assert.equal((await app.state()).active, "a.js");
+    // The command palette also opens with IntelliJ's and Eclipse's keys (key() waits for its input).
+    for (const combo of ["Ctrl+Shift+A", "Ctrl+3"]) {
+      await app.key(combo);
+      await app.key("Escape");
+      await app.waitFor("!document.querySelector('.picker')");
+    }
   });
 });
 

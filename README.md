@@ -141,7 +141,7 @@ Kladde refreshes an existing registration silently at the next start.
 
 ## Shortcuts
 
-`Ctrl+Shift+P` (or `F1`) lists every command with its shortcut.
+`Ctrl+Shift+P` (or `F1`, `Ctrl+Shift+A`, `Ctrl+3`) lists every command with its shortcut.
 
 | Keys | Action |
 |---|---|
