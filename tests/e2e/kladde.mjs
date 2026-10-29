@@ -124,7 +124,12 @@ export async function launch({ exe = DEBUG_EXE, port = 9341, profile = tempProfi
     /** Evaluates an expression in the page (awaits promises) and returns its value. */
     async eval(expression) {
       const r = await cdp.send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
-      if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description ?? r.exceptionDetails.text);
+      if (r.exceptionDetails) {
+        // A rejected Tauri command rejects with a plain string: without its value the error would only
+        // read "Uncaught (in promise)".
+        const e = r.exceptionDetails.exception;
+        throw new Error(e?.description ?? (e?.value !== undefined ? `${r.exceptionDetails.text} ${JSON.stringify(e.value)}` : r.exceptionDetails.text));
+      }
       return r.result.value;
     },
 
@@ -217,7 +222,7 @@ export async function launch({ exe = DEBUG_EXE, port = 9341, profile = tempProfi
   // here too. A failed start must not leave the process or the socket behind: the test runner would wait
   // for them forever.
   try {
-    await app.waitFor("document.querySelector('.tab')", Math.max(10000, startTimeout - (Date.now() - started)));
+    await app.waitFor("document.documentElement.dataset.ready !== undefined && document.querySelector('.tab')", Math.max(10000, startTimeout - (Date.now() - started)));
   } catch (e) {
     await app.kill();
     throw new Error(`${e.message} (port ${port}). stderr:

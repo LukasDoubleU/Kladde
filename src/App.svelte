@@ -421,6 +421,9 @@
       await workspace.restoreSession();
       await workspace.openPaths(await api.initialPaths());
       await api.showWindow();
+      // Startup is over: session restored, files from the command line opened. The e2e harness waits for this, because
+      // acting earlier races with the restore (it activates tabs and moves the focus into the editor).
+      document.documentElement.dataset.ready = "";
       if (errors.length) workspace.showNotice("error", errors.join(" "));
       void integration.check();
       updates.scheduleCheck();
