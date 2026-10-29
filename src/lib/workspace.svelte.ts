@@ -32,7 +32,7 @@ import { allLanguages, detectLanguage, extensionOf, findLanguage, IMAGE_EXTENSIO
 import { dirname, renderMarkdown, renderSvg, resolvePath, setLanguageLoadedHandler } from "./markdown";
 import { settings } from "./settings.svelte";
 
-export type TabKind = "text" | "large" | "image" | "compare";
+export type TabKind = "text" | "large" | "image" | "compare" | "settings";
 export type PreviewMode = "off" | "split" | "only";
 
 export interface Tab {
@@ -1164,6 +1164,25 @@ class Workspace {
     else handle?.previous();
   }
 
+  // ---------------------------------------------------------------- settings page
+
+  /** Shows the settings page: one tab for all, next to the tab it was started from. */
+  showSettings() {
+    const open = this.tabs.find((t) => t.kind === "settings");
+    if (open) return this.activate(open.id);
+    const tab = this.textTab({ kind: "settings", title: "Settings" });
+    const index = this.tabs.findIndex((t) => t.id === this.activeId);
+    this.tabs.splice(index + 1, 0, tab);
+    this.activate(tab.id);
+  }
+
+  /** Escape on the settings page: back to the tab it was opened from (the page stays open as a tab). */
+  leaveSettings() {
+    const id = this.activeId;
+    this.navigate(-1);
+    if (this.activeId === id) this.cycle(1);
+  }
+
   private openCompare(left: CompareSide, right: CompareSide, language: string | null) {
     const tab = this.textTab({ kind: "compare", title: `${left.label} ↔ ${right.label}`, language });
     this.compareData.set(tab.id, { left, right });
@@ -1228,7 +1247,7 @@ class Workspace {
 
   async gotoLine() {
     const tab = this.active;
-    if (!tab || tab.kind === "image" || tab.kind === "compare") return;
+    if (!tab || tab.kind === "image" || tab.kind === "compare" || tab.kind === "settings") return;
     const max = tab.kind === "large" ? this.largeStatus.lines : this.cursor.lines;
     const answer = await this.pick({ placeholder: `Go to line (1 – ${max})`, items: [], freeText: true });
     const line = typeof answer === "string" ? parseInt(answer, 10) : NaN;
@@ -1257,6 +1276,18 @@ class Workspace {
     this.applyViewOptions();
     this.showNotice("info", `Spell checking ${this.ui.spellCheck ? "on" : "off"}.`);
     this.scheduleSession();
+  }
+
+  /**
+   * The settings page changed wordWrap, spellCheck or grammarCheck: the settings are the start-up values and the session
+   * keeps the current ones, so the current state follows at once. Grammar checking only starts with a server.
+   */
+  followSetting(name: "wordWrap" | "spellCheck" | "grammarCheck") {
+    const want = settings[name];
+    if (this.ui[name] === want) return;
+    if (name === "wordWrap") this.toggleWrap();
+    else if (name === "spellCheck") this.toggleSpellCheck();
+    else if (!want || settings.languageToolServer.trim()) void this.toggleGrammarCheck();
   }
 
   /** Pretty-prints (or minifies) the JSON in the active tab. */
@@ -1499,8 +1530,9 @@ class Workspace {
     const keep: string[] = [];
     const tabs: SessionTab[] = [];
     // Snapshot of state and version together: edits during the awaits below must not be marked as
-    // backed up when an older text was written. Compare tabs are snapshots: nothing to restore.
-    const snapshot = this.tabs.filter((tab) => tab.kind !== "compare").map((tab) => {
+    // backed up when an older text was written. Compare tabs are snapshots and the settings tab
+    // is only a view: nothing to restore.
+    const snapshot = this.tabs.filter((tab) => tab.kind !== "compare" && tab.kind !== "settings").map((tab) => {
       const rt = this.runtime.get(tab.id);
       return { tab, rt, state: rt?.state, version: rt?.version ?? 0 };
     });
@@ -1619,7 +1651,7 @@ class Workspace {
   }
 
   private async restoreTab(saved: SessionTab) {
-    if (saved.kind === "compare") return;
+    if (saved.kind === "compare" || saved.kind === "settings") return;
     if (saved.kind === "large" && saved.path) {
       if (!(await api.statFile(saved.path)).exists) return;
       await this.openLarge(saved.path, saved.id);

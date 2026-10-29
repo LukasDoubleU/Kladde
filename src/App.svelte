@@ -78,7 +78,7 @@
     { id: "file.open", label: "Open file…", keys: ["Ctrl+O"], run: () => workspace.openWithDialog() },
     { id: "file.save", label: "Save", keys: ["Ctrl+S"], run: () => workspace.save(), enabled: editableTab },
     { id: "file.saveAs", label: "Save as…", keys: ["Ctrl+Shift+S"], run: () => workspace.saveAs(), enabled: editableTab },
-    { id: "file.saveAll", label: "Save all", keys: ["Ctrl+Alt+S"], run: () => workspace.saveAll() },
+    { id: "file.saveAll", label: "Save all", keys: ["Ctrl+Alt+Shift+S"], run: () => workspace.saveAll() },
     {
       id: "file.close",
       label: "Close tab",
@@ -230,6 +230,7 @@
       run: () => integration.remove(),
     },
     { id: "update.check", label: "Check for updates", run: () => updates.check(true) },
+    { id: "settings.show", label: "Settings", keys: ["Ctrl+Alt+S"], run: () => workspace.showSettings() },
     {
       id: "settings.open",
       label: "Open settings (settings.json)",
@@ -524,6 +525,14 @@
     <!-- Kept alive while hidden, so a compare tab returns with its scroll position. -->
     {#each workspace.tabs.filter((t) => t.kind === "compare") as t (t.id)}
       <div class="fill" class:hidden={t.id !== tab?.id}><Compare tab={t} active={t.id === tab?.id} /></div>
+    {/each}
+    <!-- Like a compare tab, kept alive while hidden (search text, scroll position); loaded on first use. -->
+    {#each workspace.tabs.filter((t) => t.kind === "settings") as t (t.id)}
+      <div class="fill" class:hidden={t.id !== tab?.id}>
+        {#await import("./components/SettingsPage.svelte") then { default: SettingsPage }}
+          <SettingsPage active={t.id === tab?.id} />
+        {/await}
+      </div>
     {/each}
     {#if tab?.kind === "large"}
       {#key tab.id}
