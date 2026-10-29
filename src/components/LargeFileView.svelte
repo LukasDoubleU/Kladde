@@ -96,6 +96,11 @@
     });
   });
 
+  // Counts the times the indexer was seen finished. The last line has no known end while it runs, so lines
+  // fetched meanwhile lack it, and when the line count stays the same (a partly written last line gets
+  // completed) nothing else would ask again.
+  let indexedTick = $state(0);
+
   // Poll the background indexer until it has counted all lines; again after the file grew or changed.
   $effect(() => {
     const fileId = id;
@@ -110,8 +115,10 @@
         done = info.done;
         workspace.largeStatus = { lines: info.lines, done: info.done, size: info.size };
         if (followEnd) scrollTo(maxTop);
-        if (info.done) followEnd = false;
-        else setTimeout(poll, 150);
+        if (info.done) {
+          followEnd = false;
+          indexedTick++;
+        } else setTimeout(poll, 150);
       } catch {
         /* closed */
       }
@@ -186,7 +193,7 @@
     }
   }
   $effect(() => {
-    void [id, topLine, visible, total, tab.size, tab.revision, parser];
+    void [id, topLine, visible, total, indexedTick, tab.size, tab.revision, parser];
     untrack(() => void fetchLines());
   });
 
