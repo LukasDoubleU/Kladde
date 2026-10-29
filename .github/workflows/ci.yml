@@ -63,8 +63,6 @@ jobs:
   # everything comes back. Needs the WebView2 runtime, which windows-latest ships with.
   e2e:
     runs-on: windows-latest
-    # Non-blocking until the DevTools endpoint works on the runner (#11); run `npm run test:e2e` locally.
-    continue-on-error: true
     defaults:
       run:
         shell: bash

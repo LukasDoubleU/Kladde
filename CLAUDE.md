@@ -17,7 +17,7 @@ anything employer-related out of code, commits, issues, release notes and docs.
 | [docs/decisions.md](docs/decisions.md) | Product decisions and owner preferences (style, default keys, privacy, Windows integration) |
 | [docs/testing.md](docs/testing.md) | Unit/Rust/e2e tests, the CDP harness, env vars, port table, pitfalls, CI status |
 | [docs/development.md](docs/development.md) | Setup, worktree-per-issue workflow, merge conflicts, releases, Windows/Tauri/Svelte pitfalls, how to add things |
-| [docs/roadmap.md](docs/roadmap.md) | Open issues (#9, #11) and known gaps |
+| [docs/roadmap.md](docs/roadmap.md) | Open issues (#9) and known gaps |
 | README.md | User-facing features, shortcuts, settings, theming variables |
 
 ## Layout (short)

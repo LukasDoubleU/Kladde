@@ -1,6 +1,6 @@
 # Roadmap and known gaps
 
-State after v0.2.0 (end of October 2026). Issues #1–#8 and #10 are closed.
+State after v0.2.0 (end of October 2026). Issues #1–#8, #10 and #11 are closed.
 
 ## Open issues
 
@@ -9,10 +9,6 @@ Auto-update is done. Missing: Authenticode signing so SmartScreen does not warn.
 (formerly Trusted Signing) or SignPath Foundation (free for open source, manual application). Wire it in through
 Tauri's `bundle.windows.signCommand` (signs exe, installer and uninstaller during the build; the portable exe is a
 copy of the signed `kladde.exe`). The updater's minisign `.sig` must be created after Authenticode signing.
-
-### #11 End-to-end tests on the CI runner
-See [testing.md](testing.md#ci): WebView2 on the runner ignores the remote-debugging argument. Also: occasional
-timeouts in long local full runs.
 
 ## Smaller follow-ups (no issues yet)
 

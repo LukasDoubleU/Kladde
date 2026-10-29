@@ -21,8 +21,20 @@ properties). `tsconfig.json` has `allowImportingTsExtensions` for that.
 `launch({ port, profile, files, env })` starts `src-tauri/target/debug/kladde.exe` with:
 
 - `KLADDE_DATA_DIR=<profile>/data`: isolated settings, session, backups (and no single-instance hand-off);
-- `WEBVIEW2_USER_DATA_FOLDER=<profile>/webview`: own WebView2 profile;
-- `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=<port>`.
+- `KLADDE_DEVTOOLS_PORT=<port>`: Kladde itself passes `--remote-debugging-port` to WebView2 (and puts the WebView2
+  profile into `<profile>/data/webview`). WebView2's own variables (`WEBVIEW2_USER_DATA_FOLDER`,
+  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`) are not honored on the GitHub runner, so the harness drops inherited
+  `WEBVIEW2_*` variables and does not use them.
+
+A test instance never shows up on the desktop: its window is created unfocused and unfocusable, without taskbar
+button, and moved far off screen (`create_main_window` and `show_in_background` in `lib.rs`); the browser
+arguments keep an off-screen page rendering (no occlusion detection, no background throttling). Never work around
+this when running tests, and never start `kladde.exe` by hand without `KLADDE_DATA_DIR`.
+
+`launch()` waits for a free DevTools port (a dying WebView2 keeps serving the old page for a moment), then for
+`document.documentElement.dataset.ready`, which the app sets when startup is over (session restored, command-line
+files opened); acting earlier races with the restore. A start that fails is cleaned up (process killed, socket
+closed) and reports the app's stderr.
 
 It connects over CDP and returns helpers: `key("Ctrl+Shift+P")`, `type(text)`, `eval(expr)`, `waitFor(expr)`,
 `state()` (tabs, active, dirty, editor text, dialog, notice), `wheel`, `click`, `screenshot(path, {width,height})`,
@@ -58,10 +70,11 @@ Free for new files: 9351–9353, 9359–9362, 9366–9370, 9374–9375, 9377–9
 | Variable | Effect (only together with `KLADDE_DATA_DIR` where noted) |
 |---|---|
 | `KLADDE_DATA_DIR` | Isolated profile: data and config folder, no single instance, registry writes go to a test key, no automatic update check |
+| `KLADDE_DEVTOOLS_PORT` | Passes `--remote-debugging-port=<port>` to WebView2 (isolated profile only; never in a normal run: an open debugging port would let any local program drive the editor) |
 | `KLADDE_TEST_KEY` | Name of the registry test key `HKCU\Software\KladdeTest\<key>` used by an isolated profile |
 | `KLADDE_TEST_OFFER=1` | Shows the default-editor offer in an isolated profile |
 | `KLADDE_UPDATE_URL` | Update manifest URL (isolated profile only); tests serve a fake `latest.json` |
-| `KLADDE_E2E_START_TIMEOUT` | Harness: how long to wait for the app to come up (ms, default 20000) |
+| `KLADDE_E2E_START_TIMEOUT` | Harness: how long to wait for the app to come up (ms, default 20000; CI uses 90000) |
 
 ## Pitfalls we hit (and how the harness handles them)
 
@@ -91,17 +104,25 @@ Free for new files: 9351–9353, 9359–9362, 9366–9370, 9374–9375, 9377–9
 
 ## Known flakiness
 
-- In a long sequential full run, single tests occasionally time out (seen: theme, grammar public-server
-  confirmation, integration) while they pass when run alone. Usually a hidden timing assumption: wait for the
-  UI state (`waitFor`) instead of sleeping, and make sure the UI you type into is open. Tracked in issue #11.
+Occasional timeouts used to show up in long sequential runs while the tests passed alone (theme, grammar,
+integration, preview, compare). The causes were hidden timing assumptions, not slow machines:
+
+- acting while the app still restored its session (it activates tabs and focuses the editor, taking the focus from
+  a command palette that was just opened): `launch()` now waits for `data-ready`;
+- connecting to the dying WebView2 of the previous launch on the same port: `launch()` waits until the port is free;
+- a rejected Tauri command only read "Uncaught (in promise)": `eval()` now reports the rejection value.
+
+When a test times out, find the UI state it should have waited for (`waitFor`) instead of raising the timeout or
+sleeping. `key("Ctrl+Shift+P")` reports the focus state when the palette does not come up.
 
 ## CI
 
-- `.github/workflows/ci.yml`: job `check` (commit messages, svelte-check, frontend build, `cargo test`) is
-  required. Job `e2e` builds the debug app and runs the smoke test, then all e2e tests one at a time, and collects
-  diagnostics on failure. It is `continue-on-error` for now: on the GitHub runner (Windows Server 2025, WebView2
-  155, interactive session) Kladde starts and shows its window, but the DevTools endpoint refuses connections —
-  WebView2 there ignores `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`. Likely fix: let Kladde pass
-  `--remote-debugging-port` itself (window created in `setup()` with `additional_browser_args`) when an isolated
-  profile asks for it. Issue #11.
-- Pushes to `main` cancel the running CI of the previous push (concurrency group), so check the latest run.
+- `.github/workflows/ci.yml`: job `check` (commit messages, svelte-check, frontend build, `cargo test`) and job
+  `e2e` are both required. `e2e` builds the debug app (`windows-latest`, WebView2 preinstalled), runs the smoke
+  test, then all e2e tests one at a time (`--test-concurrency=1 --test-timeout=180000`, start timeout 90 s), and
+  runs a diagnostics step when something failed (processes, WebView2 command line, DevTools endpoint, stderr).
+  Steps have timeouts, so a hang fails the job instead of blocking it for hours.
+- The runner's interactive session has a desktop, so the windows are real, but off screen like locally.
+  WebView2 there ignores `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`; that is why Kladde passes the port itself.
+- A full run takes about 5 minutes. CI only runs for pull requests and pushes to `main`; pushes to `main` cancel
+  the running CI of the previous push (concurrency group), so check the latest run.
