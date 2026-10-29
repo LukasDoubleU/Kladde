@@ -573,8 +573,9 @@ class Workspace {
         });
       }
       this.updateCursor(this.view.state);
+      // Not when a palette or dialog opened meanwhile: it holds the focus now.
       requestAnimationFrame(() => {
-        if (this.activeId === id && tab.preview !== "only") this.view?.focus();
+        if (this.activeId === id && tab.preview !== "only" && !this.picker && !this.dialog) this.view?.focus();
       });
     }
     this.renderPreview();
@@ -1359,7 +1360,7 @@ class Workspace {
     }
     tab.preview = tab.preview === "off" ? "split" : tab.preview === "split" ? "only" : "off";
     this.renderPreview();
-    if (tab.preview !== "only") requestAnimationFrame(() => this.view?.focus());
+    if (tab.preview !== "only") requestAnimationFrame(() => !this.picker && !this.dialog && this.view?.focus());
     this.scheduleSession();
   }
 
@@ -1459,7 +1460,7 @@ class Workspace {
           this.picker = null;
           resolve(value);
           // Not when the answer opened the next picker (command palette -> "Compare with…"), which wants the focus.
-          if (this.active?.kind === "text") requestAnimationFrame(() => !this.picker && this.view?.focus());
+          if (this.active?.kind === "text") requestAnimationFrame(() => !this.picker && !this.dialog && this.view?.focus());
         },
       };
     });

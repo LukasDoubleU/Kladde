@@ -57,13 +57,13 @@ Rules:
 | grammar | 9387–9389 |
 | hot-exit | 9344, 9354–9358 |
 | integration | 9347 |
-| keys | 9350, 9384–9386 |
+| keys | 9350–9351, 9384–9386 |
 | large | 9345, 9391–9393, 9397–9399 (the editing tests reuse earlier ports one app at a time) |
 | preview | 9346, 9376 |
 | theme | 9348, 9381–9383 |
 | update | 9349, 9394–9396 |
 
-Free for new files: 9351–9353, 9359–9362, 9366–9370, 9374–9375, 9377–9380, 9390.
+Free for new files: 9352–9353, 9359–9362, 9366–9370, 9374–9375, 9377–9380, 9390.
 
 ## Environment variables
 
@@ -107,8 +107,13 @@ Free for new files: 9351–9353, 9359–9362, 9366–9370, 9374–9375, 9377–9
 Occasional timeouts used to show up in long sequential runs while the tests passed alone (theme, grammar,
 integration, preview, compare). The causes were hidden timing assumptions, not slow machines:
 
-- acting while the app still restored its session (it activates tabs and focuses the editor, taking the focus from
-  a command palette that was just opened): `launch()` now waits for `data-ready`;
+- the editor takes the focus one frame after a tab switch (`activate`), which took it from a command palette
+  opened in between: the first `Ctrl+Shift+P` after a slow start, also on a locked screen (compare, theme).
+  It was an app bug, not a test problem: the frame callbacks now leave the focus alone while a picker or dialog
+  is open (regression test in `keys.test.mjs`). `launch()` also waits for `data-ready`, so tests do not race the
+  session restore either;
+- the large file viewer lacked its last line when a partly written line was completed while the indexer ran
+  (fixed in the view; reproduced by running the test under CPU load);
 - connecting to the dying WebView2 of the previous launch on the same port: `launch()` waits until the port is free;
 - a rejected Tauri command only read "Uncaught (in promise)": `eval()` now reports the rejection value.
 

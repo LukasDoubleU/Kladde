@@ -55,6 +55,29 @@ async function choose(app, placeholder, label) {
   await app.key("Enter");
 }
 
+test("the command palette keeps the focus when it opens right after a tab switch", async () => {
+  // Switching tabs hands the focus back to the editor one frame later. That used to take it from a palette
+  // opened in between (a command after a slow start, a quick Ctrl+Tab, Ctrl+Shift+P), so typed text went
+  // into the editor. Both keys run in one task here so that the frame cannot come first.
+  const dir = tempProfile("kladde-keys-run");
+  const files = ["one.txt", "two.txt"].map((name) => writeFixture(profile, name, name));
+  const app = await launch({ port: 9351, profile: dir, files });
+  try {
+    await app.waitFor("document.querySelector('.tab.active .title')?.textContent === 'two.txt'");
+    const keydown = (key, code) =>
+      `window.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(key)}, code: ${JSON.stringify(code)}, ctrlKey: true, shiftKey: ${key === "P"}, bubbles: true, cancelable: true }))`;
+    await app.eval(`${keydown("Tab", "Tab")}, ${keydown("P", "KeyP")}, true`);
+    await app.waitFor("document.querySelector('.tab.active .title')?.textContent === 'one.txt'");
+    await app.waitFor("!!document.querySelector('.picker')");
+    // Two frames: the one of the tab switch has certainly run by then.
+    await app.eval("new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))");
+    assert.equal(await app.eval("document.activeElement?.matches('.picker input')"), true);
+  } finally {
+    await app.kill();
+    await removeProfile(dir);
+  }
+});
+
 test("default keys: Ctrl+D deletes a line, CodeMirror's commands are actions", async () => {
   await session({ text: "one\ntwo\nthree\nfour\n" }, async (app) => {
     await app.key("Down");
