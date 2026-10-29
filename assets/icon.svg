@@ -1,8 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
   <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f5e0dc"/><stop offset="0.45" stop-color="#f5c2e7"/><stop offset="1" stop-color="#cba6f7"/></linearGradient></defs>
   <rect x="48" y="48" width="928" height="928" rx="210" fill="url(#g)"/>
-  <g fill="none" stroke="#1e1e2e" stroke-width="130" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M370 290v444"/><path d="M640 290L388 512L650 734"/>
+  <rect x="242" y="250" width="540" height="600" rx="64" fill="#1e1e2e"/>
+  <g fill="#1e1e2e">
+    <rect x="318" y="170" width="72" height="170" rx="36"/><rect x="476" y="170" width="72" height="170" rx="36"/><rect x="634" y="170" width="72" height="170" rx="36"/>
   </g>
-  <rect x="735" y="574" width="62" height="160" rx="31" fill="#1e1e2e" opacity="0.45"/>
+  <g fill="#f5c2e7">
+    <rect x="336" y="300" width="36" height="22" rx="11"/><rect x="494" y="300" width="36" height="22" rx="11"/><rect x="652" y="300" width="36" height="22" rx="11"/>
+  </g>
+  <g stroke="#f5c2e7" stroke-width="56" stroke-linecap="round">
+    <path d="M334 480H690"/><path d="M334 600H690"/><path d="M334 720H540"/>
+  </g>
 </svg>

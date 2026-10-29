@@ -26,8 +26,10 @@ What Kladde should be, and choices the owner made on purpose. Keep them unless t
   available; the old hand-made light theme was replaced by Latte (`"light"` is an alias for Latte, `"dark"` for
   Mocha). Users can override any color in `theme.css`.
 - Fonts: JetBrains Mono (with ligatures) in the editor, Inter for the UI, both bundled.
-- Icon: a rosewater → pink → mauve gradient tile with a dark "K" and a cursor bar (`assets/icon.svg`). Chosen
-  because it stays recognizable at 16 px; a notebook design lost its details at small sizes.
+- Icon: a rosewater → pink → mauve gradient tile with a dark notepad (binding rings, three text lines;
+  `assets/icon.svg`), because "Kladde" means scratch pad. It replaced a "K" with a cursor bar after v0.2.0, at
+  the owner's request; at 16 px only the pad's outline and lines remain, which is enough. Regenerate the icon
+  files with `npx tauri icon assets/icon.svg -o <temp dir>` and copy only the files already in `src-tauri/icons`.
 - The search panel and every other piece of UI must follow the theme variables (no default browser controls).
 
 ## Keyboard
