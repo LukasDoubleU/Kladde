@@ -28,9 +28,17 @@ async function until(condition, what, timeout = 8000) {
 function backups(dir) {
   const folder = join(dir, "data", "backup");
   if (!existsSync(folder)) return [];
+  // Kladde prunes and rotates backups while the test reads them: a file can vanish between listing and reading.
   return readdirSync(folder)
     .filter((n) => /^[^.]+\.txt$/.test(n))
-    .map((n) => readFileSync(join(folder, n), "utf8"));
+    .flatMap((n) => {
+      try {
+        return [readFileSync(join(folder, n), "utf8")];
+      } catch (e) {
+        if (e.code === "ENOENT") return [];
+        throw e;
+      }
+    });
 }
 
 const hasBackup = (dir, needle) => backups(dir).some((t) => t.includes(needle));
