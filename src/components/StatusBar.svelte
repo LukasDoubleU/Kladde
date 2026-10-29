@@ -37,11 +37,14 @@
     <span class="dim">{workspace.cursor.lines.toLocaleString()} lines</span>
     {#if tab.binary}<span class="warn" title="The file contains NUL bytes">binary</span>{/if}
   {:else if tab?.kind === "large"}
+    <span>Ln {workspace.cursor.line.toLocaleString()}, Col {workspace.cursor.col}</span>
     <span>
       {workspace.largeStatus.lines.toLocaleString()} lines{workspace.largeStatus.done ? "" : " (indexing…)"}
     </span>
-    <span class="dim">{formatSize(tab.size)}</span>
-    <span class="dim">Read-only: large file viewer</span>
+    <span class="dim">{formatSize(workspace.largeStatus.size || tab.size)}</span>
+    <span class="dim" title="Edited in place: only the changes are kept in memory">
+      {tab.journal === "restoring" ? "Restoring unsaved changes…" : workspace.largeStatus.done ? "Large file" : "Large file: editable once indexed"}
+    </span>
   {:else if tab?.kind === "compare"}
     {@const changes = workspace.compareChanges[tab.id]}
     {#if changes !== undefined}
@@ -93,7 +96,8 @@
     <button title="Line endings" onclick={() => runAction("eol.select")}>{tab.eol}</button>
     <button title="Encoding" onclick={() => runAction("encoding.select")}>{encodingLabel(tab.encoding, tab.bom)}</button>
   {:else if tab?.kind === "large"}
-    <span>{encodingLabel(tab.encoding, false)}</span>
+    <span title="New lines get the line ending the file uses most">{tab.eol}</span>
+    <span>{encodingLabel(tab.encoding, tab.bom)}</span>
   {/if}
 </footer>
 

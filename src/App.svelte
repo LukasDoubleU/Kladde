@@ -32,6 +32,7 @@
   import { api, type Eol } from "./lib/api";
   import { writeText } from "./lib/clipboard";
   import { editorActions } from "./lib/editor-actions";
+  import { LARGE_COMMANDS } from "./lib/large-edit";
   import { integration } from "./lib/integration.svelte";
   import { keyHint } from "./lib/keyhint.svelte";
   import { languageNames } from "./lib/languages";
@@ -40,7 +41,7 @@
   import { changeKeybinding, chooseKeymap, keyCapture } from "./lib/shortcut-editor.svelte";
   import { applyTheme, isLight, resolveFlavor, setUserTheme, THEME_FILE, userThemeTemplate } from "./lib/theme";
   import { updates } from "./lib/updates.svelte";
-  import { basename, ENCODINGS, workspace } from "./lib/workspace.svelte";
+  import { basename, ENCODINGS, workspace, type Tab } from "./lib/workspace.svelte";
 
   const appWindow = getCurrentWindow();
   const tab = $derived(workspace.active);
@@ -54,14 +55,29 @@
   let systemDark = $state(window.matchMedia("(prefers-color-scheme: dark)").matches);
   let configDir = "";
 
+  /** Reload after an external change. Edits of a large file cannot be undone like those of a text tab, so ask. */
+  async function reloadFromBanner(tab: Tab) {
+    if (tab.kind === "large" && tab.dirty) {
+      const choice = await workspace.ask(`Reloading ${tab.title} discards your unsaved changes.`, [
+        { id: "reload", label: "Reload", primary: true },
+        { id: "cancel", label: "Cancel" },
+      ]);
+      if (choice !== "reload") return;
+    }
+    await workspace.reload(tab, tab.kind === "text" ? tab.encoding : undefined);
+  }
+
   const textTab = () => workspace.active?.kind === "text";
+  const largeTab = () => workspace.active?.kind === "large";
   const compareTab = () => workspace.active?.kind === "compare";
+  /** Tabs whose document can be edited and saved. */
+  const editableTab = () => textTab() || largeTab();
 
   registerActions([
     { id: "file.new", label: "New file", keys: ["Ctrl+N", "Ctrl+T"], run: () => workspace.newUntitled() },
     { id: "file.open", label: "Open file…", keys: ["Ctrl+O"], run: () => workspace.openWithDialog() },
-    { id: "file.save", label: "Save", keys: ["Ctrl+S"], run: () => workspace.save(), enabled: textTab },
-    { id: "file.saveAs", label: "Save as…", keys: ["Ctrl+Shift+S"], run: () => workspace.saveAs(), enabled: textTab },
+    { id: "file.save", label: "Save", keys: ["Ctrl+S"], run: () => workspace.save(), enabled: editableTab },
+    { id: "file.saveAs", label: "Save as…", keys: ["Ctrl+Shift+S"], run: () => workspace.saveAs(), enabled: editableTab },
     { id: "file.saveAll", label: "Save all", keys: ["Ctrl+Alt+S"], run: () => workspace.saveAll() },
     {
       id: "file.close",
@@ -136,8 +152,17 @@
     { id: "view.zoomOut", label: "Zoom out", keys: ["Ctrl+Minus"], run: () => workspace.zoom(-1) },
     { id: "view.zoomReset", label: "Reset zoom", keys: ["Ctrl+0"], run: () => workspace.zoom(null) },
     { id: "edit.gotoLine", label: "Go to line…", keys: ["Ctrl+G"], run: () => workspace.gotoLine() },
-    // CodeMirror's editing commands (delete line, move line, comment, …), see editor-actions.ts.
-    ...editorActions(() => workspace.view, textTab),
+    // CodeMirror's editing commands (delete line, move line, comment, …), see editor-actions.ts. Some of
+    // them also work in the large file view, under the same ids and keys.
+    ...editorActions(() => workspace.view, textTab).map((action) =>
+      LARGE_COMMANDS.has(action.id)
+        ? {
+            ...action,
+            run: () => (largeTab() ? workspace.largeApi?.run(action.id) : action.run()),
+            enabled: editableTab,
+          }
+        : action,
+    ),
     {
       id: "edit.replace",
       label: "Find and replace",
@@ -449,18 +474,28 @@
     <div class="banner">
       {#if tab.external === "modified"}
         <span>This file was changed by another program.</span>
-        <button onclick={() => workspace.reload(tab, tab.kind === "text" ? tab.encoding : undefined)}>
+        <button onclick={() => reloadFromBanner(tab)}>
           Reload{tab.dirty ? " (discard my changes)" : ""}
         </button>
         {#if tab.kind === "text"}
           <button onclick={() => workspace.compareWithDisk(tab)}>Compare</button>
+        {/if}
+        {#if tab.kind === "text" || (tab.kind === "large" && tab.dirty)}
           <button onclick={() => workspace.keepMine(tab)}>Keep my version</button>
         {/if}
       {:else}
         <span>This file was deleted or moved.</span>
-        {#if tab.kind === "text"}<button onclick={() => workspace.keepMine(tab)}>Keep in editor</button>{/if}
+        {#if tab.kind === "text" || (tab.kind === "large" && tab.dirty)}
+          <button onclick={() => workspace.keepMine(tab)}>Keep in editor</button>
+        {/if}
         <button onclick={() => workspace.close(tab.id)}>Close tab</button>
       {/if}
+    </div>
+  {:else if tab?.kind === "large" && tab.journal === "conflict"}
+    <div class="banner">
+      <span>Your unsaved changes from the last session were made to a version of this file that has changed since.</span>
+      <button onclick={() => workspace.restoreLargeJournal(tab, true)}>Apply anyway</button>
+      <button onclick={() => workspace.discardLargeJournal(tab)}>Discard my changes</button>
     </div>
   {/if}
 

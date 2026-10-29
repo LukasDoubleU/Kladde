@@ -32,6 +32,9 @@ export interface LargeOpened {
   id: number;
   size: number;
   encoding: string;
+  bom: boolean;
+  /** Line ending of new lines: the one the file uses most. */
+  eol: "CRLF" | "LF";
   mtime: number;
 }
 
@@ -49,7 +52,43 @@ export interface LargeMatch {
 export interface LargeInfo {
   lines: number;
   done: boolean;
+  /** Size of the document, with edits. */
   size: number;
+  dirty: boolean;
+}
+
+/** Line and column (UTF-16 code units of the decoded line), both 0-based. */
+export interface LargePos {
+  line: number;
+  col: number;
+}
+
+export interface LargeChange {
+  from: LargePos;
+  to: LargePos;
+  /** With LF line breaks; inserted with the file's line ending. */
+  text: string;
+}
+
+/** Typing and deleting in a row are undone together; "other" is always its own undo step. */
+export type LargeEditKind = "type" | "deleteBackward" | "deleteForward" | "other";
+
+export interface LargeEdited {
+  lines: number;
+  size: number;
+  dirty: boolean;
+  canUndo: boolean;
+  canRedo: boolean;
+  /** Undo/redo: where the caret goes. */
+  caret: LargePos | null;
+}
+
+export interface LargeRestored {
+  /** "conflict": the file changed since the edits were made, nothing was applied. */
+  status: "applied" | "conflict" | "missing";
+  lines: number;
+  size: number;
+  dirty: boolean;
 }
 
 export interface LargeSearchResult {
@@ -123,6 +162,17 @@ export const api = {
   largeSearchCancel: (id: number) => invoke<void>("large_search_cancel", { id }),
   largeRefresh: (id: number) => invoke<LargeRefresh>("large_refresh", { id }),
   largeClose: (id: number) => invoke<void>("large_close", { id }),
+  /** Changes refer to the document before them and are one undo step. */
+  largeEdit: (id: number, changes: LargeChange[], kind: LargeEditKind) =>
+    invoke<LargeEdited>("large_edit", { id, changes, kind }),
+  largeUndo: (id: number, redo: boolean) => invoke<LargeEdited>("large_undo", { id, redo }),
+  largeText: (id: number, from: LargePos, to: LargePos) => invoke<string>("large_text", { id, from, to }),
+  /** Saves (to `path` for "save as"); the returned id replaces `id`. `tab` names the journal to drop. */
+  largeSave: (id: number, path: string | null, tab: string) => invoke<LargeOpened>("large_save", { id, path, tab }),
+  /** Writes the hot-exit journal of the edits. */
+  largeBackup: (id: number, tab: string) => invoke<void>("large_backup", { id, tab }),
+  largeRestore: (id: number, tab: string, force: boolean) =>
+    invoke<LargeRestored>("large_restore", { id, tab, force }),
 
   sessionLoad: () => invoke<string | null>("session_load"),
   sessionSave: (json: string) => invoke<void>("session_save", { json }),

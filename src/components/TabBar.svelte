@@ -102,7 +102,7 @@
         onpointerup={onPointerUp}
         oncontextmenu={(e) => openMenu(e, tab)}
       >
-        {#if tab.kind === "large"}<span class="badge" title="Large file: read-only viewer">L</span>{/if}
+        {#if tab.kind === "large"}<span class="badge" title="Large file: only the visible part is loaded">L</span>{/if}
         {#if tab.external}<span class="badge warn" title="Changed on disk">!</span>{/if}
         <span class="title">{tab.title}</span>
         <button

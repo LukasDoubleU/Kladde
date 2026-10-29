@@ -53,6 +53,10 @@ export interface Tab {
   largeId: number | null;
   /** The file changed or vanished on disk while the tab has unsaved changes. */
   external: "modified" | "deleted" | null;
+  /** Bumped when a large tab's document changes without the view doing it (restored edits). */
+  revision: number;
+  /** A large tab's hot-exit journal: being applied, or made for a file that has changed since. */
+  journal: "restoring" | "conflict" | null;
 }
 
 interface Runtime {
@@ -65,6 +69,9 @@ interface Runtime {
   version: number;
   /** The version last written as a backup; -1 if never. */
   backedUp: number;
+  /** Large tabs: the last file state seen on disk, and the one the user chose to ignore. */
+  diskSeen?: string;
+  diskIgnored?: string;
 }
 
 /** One side of a compare tab: a snapshot, not a live view of the tab or file. */
@@ -220,7 +227,7 @@ class Workspace {
   tabs: Tab[] = $state([]);
   activeId: string | null = $state(null);
   cursor = $state({ line: 1, col: 1, selected: 0, selections: 1, lines: 1 });
-  largeStatus = $state({ lines: 0, done: false });
+  largeStatus = $state({ lines: 0, done: false, size: 0 });
   previewHtml = $state("");
   ui = $state({ wordWrap: false, spellCheck: false, grammarCheck: false, zoom: 0 });
   /** Grammar checking of the shown tab, for the status bar. "off": not running for this tab. */
@@ -235,7 +242,7 @@ class Workspace {
   /** Number of changes per compare tab id. */
   compareChanges: Record<string, number> = $state({});
   /** Set by the large file view of the active tab. */
-  largeApi: { gotoLine(line: number): void; focusSearch(): void } | null = null;
+  largeApi: { gotoLine(line: number): void; focusSearch(): void; run(command: string): void } | null = null;
   onConfigSaved: (path: string) => void = () => {};
 
   private runtime = new Map<string, Runtime>();
@@ -610,6 +617,8 @@ class Workspace {
       preview: "off",
       largeId: null,
       external: null,
+      revision: 0,
+      journal: null,
       ...fields,
       // After the spread: callers may pass `id: undefined`.
       id: fields.id ?? newId(),
@@ -679,6 +688,8 @@ class Workspace {
       path,
       title: basename(path),
       encoding: opened.encoding,
+      bom: opened.bom,
+      eol: opened.eol,
       mtime: opened.mtime,
       size: opened.size,
       largeId: opened.id,
@@ -686,7 +697,7 @@ class Workspace {
     this.addTab(tab);
   }
 
-  /** Opens the file again in the same tab, e.g. after it was truncated, replaced or rotated. */
+  /** Opens the file again in the same tab, e.g. after it was truncated, replaced or rotated. Unsaved edits are dropped. */
   private async reopenLarge(tab: Tab) {
     if (!tab.path) return;
     try {
@@ -695,11 +706,18 @@ class Workspace {
       Object.assign(tab, {
         largeId: opened.id,
         encoding: opened.encoding,
+        bom: opened.bom,
+        eol: opened.eol,
         mtime: opened.mtime,
         size: opened.size,
         external: null,
+        dirty: false,
+        journal: null,
       });
+      const rt = this.runtime.get(tab.id);
+      if (rt) rt.diskIgnored = undefined;
       if (old !== null) void api.largeClose(old);
+      this.scheduleSession();
     } catch (e) {
       this.showNotice("error", `Could not reload ${tab.title}: ${e}`);
     }
@@ -721,6 +739,8 @@ class Workspace {
       // file (the stat came first, so the handle can only be ahead when the same file grew), or equally
       // big with another time.
       const replaced = result.size < stat.size || (result.size === stat.size && result.mtime !== stat.mtime);
+      // Edits made while this was running are not dropped; the next check warns about the file instead.
+      if (tab.dirty || tab.journal) return;
       if (result.changed || replaced) await this.reopenLarge(tab);
       else if (this.tabs.includes(tab)) {
         tab.mtime = result.mtime;
@@ -742,6 +762,10 @@ class Workspace {
     const mb = Math.round(tab.size / (1024 * 1024));
     if (tab.size > this.largeEditLimit) {
       this.showNotice("error", `${tab.title} is too large for the editor (${mb} MB, limit ${this.largeEditLimit / 1048576} MB).`);
+      return;
+    }
+    if (tab.dirty || tab.journal) {
+      this.showNotice("info", `Save or undo your changes to ${tab.title} first; the editor loads the file from disk.`);
       return;
     }
     const choice = await this.ask(
@@ -768,6 +792,48 @@ class Workspace {
     } catch (e) {
       this.showNotice("error", `Could not open ${tab.title} in the editor: ${e instanceof Error ? e.message : e}`);
     }
+  }
+
+  /** The large file view changed the document of a tab. */
+  largeEdited(tab: Tab, dirty: boolean) {
+    const rt = this.runtime.get(tab.id);
+    if (rt) rt.version++;
+    if (tab.dirty !== dirty) tab.dirty = dirty;
+    this.scheduleSession();
+  }
+
+  /** Applies a large tab's hot-exit journal (forced: even though the file changed since). */
+  async restoreLargeJournal(tab: Tab, force = false) {
+    if (tab.largeId === null) return;
+    tab.journal = "restoring";
+    try {
+      const result = await api.largeRestore(tab.largeId, tab.id, force);
+      if (!this.tabs.includes(tab)) return;
+      if (result.status === "conflict") {
+        tab.journal = "conflict";
+        return;
+      }
+      if (result.status === "missing" && tab.dirty) {
+        this.showNotice("error", `The unsaved changes of ${tab.title} from the last session could not be found.`);
+      }
+      tab.journal = null;
+      tab.dirty = result.dirty;
+      tab.revision++;
+      // The journal on disk is this state already.
+      const rt = this.runtime.get(tab.id);
+      if (rt) rt.backedUp = rt.version;
+    } catch (e) {
+      // Keep the journal: the user can still discard it, nothing is lost by waiting.
+      if (this.tabs.includes(tab)) tab.journal = "conflict";
+      this.showNotice("error", `Could not restore the unsaved changes of ${tab.title}: ${e}`);
+    }
+  }
+
+  /** Drops a large tab's journal that could not be applied; the next session save deletes it. */
+  discardLargeJournal(tab: Tab) {
+    tab.journal = null;
+    tab.dirty = false;
+    this.scheduleSession();
   }
 
   async openPaths(paths: string[]) {
@@ -803,7 +869,14 @@ class Workspace {
   async close(id: string): Promise<boolean> {
     const tab = this.tabs.find((t) => t.id === id);
     if (!tab) return true;
-    if (tab.kind === "text" && tab.dirty) {
+    if (tab.kind === "large" && tab.journal) {
+      this.activate(id);
+      const choice = await this.ask(`Discard the unsaved changes to ${tab.title} from the last session?`, [
+        { id: "discard", label: "Discard" },
+        { id: "cancel", label: "Cancel", primary: true },
+      ]);
+      if (choice !== "discard") return false;
+    } else if ((tab.kind === "text" || tab.kind === "large") && tab.dirty) {
       this.activate(id);
       const choice = await this.ask(`Save changes to ${tab.title}?`, [
         { id: "save", label: "Save", primary: true },
@@ -868,6 +941,7 @@ class Workspace {
   // ---------------------------------------------------------------- saving
 
   async save(tab: Tab | undefined = this.active): Promise<boolean> {
+    if (tab?.kind === "large") return this.saveLarge(tab);
     if (!tab || tab.kind !== "text") return false;
     if (!tab.path) return this.saveAs(tab);
     const state = this.stateOf(tab);
@@ -890,12 +964,53 @@ class Workspace {
     }
   }
 
+  /**
+   * Saves a large tab: Rust streams the document into a temporary file that replaces the original (or
+   * becomes `path`), and the tab continues on the written file.
+   */
+  private async saveLarge(tab: Tab, path?: string): Promise<boolean> {
+    if (tab.largeId === null || !tab.path) return false;
+    if (tab.journal) {
+      this.showNotice("info", `First decide what happens to the unsaved changes of ${tab.title} from the last session.`);
+      return false;
+    }
+    if (!tab.dirty && !path) return true;
+    if (tab.size > 256 * 1024 * 1024) this.showNotice("info", `Saving ${tab.title}…`);
+    try {
+      const opened = await api.largeSave(tab.largeId, path ?? null, tab.id);
+      if (!this.tabs.includes(tab)) return true;
+      Object.assign(tab, {
+        largeId: opened.id,
+        path: path ?? tab.path,
+        title: basename(path ?? tab.path),
+        mtime: opened.mtime,
+        size: opened.size,
+        dirty: false,
+        external: null,
+      });
+      const rt = this.runtime.get(tab.id);
+      if (rt) rt.diskIgnored = undefined;
+      if (this.notice?.text.startsWith("Saving ")) this.notice = null;
+      this.scheduleSession();
+      return true;
+    } catch (e) {
+      this.showNotice("error", `Could not save ${tab.title}: ${e}`);
+      return false;
+    }
+  }
+
   async saveAs(tab: Tab | undefined = this.active): Promise<boolean> {
-    if (!tab || tab.kind !== "text") return false;
+    if (!tab || (tab.kind !== "text" && tab.kind !== "large")) return false;
     const defaultPath = tab.path ?? `${tab.title}.txt`;
     const path = await saveDialog({ defaultPath });
     if (!path) return false;
     const other = this.tabs.find((t) => t.id !== tab.id && t.path && samePath(t.path, path));
+    if (tab.kind === "large") {
+      if (tab.path && samePath(tab.path, path)) return this.saveLarge(tab);
+      const saved = await this.saveLarge(tab, path);
+      if (saved && other) this.removeTab(other.id);
+      return saved;
+    }
     if (other) this.removeTab(other.id);
     tab.path = path;
     tab.title = basename(path);
@@ -905,7 +1020,7 @@ class Workspace {
   }
 
   async saveAll() {
-    for (const tab of this.tabs.filter((t) => t.kind === "text" && t.dirty)) {
+    for (const tab of this.tabs.filter((t) => (t.kind === "text" || t.kind === "large") && t.dirty && !t.journal)) {
       if (!tab.path) this.activate(tab.id);
       if (!(await this.save(tab))) return;
     }
@@ -993,6 +1108,16 @@ class Workspace {
     tabs.forEach((tab, i) => {
       const stat = stats[i];
       if (!this.tabs.includes(tab)) return;
+      if (tab.kind === "large" && (tab.dirty || tab.journal)) {
+        // Unsaved edits refer to the file as it was: never follow or reopen it, only warn (once per
+        // state of the file, so "Keep my version" sticks).
+        const rt = this.runtime.get(tab.id);
+        const seen = stat.exists ? `${stat.mtime}:${stat.size}` : "deleted";
+        if (rt) rt.diskSeen = seen;
+        const changed = !stat.exists || stat.mtime !== tab.mtime || stat.size !== tab.size;
+        if (changed && seen !== rt?.diskIgnored && tab.external === null) tab.external = stat.exists ? "modified" : "deleted";
+        return;
+      }
       if (!stat.exists) {
         if (tab.external !== "deleted") {
           tab.external = "deleted";
@@ -1014,6 +1139,10 @@ class Workspace {
   keepMine(tab: Tab) {
     tab.external = null;
     if (tab.kind === "text") this.markMetaDirty(tab);
+    if (tab.kind === "large") {
+      const rt = this.runtime.get(tab.id);
+      if (rt) rt.diskIgnored = rt.diskSeen;
+    }
   }
 
   // ---------------------------------------------------------------- compare
@@ -1375,12 +1504,26 @@ class Workspace {
       return { tab, rt, state: rt?.state, version: rt?.version ?? 0 };
     });
     for (const { tab, rt, state, version } of snapshot) {
-      const needsBackup = tab.kind === "text" && !!state && (tab.dirty || (!tab.path && state.doc.length > 0));
+      // Large tabs back up a journal of their edits (large.rs); one that is still being restored or
+      // waits for a decision is kept as it is.
+      const largeBackup = tab.kind === "large" && (tab.dirty || tab.journal !== null);
+      const needsBackup = largeBackup || (tab.kind === "text" && !!state && (tab.dirty || (!tab.path && state.doc.length > 0)));
       if (needsBackup && rt) {
         keep.push(tab.id);
         if (rt.backedUp !== version) {
-          await api.backupWrite(tab.id, state!.doc.toString());
-          rt.backedUp = version;
+          if (!largeBackup) {
+            await api.backupWrite(tab.id, state!.doc.toString());
+            rt.backedUp = version;
+          } else if (tab.largeId !== null && !tab.journal) {
+            // A journal that cannot be written (disk full, …) must not stop the session from being saved;
+            // it is tried again with the next change, and the user is told.
+            try {
+              await api.largeBackup(tab.largeId, tab.id);
+              rt.backedUp = version;
+            } catch (e) {
+              this.showNotice("error", `Could not back up the unsaved changes of ${tab.title}: ${e}`);
+            }
+          }
         }
       }
       if (!tab.path && !needsBackup) continue;
@@ -1477,7 +1620,17 @@ class Workspace {
   private async restoreTab(saved: SessionTab) {
     if (saved.kind === "compare") return;
     if (saved.kind === "large" && saved.path) {
-      if ((await api.statFile(saved.path)).exists) await this.openLarge(saved.path, saved.id);
+      if (!(await api.statFile(saved.path)).exists) return;
+      await this.openLarge(saved.path, saved.id);
+      const tab = this.tabs.find((t) => t.id === saved.id);
+      if (tab) {
+        // Applied in the background: it waits for the line index, which takes a while for huge files.
+        // Asked for every large tab, not only those marked `hasBackup`: a crash right after the journal
+        // was written can leave an older session file, and a journal must never be pruned unseen.
+        tab.dirty = saved.hasBackup;
+        tab.journal = "restoring";
+        void this.restoreLargeJournal(tab);
+      }
       return;
     }
     if (saved.kind === "image" && saved.path) {

@@ -4,14 +4,9 @@
 import type { Language } from "@codemirror/language";
 import { classHighlighter, highlightCode } from "@lezer/highlight";
 import { logHighlighter } from "./editor";
+import type { Span } from "./large-edit";
 
-export interface Span {
-  text: string;
-  /** CSS classes, empty for plain text. */
-  cls: string;
-  /** Part of the current search match. */
-  mark?: boolean;
-}
+export type { Span };
 
 /** Characters per line that are highlighted; the rest of a very long line stays plain. */
 const MAX_HIGHLIGHT = 2000;
@@ -33,26 +28,6 @@ export function highlightLines(parser: Language["parser"], lines: string[]): Spa
   // An empty snippet or line yields no spans at all.
   while (result.length < lines.length) result.push([]);
   return result.slice(0, lines.length);
-}
-
-/** Splits spans so that the characters [from, to) (UTF-16 offsets in the line) are marked. */
-export function markSpans(spans: Span[], from: number, to: number): Span[] {
-  const out: Span[] = [];
-  let at = 0;
-  for (const span of spans) {
-    const end = at + span.text.length;
-    const a = Math.max(from, at) - at;
-    const b = Math.min(to, end) - at;
-    if (a >= b) {
-      out.push(span);
-    } else {
-      if (a > 0) out.push({ ...span, text: span.text.slice(0, a) });
-      out.push({ ...span, text: span.text.slice(a, b), mark: true });
-      if (b < span.text.length) out.push({ ...span, text: span.text.slice(b) });
-    }
-    at = end;
-  }
-  return out;
 }
 
 /** UTF-16 offset of the character (code point) with the given index. */
