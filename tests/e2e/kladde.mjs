@@ -13,6 +13,7 @@
 
 import { spawn, execFileSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,6 +28,29 @@ export function tempProfile(name = "kladde-e2e") {
   const dir = join(tmpdir(), `${name}-${process.pid}-${Date.now()}`);
   mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+/** Whether something accepts connections on a local port. */
+function listening(port) {
+  return new Promise((resolve) => {
+    const socket = connect({ port, host: "127.0.0.1" });
+    socket.once("connect", () => (socket.destroy(), resolve(true)));
+    socket.once("error", () => resolve(false));
+  });
+}
+
+/**
+ * Waits until nobody listens on the port. WebView2's browser process outlives the app by a moment and keeps
+ * serving its DevTools endpoint; a launch in that window would attach to the dying page and fail in odd ways
+ * ("Uncaught (in promise)" from a command while the app exits).
+ */
+async function portReleased(port, timeout = 15000) {
+  const end = Date.now() + timeout;
+  while (await listening(port)) {
+    if (Date.now() > end) return false;
+    await sleep(100);
+  }
+  return true;
 }
 
 /** Writes a file into a folder and returns its path. */
@@ -78,6 +102,7 @@ export async function launch({ exe = DEBUG_EXE, port = 9341, profile = tempProfi
   // the DevTools port from KLADDE_DEVTOOLS_PORT): WebView2's own environment variables are ignored on the
   // GitHub runner. Inherited ones are dropped so they cannot override what Kladde passes.
   const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^WEBVIEW2_/i.test(name)));
+  if (!(await portReleased(port))) throw new Error(`DevTools port ${port} is still in use by another process`);
   const child = spawn(exe, files, {
     env: {
       ...inherited,
@@ -161,7 +186,14 @@ export async function launch({ exe = DEBUG_EXE, port = 9341, profile = tempProfi
       await cdp.send("Input.dispatchKeyEvent", { ...base, type: "keyUp" });
       await sleep(30);
       // The command palette opens asynchronously: wait for it, so text typed next lands in its input.
-      if (combo === "Ctrl+Shift+P" || combo === "F1") await app.waitFor("document.activeElement?.matches('.picker input')");
+      if (combo === "Ctrl+Shift+P" || combo === "F1") {
+        try {
+          await app.waitFor("document.activeElement?.matches('.picker input')");
+        } catch (e) {
+          const seen = await app.eval(`JSON.stringify({ picker: !!document.querySelector('.picker'), active: document.activeElement?.outerHTML.slice(0, 120), visibility: document.visibilityState, focus: document.hasFocus(), keymap: document.querySelector('.cm-editor') !== null })`).catch((x) => String(x));
+          throw new Error(`${e.message} ${seen}`);
+        }
+      }
     },
 
     /** Types text into the focused element. */
