@@ -2,6 +2,29 @@
 
 All notable changes to Kladde. Versions follow [Semantic Versioning](https://semver.org), commit messages
 [Conventional Commits](https://www.conventionalcommits.org).
+## [0.4.0](https://github.com/LukasDoubleU/Kladde/releases/tag/v0.4.0) – 2026-10-29
+
+### 🚀 Features
+
+- **keys:** Ctrl+Shift+A and Ctrl+3 open the command palette ([82f7407](https://github.com/LukasDoubleU/Kladde/commit/82f74078869f90f00ea16834d69e38b41de3032e))
+- **ui:** Settings page on Ctrl+Alt+S ([4456a55](https://github.com/LukasDoubleU/Kladde/commit/4456a55cd1066b79e667a3911a8347794cc0f3d2))
+- **keys:** Settings page keys in the presets ([96bd46a](https://github.com/LukasDoubleU/Kladde/commit/96bd46aadf8f6e86d30cc29755cdffed0d8f459d))
+
+### 🐛 Bug fixes
+
+- **e2e:** Read backups that vanish while the test lists them ([4f24cbb](https://github.com/LukasDoubleU/Kladde/commit/4f24cbbc942085ddff8431c39a6eccde424816b2))
+
+### ♻️ Refactoring
+
+- **ui:** Describe every setting in one place and share the settings.json writer ([9e56bd8](https://github.com/LukasDoubleU/Kladde/commit/9e56bd8c1413d905b82e5fecde858a5df1e73802))
+
+### 📚 Documentation
+
+- Settings page ([275cd0e](https://github.com/LukasDoubleU/Kladde/commit/275cd0e15765583bbde22efd4fd747a6d76cd66b))
+
+### 🧪 Tests
+
+- **e2e:** Settings page ([bbdd795](https://github.com/LukasDoubleU/Kladde/commit/bbdd79507787518c0971f05dd27d1a4efc5fd1a1))
 ## [0.3.0](https://github.com/LukasDoubleU/Kladde/releases/tag/v0.3.0) – 2026-10-29
 
 ### 🚀 Features
