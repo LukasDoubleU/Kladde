@@ -148,6 +148,11 @@ test("owner defaults stay", () => {
   assert.equal(at("Alt+Right"), "tab.forward");
   assert.equal(at("Ctrl+W"), "file.close");
   assert.equal(at("Ctrl+Shift+T"), "file.reopenClosed");
+  // The settings page has IntelliJ's key; "save all" moved next to it.
+  assert.equal(at("Ctrl+Alt+S"), "settings.show");
+  assert.equal(at("Ctrl+Alt+Shift+S"), "file.saveAll");
+  assert.equal(at("Ctrl+S"), "file.save");
+  assert.equal(at("Ctrl+Shift+S"), "file.saveAs");
   // The key CodeMirror's "select next occurrence" lost to Ctrl+D.
   assert.equal(at("Ctrl+Shift+D"), "editor.selectNextOccurrence");
 });
@@ -173,6 +178,23 @@ test("presets only name known commands and keep all their keys", () => {
   }
 });
 
+test("a preset only takes default keys away through keys it names itself", () => {
+  for (const name of Object.keys(KEYMAPS)) {
+    const { entries, resolved } = presetBindings(name);
+    const presetIds = new Set(entries.filter((e) => e.layer === 1).map((e) => e.id));
+    for (const e of entries.filter((e) => e.layer === 0)) {
+      if (resolved.bindings.get(e.seq) === e.id) continue;
+      const owner = resolved.bindings.get(e.seq);
+      assert.ok(
+        (owner && presetIds.has(owner)) || resolved.prefixes.has(e.seq),
+        `${name}: ${e.id} lost ${e.seq} to ${owner ?? "a chord"}, which the preset does not name`,
+      );
+    }
+    // No key is bound twice and none is both a command and the start of a chord.
+    for (const seq of resolved.bindings.keys()) assert.equal(resolved.prefixes.has(seq), false, `${name}: ${seq}`);
+  }
+});
+
 test("presets give the documented keys", () => {
   const npp = presetBindings("notepad++").resolved.bindings;
   assert.equal(npp.get("ctrl+d"), "editor.duplicateLine");
@@ -180,6 +202,9 @@ test("presets give the documented keys", () => {
   assert.equal(npp.get("ctrl+shift+arrowup"), "editor.moveLineUp");
   assert.equal(npp.has("alt+arrowup"), false);
   assert.equal(npp.get("ctrl+alt+s"), "file.saveAs");
+  assert.equal(npp.get("ctrl+shift+s"), "file.saveAll");
+  assert.equal(npp.get("ctrl+alt+shift+s"), undefined);
+  assert.equal([...npp.values()].includes("settings.show"), false, "Ctrl+Alt+S is save as in Notepad++");
   assert.equal(npp.get("ctrl+t"), "file.new");
   assert.equal(npp.get("f5"), "file.reload");
   const code = presetBindings("vscode").resolved.bindings;
@@ -188,6 +213,10 @@ test("presets give the documented keys", () => {
   assert.equal(code.get("ctrl+k ctrl+c"), "editor.lineComment");
   assert.equal(code.has("ctrl+k"), false);
   assert.equal(code.get("alt+arrowup"), "editor.moveLineUp");
+  assert.equal(code.get("ctrl+,"), "settings.show");
+  // The key event of Ctrl+, resolves to the same sequence.
+  assert.equal(keys.comboFromEvent(event({ key: ",", code: "Comma", ctrlKey: true })), "ctrl+,");
+  assert.equal(code.get("ctrl+alt+s"), "settings.show");
 });
 
 test("keymap names are forgiving", () => {

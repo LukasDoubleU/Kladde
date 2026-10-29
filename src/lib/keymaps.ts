@@ -47,6 +47,8 @@ export const KEYMAPS: Record<KeymapName, Keymap> = {
       "file.reload": ["Ctrl+R", "F5"],
       "file.saveAs": ["Ctrl+Alt+S"],
       "file.saveAll": ["Ctrl+Shift+S"],
+      // Ctrl+Alt+S is "save as" in Notepad++, so the settings page has no key here.
+      "settings.show": [],
     },
   },
   vscode: {
@@ -65,6 +67,8 @@ export const KEYMAPS: Record<KeymapName, Keymap> = {
       "editor.joinLines": [],
       "view.togglePreview": ["Ctrl+Shift+V", "Ctrl+K V"],
       "keybindings.change": ["Ctrl+K Ctrl+S"],
+      // Added to the default key (IntelliJ's), which VS Code does not use.
+      "settings.show": ["Ctrl+,", "Ctrl+Alt+S"],
     },
   },
 };
