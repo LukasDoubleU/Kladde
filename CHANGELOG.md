@@ -2,6 +2,40 @@
 
 All notable changes to Kladde. Versions follow [Semantic Versioning](https://semver.org), commit messages
 [Conventional Commits](https://www.conventionalcommits.org).
+## [0.3.0](https://github.com/LukasDoubleU/Kladde/releases/tag/v0.3.0) – 2026-10-29
+
+### 🚀 Features
+
+- **ui:** A notepad as the app icon ([fee9a10](https://github.com/LukasDoubleU/Kladde/commit/fee9a10e42cf51430809dbfc94f83e1fdde779d7))
+- **large:** Piece table for editing large files ([d09db6a](https://github.com/LukasDoubleU/Kladde/commit/d09db6a50ed5f62513abd809701a0c3e5b160b3d))
+- **large:** Edit, save and back up large files in the backend ([bdea860](https://github.com/LukasDoubleU/Kladde/commit/bdea8602cde0be1a650efb825a7762c715747ccf))
+- **large:** Edit large files in the viewer ([cbef742](https://github.com/LukasDoubleU/Kladde/commit/cbef74224a0d51c845ae33d831c0a5cd15ee8061))
+
+### 🐛 Bug fixes
+
+- **e2e:** Keep test instances off screen and never take the focus ([826debf](https://github.com/LukasDoubleU/Kladde/commit/826debfee460007c97563a83b683a99c2fe5b353))
+- **e2e:** Move the test window off screen after creating it ([9f6cd19](https://github.com/LukasDoubleU/Kladde/commit/9f6cd19ca85688384d10f0b1047b9c68383e0e3e))
+- **e2e:** Clean up after a failed start and time out hanging tests ([0a01cd2](https://github.com/LukasDoubleU/Kladde/commit/0a01cd2ea53ddce8e1667702e70c83d609ba1e4b))
+- **large:** Never save edits over a changed original, and keep journal I/O off the edit lock ([0ae6671](https://github.com/LukasDoubleU/Kladde/commit/0ae66718af111fd1302497606d0dd4bc0bed9fc2))
+- **large:** Refuse edits until a save has switched to the written file ([db6b155](https://github.com/LukasDoubleU/Kladde/commit/db6b155dfdc1fde1ed32a4bd26ea30302973763a))
+- **e2e:** Wait for the end of the startup and show rejected command errors ([e65b42c](https://github.com/LukasDoubleU/Kladde/commit/e65b42ccbd63f6cd7b710173f213f9d99737e988))
+- **e2e:** Wait for the DevTools port to be free before launching ([51d88e8](https://github.com/LukasDoubleU/Kladde/commit/51d88e85124820f4ad8cb3c152fe56b14e608426))
+- **large:** Refetch the lines when the indexer has finished ([19c5543](https://github.com/LukasDoubleU/Kladde/commit/19c5543e79a69828dc78628e8f40c549bc314e16))
+- **ui:** Keep the focus in the command palette after a tab switch ([0bf6084](https://github.com/LukasDoubleU/Kladde/commit/0bf6084daf92375e437e0106312835fd3a8ca2e3))
+
+### 📚 Documentation
+
+- **large:** Document editing in the large file view ([765aa9e](https://github.com/LukasDoubleU/Kladde/commit/765aa9e8f1db1013b0b53df5b72416e463e8c96f))
+
+### 🧪 Tests
+
+- **e2e:** Let Kladde set up WebView2 itself for an isolated profile ([960517f](https://github.com/LukasDoubleU/Kladde/commit/960517fc66c5001e2290c2f32fef97271f50e79f))
+- **large:** E2e tests for editing, saving and restoring large files ([d75975e](https://github.com/LukasDoubleU/Kladde/commit/d75975ec9703d418d8cd495f23afc50918bd7169))
+
+### 🏗️ Build and CI
+
+- **e2e:** Show the WebView2 policies and the arguments WebView2 really got ([4e42d13](https://github.com/LukasDoubleU/Kladde/commit/4e42d1385473a6cab3326d29e0f705198e54335b))
+- **e2e:** Make the end-to-end job blocking ([b1a73fc](https://github.com/LukasDoubleU/Kladde/commit/b1a73fc0b5b3a2d92a935facd317d4afe79d8765))
 ## [0.2.0](https://github.com/LukasDoubleU/Kladde/releases/tag/v0.2.0) – 2026-10-28
 
 ### 🚀 Features
