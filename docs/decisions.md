@@ -42,6 +42,9 @@ The default preset contains deliberate choices; presets (Notepad++, VS Code) and
   `F5` (reload from disk), `Alt+Left` / `Alt+Right` (back/forward through recently used tabs, also on the mouse's
   back/forward buttons), `Ctrl+PageDown` / `Ctrl+PageUp` (next/previous tab, sent for right button + wheel), and
   `Alt+F4` closes the window via hot exit.
+- `Ctrl+Alt+S` opens the settings page, because the owner is used to IntelliJ's key; "Save all" moved to `Ctrl+Alt+Shift+S`.
+  The Notepad++ preset keeps `Ctrl+Alt+S` for "Save as" (as in Notepad++), so the settings page has no key there; the
+  VS Code preset adds `Ctrl+,`. The command id `settings.open` (the JSON file) is unchanged.
 - `Shift+Alt+F` formats by language; `Ctrl+Shift+V` cycles the Markdown preview; `F7`/`Shift+F7` move between
   changes in compare tabs; `Ctrl+Shift+P`/`F1` open the command palette, which lists every command with its keys;
   the owner also wants `Ctrl+Shift+A` (IntelliJ's "Find Action") and `Ctrl+3` (Eclipse's "Quick Access") for it.

@@ -29,11 +29,12 @@ anything employer-related out of code, commits, issues, release notes and docs.
   `src-tauri/windows/installer-hooks.nsh` unregisters on uninstall.
 - `src/App.svelte`: layout, command list, window events. `src/lib/workspace.svelte.ts`: tabs, files, session,
   preview, compare, formatting. `src/lib/editor.ts`: CodeMirror setup. Keys: `actions.ts`, `keys.ts`, `keymaps.ts`,
-  `editor-actions.ts`, `shortcut-editor.svelte.ts`. Preview: `markdown.ts`, `math.ts`, `mermaid.ts`. Formatting:
-  `format.ts`, `format-xml.ts`, `formatters.ts`. Grammar: `grammar.ts`, `grammar-text.ts`. Theme: `theme.ts`,
-  `src/themes.css`, `src/app.css`. Others: `languages.ts`, `compare.ts`, `linehighlight.ts`, `settings.svelte.ts`,
-  `api.ts`, `integration.svelte.ts`, `updates.svelte.ts`. Large file view: `components/LargeFileView.svelte`,
-  `lib/large-edit.ts` (pure helpers, unit-tested).
+  `editor-actions.ts`, `shortcut-editor.svelte.ts`. Settings: `settings-schema.ts` (type, defaults, page metadata),
+  `settings.svelte.ts` (store, writing), `config-files.ts`, `components/SettingsPage.svelte` (tab kind `settings`).
+  Preview: `markdown.ts`, `math.ts`, `mermaid.ts`. Formatting: `format.ts`, `format-xml.ts`, `formatters.ts`. Grammar:
+  `grammar.ts`, `grammar-text.ts`. Theme: `theme.ts`, `src/themes.css`, `src/app.css`. Others: `languages.ts`, `compare.ts`,
+  `linehighlight.ts`, `api.ts`, `integration.svelte.ts`, `updates.svelte.ts`. Large file view:
+  `components/LargeFileView.svelte`, `lib/large-edit.ts` (pure helpers, unit-tested).
 - `tests/unit/`, `tests/e2e/` (harness `kladde.mjs`), `scripts/` (commit check, version, update manifest),
   `.github/workflows/` (`ci.yml`, `release.yml`), `cliff.toml` (changelog/versions), `docs/`.
 

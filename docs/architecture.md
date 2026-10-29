@@ -111,12 +111,13 @@ Key mechanisms:
 | `lib/linehighlight.ts` | Highlights visible lines of the large viewer with the editor grammars (`tok-*` classes) |
 | `components/LargeFileView.svelte` | The large file view: visible lines fetched from Rust, hand-drawn scrollbar, caret/selection as line/column pairs, a hidden `<textarea>` that receives typing, IME and paste at the caret, a queue (`enqueue`) that runs keys and edits one after another so positions are never stale, search toolbar |
 | `lib/large-edit.ts` | Pure helpers of the large file view (caret movement over one line's text, words, spans for selection/caret, the editor commands it supports); unit-tested |
-| `lib/settings.svelte.ts` | Flat settings with defaults; `loadSettings` only accepts keys whose type matches the default |
+| `lib/settings-schema.ts`, `lib/settings.svelte.ts` | The `Settings` type, its defaults and the metadata of every setting (plain TypeScript, so unit tests can load it); the reactive store, `loadSettings` (only accepts keys whose type matches the default) and `updateSettingsFile` |
+| `components/SettingsPage.svelte`, `lib/config-files.ts` | The settings page (a tab, loaded on first use); reading and writing the JSON files of the config folder, shared with the shortcut editor |
 | `lib/api.ts` | Typed wrappers of all Tauri commands |
 
 ### Tabs and the editor
 
-- Tab kinds: `text`, `large` (the document lives in Rust), `image`, `compare`. Tab metadata lives in Svelte `$state` (`workspace.tabs`); editor
+- Tab kinds: `text`, `large` (the document lives in Rust), `image`, `compare`, `settings`. Tab metadata lives in Svelte `$state` (`workspace.tabs`); editor
   state does not.
 - **One shared `EditorView`** for all text tabs. Inactive tabs keep their `EditorState` (with undo history) in the
   non-reactive `runtime` map; `activate()` swaps states with `view.setState` and restores the scroll position.
@@ -163,6 +164,31 @@ Key mechanisms:
   in the large view (`workspace.largeApi.run`) when a large tab is active. Other editor commands are disabled there.
 - Browser accelerators of WebView2 (F5 reload, Ctrl+P print, Ctrl+J, Ctrl+U, F7 caret browsing, find bar) are
   swallowed in `onKeydown`; the WebView's own zoom is replaced by Kladde's font-size zoom (Ctrl+wheel/Plus/Minus).
+
+### Settings page
+
+- Kind `settings`: one tab (`workspace.showSettings()`, command `settings.show`, `Ctrl+Alt+S`) shown by `SettingsPage.svelte`. A
+  tab fits better than a panel: Kladde has no side areas, a tab is reachable with the existing tab keys and mouse
+  gestures, it can sit next to `settings.json` or `theme.css` while one edits them, and it needs no new layout
+  state. Like a compare tab it is kept alive while hidden (search text and scroll position stay), is not saved in
+  the session (nothing to restore) and is never dirty. The component is a dynamic import in `App.svelte` (about
+  6 kB), so nothing is loaded until the first `Ctrl+Alt+S`. `Escape` clears the search, then returns to the previous tab
+  (`leaveSettings`); the search box gets the focus whenever the tab is shown.
+- `SETTING_META` in `settings-schema.ts` is a `Record<keyof Settings, …>`: group, label, description and control
+  (`boolean`, `number` with min/max, `choice`, `text`) of every setting, next to `defaultSettings`. A setting without an
+  entry does not compile, and `tests/unit/settings.test.mjs` checks that controls fit the defaults. Choices come from
+  the same lists the app validates with (`theme.ts`, `keymaps.ts`, `grammar-text.ts`). The page, the search
+  (`settingMatches`) and the value check (`coerceSetting`) are all driven by it.
+- Writing: `updateSettingsFile` reads settings.json as an object (a file that is not valid JSON is never overwritten),
+  changes the entries, writes it with `write_safely` like the shortcut editor does and calls `loadSettings`, so the page
+  and the whole UI update at once. A value equal to the default **removes** the entry (same rule as `setEntry` in the
+  shortcut editor), which is also what "Reset to default" does; unknown entries and the user's other values stay.
+  Writes are serialized. A value of the wrong type or an unknown flavor in the file is replaced by the default when
+  loading, so the page always shows a valid state (and says why under the search box). `wordWrap`, `spellCheck` and
+  `grammarCheck` are start-up values while the session keeps the current ones, so the page also applies them to the
+  current session (`workspace.followSetting`).
+- Edits of settings.json in a tab take the old path (`reloadConfig` → `loadSettings`) and the page, which only reads
+  the reactive `settings`, follows.
 
 ### Preview
 
@@ -213,8 +239,8 @@ Key mechanisms:
 
 ## Bundle and size policy
 
-- The main bundle (~695 kB, ~237 kB gzip) contains CodeMirror, markdown-it, DOMPurify and the UI. Everything big
-  is a **dynamic import** that loads on first use: language grammars, `@codemirror/merge`, `@codemirror/lint` and
+- The main bundle (~720 kB, ~245 kB gzip) contains CodeMirror, markdown-it, DOMPurify and the UI. Everything big
+  is a **dynamic import** that loads on first use: the settings page, language grammars, `@codemirror/merge`, `@codemirror/lint` and
   grammar checking, Prettier and its plugins, sql-formatter, Mermaid (many chunks, up to ~1.5 MB for elk), KaTeX.
   Never import these statically.
 - Fonts (JetBrains Mono, Inter) are bundled via Fontsource; an installed copy is preferred. KaTeX ships woff2 only

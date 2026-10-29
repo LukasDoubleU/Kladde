@@ -91,8 +91,9 @@
 
 ## Adding things
 
-- **Setting:** `Settings` + `defaultSettings` in `settings.svelte.ts` (flat, typed: `loadSettings` ignores values
-  of the wrong type), README settings table, and wherever it applies (often an `$effect` in `App.svelte` or
+- **Setting:** `Settings` + `defaultSettings` + its entry in `SETTING_META` (group, label, description, control) in
+  `settings-schema.ts` (flat, typed: `loadSettings` ignores values of the wrong type; a missing `SETTING_META` entry
+  does not compile and fails `tests/unit/settings.test.mjs`), README settings table, and wherever it applies (often an `$effect` in `App.svelte` or
   `applyViewOptions`).
 - **Command:** an action in `App.svelte` (or `editorCommands` in `editor-actions.ts` for text commands) with a
   stable id, a label and default keys that don't clash (`tests/unit/keys.test.mjs` checks). README shortcut table

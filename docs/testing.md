@@ -5,7 +5,7 @@
 | Command | What it covers | Needs |
 |---|---|---|
 | `npm run check` | svelte-check (types of all `.ts`/`.svelte`) | — |
-| `npm run test:unit` | Node's test runner on `tests/unit/*.test.mjs`: formatters, keys/presets, grammar text side, themes, update manifest | — |
+| `npm run test:unit` | Node's test runner on `tests/unit/*.test.mjs`: formatters, keys/presets, grammar text side, themes, settings metadata, update manifest | — |
 | `cd src-tauri && cargo test` | file I/O and encodings, safe saving, large viewer (index, search, piece table, editing, streaming save, journal), LanguageTool client (local socket), registry code (throwaway key), updater helpers | Rust |
 | `npm run test:e2e` | the real app through the DevTools protocol: `tests/e2e/*.test.mjs` | `npx tauri build --debug --no-bundle` first |
 
@@ -60,10 +60,11 @@ Rules:
 | keys | 9350–9351, 9384–9386 |
 | large | 9345, 9391–9393, 9397–9399 (the editing tests reuse earlier ports one app at a time) |
 | preview | 9346, 9376 |
+| settings | 9352–9353 |
 | theme | 9348, 9381–9383 |
 | update | 9349, 9394–9396 |
 
-Free for new files: 9352–9353, 9359–9362, 9366–9370, 9374–9375, 9377–9380, 9390.
+Free for new files: 9359–9362, 9366–9370, 9374–9375, 9377–9380, 9390.
 
 ## Environment variables
 

@@ -146,7 +146,8 @@ Kladde refreshes an existing registration silently at the next start.
 | Keys | Action |
 |---|---|
 | `Ctrl+N` or `Ctrl+T` / `Ctrl+O` | New tab, open file |
-| `Ctrl+S` / `Ctrl+Shift+S` / `Ctrl+Alt+S` | Save, save as, save all |
+| `Ctrl+S` / `Ctrl+Shift+S` / `Ctrl+Alt+Shift+S` | Save, save as, save all |
+| `Ctrl+Alt+S` | Settings page |
 | `Ctrl+W` / `Ctrl+Shift+T` | Close tab, reopen closed tab |
 | `Ctrl+Tab` or `Ctrl+PageDown` / `Ctrl+Shift+Tab` or `Ctrl+PageUp` | Next / previous tab |
 | `Alt+Left` / `Alt+Right`, mouse back / forward | Back / forward through recently used tabs |
@@ -179,8 +180,8 @@ The `keymap` setting (or **Choose keyboard shortcut preset…** in the command p
 | Preset | |
 |---|---|
 | `default` | The table above: VS Code and CodeMirror keys, plus `Ctrl+T`, `F5` and `Alt+Left` / `Alt+Right`. |
-| `notepad++` | Notepad++'s keys: `Ctrl+D` duplicates the line, `Ctrl+L` cuts it, `Ctrl+Shift+L` deletes it, `Ctrl+Shift+Up` / `Down` move lines, `Ctrl+J` joins, `Ctrl+Q` / `Ctrl+Shift+Q` comment, `Ctrl+K` / `Ctrl+Shift+K` add / remove line comments, `Ctrl+U` / `Ctrl+Shift+U` lower / upper case, `Ctrl+B` matching bracket, `Alt+0` / `Alt+Shift+0` fold / unfold all, `Ctrl+R` reload, `Ctrl+Alt+S` save as, `Ctrl+Shift+S` save all. `Ctrl+T`, `F5` and `Alt+Left` / `Alt+Right` stay for mouse gestures. |
-| `vscode` | VS Code's keys: `Ctrl+D` selects the next occurrence, `Ctrl+Shift+K` deletes the line, `Ctrl+L` selects it, and the `Ctrl+K` chords `Ctrl+K Ctrl+C` / `Ctrl+K Ctrl+U` (add / remove line comment), `Ctrl+K Ctrl+0` / `Ctrl+K Ctrl+J` (fold / unfold all), `Ctrl+K Ctrl+X` (trim trailing whitespace), `Ctrl+K V` (preview) and `Ctrl+K Ctrl+S` (change a shortcut). |
+| `notepad++` | Notepad++'s keys: `Ctrl+D` duplicates the line, `Ctrl+L` cuts it, `Ctrl+Shift+L` deletes it, `Ctrl+Shift+Up` / `Down` move lines, `Ctrl+J` joins, `Ctrl+Q` / `Ctrl+Shift+Q` comment, `Ctrl+K` / `Ctrl+Shift+K` add / remove line comments, `Ctrl+U` / `Ctrl+Shift+U` lower / upper case, `Ctrl+B` matching bracket, `Alt+0` / `Alt+Shift+0` fold / unfold all, `Ctrl+R` reload, `Ctrl+Alt+S` save as, `Ctrl+Shift+S` save all (so the settings page has no key here; use the command palette). `Ctrl+T`, `F5` and `Alt+Left` / `Alt+Right` stay for mouse gestures. |
+| `vscode` | VS Code's keys: `Ctrl+D` selects the next occurrence, `Ctrl+Shift+K` deletes the line, `Ctrl+L` selects it, and the `Ctrl+K` chords `Ctrl+K Ctrl+C` / `Ctrl+K Ctrl+U` (add / remove line comment), `Ctrl+K Ctrl+0` / `Ctrl+K Ctrl+J` (fold / unfold all), `Ctrl+K Ctrl+X` (trim trailing whitespace), `Ctrl+K V` (preview), `Ctrl+K Ctrl+S` (change a shortcut) and `Ctrl+,` (settings page, besides `Ctrl+Alt+S`). |
 
 ### Chords
 
@@ -242,7 +243,16 @@ rule** hides a finding until Kladde restarts. The status bar shows the number of
 
 ## Settings
 
-**Open settings** in the command palette opens `settings.json`; saving it applies the changes.
+**Settings** in the command palette, or `Ctrl+Alt+S`, opens the settings page: a tab with every setting in
+sections (editor, appearance, Markdown preview, large files, keyboard, spelling and grammar, updates, Windows
+integration), a search box (it matches the label, the description and the setting's name), a switch, number box,
+list or text box per setting, a mark on the ones that differ from the default and **Reset to default** for each.
+Changes are written to `settings.json` at once and applied at once; entries Kladde does not know stay in the file,
+and a setting set back to its default is removed from it. `Escape` clears the search, then returns to the previous
+tab. The page also links to `settings.json`, the shortcut editor and `theme.css`.
+
+**Open settings (settings.json)** in the command palette opens the file itself; saving it applies the changes, and
+the page shows them. The table lists every setting:
 
 | Setting | Default | |
 |---|---|---|
