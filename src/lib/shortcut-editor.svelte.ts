@@ -14,10 +14,10 @@ import {
   registeredActions,
   setKeymap,
 } from "./actions";
-import { api } from "./api";
+import { type Json, readConfigObject, writeConfigFile } from "./config-files";
 import { KEYMAPS, type KeymapName } from "./keymaps";
 import { formatSequence, normalizeSequence, sequencesConflict } from "./keys";
-import { loadSettings, settings, SETTINGS_FILE } from "./settings.svelte";
+import { settings, updateSettingsFile } from "./settings.svelte";
 import { workspace } from "./workspace.svelte";
 
 // ---------------------------------------------------------------- key capture dialog
@@ -46,25 +46,6 @@ function captureKeys(title: string): Promise<string | null> {
 
 // ---------------------------------------------------------------- JSON files
 
-type Json = Record<string, unknown>;
-
-/** Reads a config file as a JSON object; null if it is not valid (it must never be overwritten then). */
-async function readObject(name: string): Promise<Json | null> {
-  const text = await api.configRead(name);
-  if (!text?.trim()) return {};
-  try {
-    const value = JSON.parse(text);
-    return value && typeof value === "object" && !Array.isArray(value) ? (value as Json) : null;
-  } catch {
-    return null;
-  }
-}
-
-async function writeConfig(name: string, text: string) {
-  const path = await api.configFile(name, "{\n}\n");
-  await api.writeFile(path, text, "UTF-8", false, "LF");
-}
-
 /** One entry per line, like the files Kladde creates. */
 function serializeBindings(entries: Json): string {
   const lines = Object.entries(entries).map(([id, value]) => `  ${JSON.stringify(id)}: ${JSON.stringify(value)}`);
@@ -82,7 +63,7 @@ function setEntry(entries: Json, id: string, keys: string[]) {
 
 async function saveBindings(entries: Json): Promise<boolean> {
   try {
-    await writeConfig(KEYBINDINGS_FILE, serializeBindings(entries));
+    await writeConfigFile(KEYBINDINGS_FILE, serializeBindings(entries));
   } catch (e) {
     workspace.showNotice("error", `Could not write ${KEYBINDINGS_FILE}: ${e instanceof Error ? e.message : e}`);
     return false;
@@ -106,7 +87,7 @@ export async function changeKeybinding() {
   const id = picked.id;
   const label = picked.label;
 
-  const entries = await readObject(KEYBINDINGS_FILE);
+  const entries = await readConfigObject(KEYBINDINGS_FILE);
   if (!entries) {
     workspace.showNotice("error", `${KEYBINDINGS_FILE} is not valid JSON. Fix it first (Open keyboard shortcuts), then try again.`);
     return;
@@ -196,20 +177,7 @@ export async function chooseKeymap() {
   const picked = await workspace.pick({ placeholder: "Select the keyboard shortcut preset", items });
   if (!picked || typeof picked === "string") return;
 
-  const file = await readObject(SETTINGS_FILE);
-  if (!file) {
-    workspace.showNotice("error", `${SETTINGS_FILE} is not valid JSON. Fix it first (Open settings), then try again.`);
-    return;
-  }
-  file.keymap = picked.id;
-  try {
-    const path = await api.configFile(SETTINGS_FILE, "{\n}\n");
-    await api.writeFile(path, JSON.stringify(file, null, 2) + "\n", "UTF-8", false, "LF");
-  } catch (e) {
-    workspace.showNotice("error", `Could not write ${SETTINGS_FILE}: ${e instanceof Error ? e.message : e}`);
-    return;
-  }
-  const error = await loadSettings();
+  const error = await updateSettingsFile({ keymap: picked.id });
   setKeymap(settings.keymap);
   workspace.showNotice(error ? "error" : "info", error ?? `Keyboard shortcuts: ${KEYMAPS[picked.id as KeymapName].label} preset.`);
 }
