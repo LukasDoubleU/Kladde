@@ -21,7 +21,8 @@ How Kladde is built and why. For product decisions see [decisions.md](decisions.
 |---|---|
 | `lib.rs` | Tauri commands, plugins, startup (single instance, `--unregister-integration` CLI flag) |
 | `files.rs` | Reading with encoding detection (BOM → UTF-8 validity → chardetng), BOM and line-ending handling, writing with `write_safely` |
-| `large.rs` | The large file viewer backend |
+| `large.rs` | The large file viewer backend: index, search, editing, streaming save, hot-exit journal |
+| `pieces.rs` | The piece table behind large-file editing (pure data structure, no I/O, no encodings) |
 | `session.rs` | Data/config folders, session JSON, backups and backup versions, config files, the isolated profile |
 | `integration.rs` | Windows registration (ProgID, capabilities, "Open with", context menu) under a passed-in registry root |
 | `update.rs` | Update check/install on top of tauri-plugin-updater |
@@ -43,6 +44,50 @@ Key mechanisms:
   counter) and starts before the index is complete. Growth is handled incrementally (`large_refresh`); a shorter or
   replaced file is reopened. Limits: a match cannot span chunks; inside a line longer than 8 MB chunks overlap by
   64 KB. Measured on a ~200 MB log (warm cache): index ~40 ms, full search 40–90 ms.
+  Editing, saving and the hot-exit journal are described below; measured on a 190 MB / 1.8 M line log (release
+  build of the Rust core, warm cache): an edit plus fetching 50 lines ~80 µs, deleting a million lines ~20 µs,
+  a journal backup with 2000 pieces ~3 ms, search in the edited document ~30 ms, save 120 ms; in the debug app via
+  the e2e harness typing shows up in the DOM after ~3 ms (median), save 160 ms.
+- **Editing large files (`pieces.rs`, `large.rs`):** the first edit (the index must be complete) puts a piece table
+  over the file. The document is a list of pieces, each a byte range of the original (read positionally, never
+  loaded) or of an append-only add buffer that holds all inserted text. An edit splits and replaces piece
+  descriptors, so it costs the same in any file size. Every piece caches how many line breaks end inside it
+  (the original's come from the viewer's line index, the add buffer's from a list kept while appending), and
+  prefix sums over pieces make `line_start`/`line_of` binary searches; reading, line fetching and search go
+  through the table once a file is edited. Undo records the descriptors an operation removed and inserted; both
+  sources are immutable, so undo is the same splice backwards. Typing, backspace and delete in a row (within
+  500 ms) are one step; the history is bounded (10 000 steps); undoing everything merges the pieces back into
+  one, which makes the tab clean again. Positions are line and UTF-16 column of the decoded line, so the page
+  never needs byte offsets; Rust converts (column clamped to the end of the line, lines of any length). Inserted
+  text is encoded into the file's encoding and its dominant line ending (`encode_text`), so untouched bytes,
+  invalid sequences and mixed line endings are saved exactly as they were. A file that ends with a line break
+  has an empty last line, like in the editor, so the caret has a place after the final break.
+- **Saving a large file:** `LargeFile::write_to` streams the pieces (8 MB chunks from the original, the add
+  buffer for inserted text) into `.<name>.kladde-save` next to the target, `fsync`s it and swaps it in with
+  `ReplaceFileW` like `write_safely`, but without its in-place fallback: the document is partly read from the
+  very file that would be overwritten. The viewer then continues on the new file, with a line index derived
+  from the piece table instead of a rescan, and the journal is removed after the swap. Save as writes a new
+  file and leaves the original untouched. Before streaming, the original is checked against the fingerprint
+  taken when editing began: if it was rewritten or became shorter, nothing is written (the edits describe
+  bytes that are not there any more) and the journal keeps them; if it only grew (a logger that already had
+  it open), the appended bytes are saved behind the document.
+- **Protecting the original while it has unsaved edits:** the edits are offsets into the original, so it must
+  not change. Growth is not followed while the document is modified, and Kladde holds a read handle that
+  denies other programs write access (share mode read/delete: they can still read, rename and delete the file).
+  If another program already has the file open for writing the handle cannot be taken; the save-time check
+  above is the safety net then. The page only warns (banner) about changes on disk, it never reloads a dirty
+  large tab.
+- **Hot-exit journal for large tabs:** `backup/<tab>.large.json` holds the piece list (written atomically with
+  `write_safely`), the original's size, mtime and the same head/tail fingerprint the viewer uses to detect
+  rewrites, and the name of the add buffer file `backup/<tab>.<generation>.add`, which is appended to (it only
+  grows) and `fsync`ed before the piece list that refers to it, so a crash in between leaves the previous,
+  still valid journal. Disk I/O happens without the lock on the document, so typing never waits for a flush.
+  The journal is written by `writeSession` for dirty large tabs (throttled like text backups, never debounced);
+  `backup_prune` keeps it by tab id, as for `<id>.txt`. On restore the page asks Rust for every large tab,
+  not only those with `hasBackup`: a crash between writing the journal and `session.json` leaves an older
+  session file, and the journal must not be pruned unseen. `LargeFile::restore` applies it only if size, mtime
+  and fingerprint match the file; otherwise the tab shows a banner (Apply anyway / Discard my changes), typing
+  is refused until the user decides and the journal stays.
 - **Isolated profile:** `KLADDE_DATA_DIR` replaces the data and config folders, disables the single-instance plugin
   (so a test instance can run next to the normal one), switches registry writes to a test key and keeps the updater
   away from the real server. See [testing.md](testing.md).
@@ -64,12 +109,14 @@ Key mechanisms:
 | `lib/integration.svelte.ts`, `components/DefaultEditor.svelte` | Default-editor offer and Explorer integration UI |
 | `lib/updates.svelte.ts`, `components/UpdateBanner.svelte` | Update check banner |
 | `lib/linehighlight.ts` | Highlights visible lines of the large viewer with the editor grammars (`tok-*` classes) |
+| `components/LargeFileView.svelte` | The large file view: visible lines fetched from Rust, hand-drawn scrollbar, caret/selection as line/column pairs, a hidden `<textarea>` that receives typing, IME and paste at the caret, a queue (`enqueue`) that runs keys and edits one after another so positions are never stale, search toolbar |
+| `lib/large-edit.ts` | Pure helpers of the large file view (caret movement over one line's text, words, spans for selection/caret, the editor commands it supports); unit-tested |
 | `lib/settings.svelte.ts` | Flat settings with defaults; `loadSettings` only accepts keys whose type matches the default |
 | `lib/api.ts` | Typed wrappers of all Tauri commands |
 
 ### Tabs and the editor
 
-- Tab kinds: `text`, `large`, `image`, `compare`. Tab metadata lives in Svelte `$state` (`workspace.tabs`); editor
+- Tab kinds: `text`, `large` (the document lives in Rust), `image`, `compare`. Tab metadata lives in Svelte `$state` (`workspace.tabs`); editor
   state does not.
 - **One shared `EditorView`** for all text tabs. Inactive tabs keep their `EditorState` (with undo history) in the
   non-reactive `runtime` map; `activate()` swaps states with `view.setState` and restores the scroll position.
@@ -97,7 +144,9 @@ Key mechanisms:
 - Restore reads disk + backup: a tab with a backup is dirty if it differs from disk; a vanished file stays as a
   dirty tab marked "deleted". Compare tabs are snapshots and are not restored.
 - External changes are checked on window focus and every 2 s for the active tab while focused: unmodified text tabs
-  reload silently, dirty ones get a banner (Reload / Compare / Keep my version), large tabs follow growth.
+  reload silently, dirty ones get a banner (Reload / Compare / Keep my version), large tabs follow growth. A dirty
+  large tab is never followed or reloaded silently (see "Editing large files"): the banner offers Reload (which
+  asks first) and Keep my version.
 
 ### Commands and keys
 
@@ -107,6 +156,11 @@ Key mechanisms:
   exactly one owner and unbinding frees it. Typing keys stay in CodeMirror.
 - Resolution order: action default keys → preset (`keymaps.ts`, only differences, `[]` unbinds) → keybindings.json;
   a higher layer takes a key away from a lower one. Chords (`Ctrl+K Ctrl+C`) wait ~2 s with a status-bar hint.
+- The large file view handles its own caret keys, `Ctrl+Z`/`Ctrl+Y`/`Ctrl+Shift+Z`, `Ctrl+A`/`C`/`X`/`V` and typing
+  in a textarea (those are CodeMirror's stock bindings in text tabs, not actions, so there is still one owner per
+  key). The editor commands listed in `LARGE_COMMANDS` (`large-edit.ts`: delete/cut/duplicate/move/blank line,
+  select line, upper/lower case, find) keep their ids and keys: `App.svelte` wraps the actions so that they run
+  in the large view (`workspace.largeApi.run`) when a large tab is active. Other editor commands are disabled there.
 - Browser accelerators of WebView2 (F5 reload, Ctrl+P print, Ctrl+J, Ctrl+U, F7 caret browsing, find bar) are
   swallowed in `onKeydown`; the WebView's own zoom is replaced by Kladde's font-size zoom (Ctrl+wheel/Plus/Minus).
 

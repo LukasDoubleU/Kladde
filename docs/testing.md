@@ -6,7 +6,7 @@
 |---|---|---|
 | `npm run check` | svelte-check (types of all `.ts`/`.svelte`) | — |
 | `npm run test:unit` | Node's test runner on `tests/unit/*.test.mjs`: formatters, keys/presets, grammar text side, themes, update manifest | — |
-| `cd src-tauri && cargo test` | file I/O and encodings, safe saving, large viewer, LanguageTool client (local socket), registry code (throwaway key), updater helpers | Rust |
+| `cd src-tauri && cargo test` | file I/O and encodings, safe saving, large viewer (index, search, piece table, editing, streaming save, journal), LanguageTool client (local socket), registry code (throwaway key), updater helpers | Rust |
 | `npm run test:e2e` | the real app through the DevTools protocol: `tests/e2e/*.test.mjs` | `npx tauri build --debug --no-bundle` first |
 
 Run all four before merging anything. For e2e prefer `node --test --test-concurrency=1 "tests/e2e/*.test.mjs"`:
@@ -46,12 +46,12 @@ Rules:
 | hot-exit | 9344, 9354–9358 |
 | integration | 9347 |
 | keys | 9350, 9384–9386 |
-| large | 9345, 9391–9393 |
+| large | 9345, 9391–9393, 9397–9399 (the editing tests reuse earlier ports one app at a time) |
 | preview | 9346, 9376 |
 | theme | 9348, 9381–9383 |
 | update | 9349, 9394–9396 |
 
-Free for new files: 9351–9353, 9359–9362, 9366–9370, 9374–9375, 9377–9380, 9390, 9397–9399.
+Free for new files: 9351–9353, 9359–9362, 9366–9370, 9374–9375, 9377–9380, 9390.
 
 ## Environment variables
 
@@ -81,7 +81,10 @@ Free for new files: 9351–9353, 9359–9362, 9366–9370, 9374–9375, 9377–9
 - **Updates:** `update_install` refuses to run in an isolated profile; tests never download an installer.
 - **LanguageTool:** e2e tests run a fake server in the test; never point tests at the public API.
 - **Large files:** lower `largeFileThresholdMB` in the isolated profile's `settings.json` instead of generating
-  huge fixtures; delete generated files.
+  huge fixtures; delete generated files. Editing tests focus `.large .input` (the hidden textarea), type with
+  `type()`/`key()` and check `.large .line .text`; a kill is only safe once the journal in `data/backup`
+  (`*.large.json`, `addedLen`) has caught up with the edits. Real-size measurements: `cargo test --release
+  perf_200mb -- --ignored --nocapture` (generates and deletes a ~190 MB file in the temp folder).
 - **Data loss:** any change to saving, backups or the session must be verified by killing the app with unsaved
   changes and checking the restore (`hot-exit.test.mjs` does it; it also proves the typing throttle by failing
   with the old 1 s debounce).

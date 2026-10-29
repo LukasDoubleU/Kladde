@@ -17,21 +17,23 @@ anything employer-related out of code, commits, issues, release notes and docs.
 | [docs/decisions.md](docs/decisions.md) | Product decisions and owner preferences (style, default keys, privacy, Windows integration) |
 | [docs/testing.md](docs/testing.md) | Unit/Rust/e2e tests, the CDP harness, env vars, port table, pitfalls, CI status |
 | [docs/development.md](docs/development.md) | Setup, worktree-per-issue workflow, merge conflicts, releases, Windows/Tauri/Svelte pitfalls, how to add things |
-| [docs/roadmap.md](docs/roadmap.md) | Open issues (#5, #9, #11) and known gaps |
+| [docs/roadmap.md](docs/roadmap.md) | Open issues (#9, #11) and known gaps |
 | README.md | User-facing features, shortcuts, settings, theming variables |
 
 ## Layout (short)
 
-- `src-tauri/src/`: `files.rs` (encodings, `write_safely`), `large.rs` (large file viewer), `session.rs` (session,
-  backups, config, isolated profile), `integration.rs` (Windows registration), `update.rs` (updater),
-  `languagetool.rs` (HTTP client), `lib.rs` (commands, plugins).
+- `src-tauri/src/`: `files.rs` (encodings, `write_safely`), `large.rs` (large file viewer: index, search, editing,
+  streaming save, journal), `pieces.rs` (piece table), `session.rs` (session, backups, config, isolated profile),
+  `integration.rs` (Windows registration), `update.rs` (updater), `languagetool.rs` (HTTP client), `lib.rs`
+  (commands, plugins).
   `src-tauri/windows/installer-hooks.nsh` unregisters on uninstall.
 - `src/App.svelte`: layout, command list, window events. `src/lib/workspace.svelte.ts`: tabs, files, session,
   preview, compare, formatting. `src/lib/editor.ts`: CodeMirror setup. Keys: `actions.ts`, `keys.ts`, `keymaps.ts`,
   `editor-actions.ts`, `shortcut-editor.svelte.ts`. Preview: `markdown.ts`, `math.ts`, `mermaid.ts`. Formatting:
   `format.ts`, `format-xml.ts`, `formatters.ts`. Grammar: `grammar.ts`, `grammar-text.ts`. Theme: `theme.ts`,
   `src/themes.css`, `src/app.css`. Others: `languages.ts`, `compare.ts`, `linehighlight.ts`, `settings.svelte.ts`,
-  `api.ts`, `integration.svelte.ts`, `updates.svelte.ts`.
+  `api.ts`, `integration.svelte.ts`, `updates.svelte.ts`. Large file view: `components/LargeFileView.svelte`,
+  `lib/large-edit.ts` (pure helpers, unit-tested).
 - `tests/unit/`, `tests/e2e/` (harness `kladde.mjs`), `scripts/` (commit check, version, update manifest),
   `.github/workflows/` (`ci.yml`, `release.yml`), `cliff.toml` (changelog/versions), `docs/`.
 
@@ -53,8 +55,10 @@ Run check, unit, cargo and e2e tests before merging anything.
 ## Rules that must not be broken
 
 - **Zero data loss.** Backups are throttled, never debounced (`Workspace.scheduleSession`). Saving goes through
-  `write_safely`. Any change to saving, backups or the session must be verified by killing the app with unsaved
-  changes and checking the restore (`tests/e2e/hot-exit.test.mjs`).
+  `write_safely` (large files: `LargeFile::write_to`, which streams the piece table into a temporary file and never
+  writes the original in place; their unsaved edits live in a journal that is only valid for an unchanged original).
+  Any change to saving, backups or the session must be verified by killing the app with unsaved changes and
+  checking the restore (`tests/e2e/hot-exit.test.mjs`, for large files `tests/e2e/large.test.mjs`).
 - **Lightweight.** Big dependencies are dynamic imports at the point of use (grammars, `@codemirror/merge`,
   `@codemirror/lint`, Prettier, sql-formatter, Mermaid, KaTeX, `grammar.ts`). Never import them statically.
   Nothing slow at startup.

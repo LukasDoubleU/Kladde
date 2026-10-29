@@ -1,21 +1,8 @@
 # Roadmap and known gaps
 
-State after v0.2.0 (end of October 2026). Issues #1–#4, #6–#8 and #10 are closed.
+State after v0.2.0 (end of October 2026). Issues #1–#8 and #10 are closed.
 
 ## Open issues
-
-### #5 Large files: editing in the viewer
-Done: UTF-16, regex and Unicode search (cancellable, progressive), highlighting of visible lines, following growing
-files, "Open in editor…" up to 256 MB. Missing — a real streaming editor:
-- a piece table in Rust (original file + append-only buffer) so edits never copy the file;
-- line-index maintenance for edits (offset deltas or re-indexing the touched region);
-- caret, selection, input, undo/redo in the viewer (bounded history);
-- saving by streaming into a temporary file that replaces the original (keep `write_safely` guarantees, encoding,
-  BOM, line endings);
-- hot-exit backups as an edit journal instead of full text;
-- external changes while edits are pending; search and highlighting over the edited view.
-Viewer limits: a search match cannot span chunks (~8 MB, 64 KB overlap inside very long lines); a regex match over
-a line break is highlighted on its first line only.
 
 ### #9 Code signing
 Auto-update is done. Missing: Authenticode signing so SmartScreen does not warn. Options: Azure Artifact Signing
@@ -29,6 +16,26 @@ timeouts in long local full runs.
 
 ## Smaller follow-ups (no issues yet)
 
+- **Large files (editing, #5):** the viewer is a real editor now (piece table, journal, streaming save; see
+  [architecture.md](architecture.md)). Known gaps:
+  - Editing needs the line index to be complete (seconds for multi-GB files); typing before that shows a notice.
+  - No find-and-replace and no multi-cursor in the large view; only the editor commands in `LARGE_COMMANDS` work.
+  - Lines longer than 64 KB are shown cut; editing them works (Rust clamps columns to the real line end), but
+    the cut part cannot be seen or selected with the mouse.
+  - Saving needs the original unchanged: a rewritten or truncated original blocks saving (the edits stay in the
+    journal; reload to discard them). An original that only grew is saved with the appended bytes after the
+    document.
+  - While a large tab has unsaved edits, other programs cannot write the file (a logger writing to it would
+    fail); if one has the file open already, the handle cannot be taken and the save-time check applies.
+  - A journal whose file has vanished is not restored (the edits need the original); the next session save
+    prunes it.
+  - Text tabs have a small window that large tabs no longer have: a crash between writing a backup and
+    `session.json` leaves a session file without `hasBackup`, so the backup is not restored (large tabs ask
+    Rust for a journal regardless).
+  - The undo history is lost when the tab is saved (the viewer continues on a new file) and is not part of
+    the journal.
+  - Search limits: a match cannot span chunks (~8 MB, 64 KB overlap inside very long lines); a regex match
+    over a line break is highlighted on its first line only.
 - **Grammar (LanguageTool):** keyboard access to findings (F8 / `lintKeymap`, apply fix by key); persistent "ignore
   word/rule" (a user dictionary); the public-API consent lives in WebView `localStorage` instead of the data folder;
   untested against a real local LanguageTool server; auto-detection is weak on very short paragraphs.

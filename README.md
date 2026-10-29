@@ -71,12 +71,21 @@ starts in a fraction of a second, and never loses what you typed.
   never overwrites the current tab. Backups of tabs you saved or closed are deleted.
 - Encodings: detects UTF-8, UTF-16 (BOM) and legacy code pages; reopen or save with another encoding;
   keeps CRLF, LF or CR line endings.
-- Large files: anything above 32 MB opens in a read-only viewer that indexes lines in the background and
+- Large files: anything above 32 MB opens in the large file view, which indexes lines in the background and
   only reads what is on screen. Multi-GB logs open instantly, UTF-8, UTF-16 and legacy code pages alike.
   Search runs in the background (Esc cancels it) with Aa (match case; Unicode-aware when off) and .*
   (regular expressions, `^` and `$` per line), plus go to line. Log files are highlighted like in the editor.
   A file that is still being written is followed like `tail -f`; "Open in editor…" loads files up to 256 MB
-  into a normal tab. Editing the big ones is not possible yet.
+  into a normal tab.
+- Editing large files: you can type, select, delete, paste, cut, copy and undo/redo (`Ctrl+Z`, `Ctrl+Y`) in
+  the large file view, and use the line commands (delete, duplicate, move, insert blank line, upper/lower
+  case) under their usual shortcuts. Only the changes are kept in memory, so a multi-GB file stays as cheap
+  to edit as a small one. Saving streams the document into a temporary file next to the original and
+  replaces it in one step, keeping encoding, BOM and line endings (new line breaks use the file's most
+  common one). Unsaved edits are part of hot exit: they are backed up as a journal of the changes, and a
+  crash restores them. If the file changed on disk in the meantime, Kladde asks instead of applying them.
+  While a large file has unsaved edits, Kladde does not follow it any more and other programs cannot write
+  to it (they can still read it).
 - External changes: unmodified tabs reload when the file changes on disk, and the active tab follows a
   growing log live; otherwise a banner asks.
 - Image viewer for PNG, JPEG, GIF, WebP and more.
@@ -253,7 +262,7 @@ rule** hides a finding until Kladde restarts. The status bar shows the number of
 | `languageToolAllFiles` | `false` | check every text file, not only Markdown and plain text |
 | `markdownPreview` | `split` | how Markdown files open: `split`, `only` or `off` |
 | `pasteImageFolder` | `assets` | folder for pasted images, relative to the Markdown file |
-| `largeFileThresholdMB` | `32` | larger files open in the read-only viewer |
+| `largeFileThresholdMB` | `32` | larger files open in the large file view |
 | `keymap` | `default` | base for the keyboard shortcuts: `default`, `notepad++` or `vscode` |
 | `offerDefaultEditor` | `true` | offer once at start to register Kladde as a default editor candidate |
 | `checkForUpdates` | `true` | look for a newer version at start (once a day, contacts GitHub); the command works either way |
@@ -337,7 +346,7 @@ view and keep their own state, including undo history, so switching tabs is inst
 ## Roadmap
 
 Planned features and ideas are tracked as [issues](https://github.com/LukasDoubleU/Kladde/issues), among them
-editing large files in the viewer, code signing and more formatters (TOML); see also [docs/roadmap.md](docs/roadmap.md).
+code signing and more formatters (TOML); see also [docs/roadmap.md](docs/roadmap.md).
 
 ## License
 
