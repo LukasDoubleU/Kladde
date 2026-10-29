@@ -988,8 +988,8 @@ impl LargeFile {
     // ------------------------------------------------------------------ saving
 
     /// Writes the document to `tmp`: original pieces are copied from the file in chunks, inserted
-    /// ones from the add buffer.
-    fn stream_to(&self, table: Option<&PieceTable>, tmp: &Path) -> std::io::Result<()> {
+    /// ones from the add buffer, then the bytes in the range `tail` of the file.
+    fn stream_to(&self, table: Option<&PieceTable>, tail: (u64, u64), tmp: &Path) -> std::io::Result<()> {
         let mut out = BufWriter::with_capacity(1 << 20, File::create(tmp)?);
         let mut buf = vec![0u8; CHUNK];
         let mut copy = |out: &mut BufWriter<File>, start: u64, len: u64| -> std::io::Result<()> {
@@ -1016,7 +1016,29 @@ impl LargeFile {
             }
             None => copy(&mut out, 0, self.size())?,
         }
+        // What other programs appended to the original meanwhile goes after the document.
+        copy(&mut out, tail.0, tail.1 - tail.0)?;
         out.into_inner().map_err(|e| e.into_error())?.sync_all()
+    }
+
+    /// The part of the file on disk that was appended to the original the edits refer to (e.g. by a
+    /// logger that had the file open before the edits began): saved after the document, so it is not
+    /// lost. Fails if the original itself changed or became shorter, because the edits would then
+    /// describe bytes that are not there any more; the journal keeps them safe meanwhile.
+    fn appended_since(&self, original_len: u64) -> Result<(u64, u64), String> {
+        let size = self.file.metadata().map_err(|e| e.to_string())?.len();
+        let size = size - size % self.unit;
+        let unchanged = size >= original_len && {
+            let fp = self.fingerprint.lock().unwrap();
+            self.read_file(0, fp.head.len() as u64) == fp.head
+                && self.read_file(fp.tail_at, fp.tail_at + fp.tail.len() as u64) == fp.tail
+        };
+        if unchanged {
+            Ok((original_len, size))
+        } else {
+            Err("The file was changed by another program since you started editing it, so the edits no longer fit.                  Your changes are kept; reload the file to discard them."
+                .into())
+        }
     }
 
     /// Saves the document to `target` like `write_safely`: a temporary file next to it, flushed to
@@ -1030,11 +1052,15 @@ impl LargeFile {
         let name = name.to_string_lossy();
         let tmp = dir.join(format!(".{name}.kladde-save"));
         let edits = self.edits.read().unwrap();
+        let tail = match edits.as_ref().filter(|e| e.table.is_modified()) {
+            Some(e) => self.appended_since(e.table.original_len())?,
+            None => (self.size(), self.size()),
+        };
         let index = match &*edits {
             Some(e) => e.table.line_starts(&self.index.read().unwrap()),
             None => self.index.read().unwrap().clone(),
         };
-        if let Err(e) = self.stream_to(edits.as_ref().map(|e| &e.table), &tmp) {
+        if let Err(e) = self.stream_to(edits.as_ref().map(|e| &e.table), tail, &tmp) {
             let _ = fs::remove_file(&tmp);
             return Err(format!("Could not write a temporary file next to {name}: {e}"));
         }
@@ -1061,41 +1087,50 @@ impl LargeFile {
     /// own file (it only ever grows), then the piece list is written atomically. A crash in between
     /// leaves the previous journal, which only refers to bytes that are already on disk.
     pub fn backup(&self, dir: &Path, tab: &str) -> Result<(), String> {
-        let edits = self.edits.read().unwrap();
-        let Some(e) = edits.as_ref() else { return Ok(()) };
+        // Held for the whole backup, so two of them never write the same files; the disk I/O below
+        // happens without the lock on the document, so typing does not wait for a flush.
         let mut state = self.journal.lock().unwrap();
-        let added = e.table.added();
         let path = added_path(dir, tab, &state.generation);
-        let on_disk = fs::metadata(&path).map(|m| m.len()).ok();
+        let appendable = fs::metadata(&path).map(|m| m.len()).ok() == Some(state.written);
+        let (chunk, appended, added_len, pieces, size, mtime) = {
+            let edits = self.edits.read().unwrap();
+            let Some(e) = edits.as_ref() else { return Ok(()) };
+            let added = e.table.added();
+            let appended = appendable && state.written <= added.len() as u64;
+            let from = if appended { state.written as usize } else { 0 };
+            let pieces: Vec<(u8, u64, u64)> =
+                e.table.pieces().iter().map(|p| ((p.source == Source::Added) as u8, p.start, p.len)).collect();
+            (added[from..].to_vec(), appended, added.len() as u64, pieces, e.table.original_len(), e.mtime)
+        };
         let written = (|| -> std::io::Result<()> {
-            if on_disk == Some(state.written) && state.written <= added.len() as u64 {
-                if state.written < added.len() as u64 {
+            if appended {
+                if !chunk.is_empty() {
                     let mut file = fs::OpenOptions::new().append(true).open(&path)?;
-                    file.write_all(&added[state.written as usize..])?;
+                    file.write_all(&chunk)?;
                     file.sync_data()?;
                 }
             } else {
                 // The first backup, or the file was removed meanwhile (the tab was clean for a moment).
                 let mut file = File::create(&path)?;
-                file.write_all(added)?;
+                file.write_all(&chunk)?;
                 file.sync_data()?;
             }
             Ok(())
         })();
         written.map_err(|e| e.to_string())?;
-        state.written = added.len() as u64;
+        state.written = added_len;
         let journal = {
             let fp = self.fingerprint.lock().unwrap();
             Journal {
                 version: 1,
-                size: e.table.original_len(),
-                mtime: e.mtime,
+                size,
+                mtime,
                 head: base64(&fp.head),
                 tail_at: fp.tail_at,
                 tail: base64(&fp.tail),
                 added: state.generation.clone(),
-                added_len: state.written,
-                pieces: e.table.pieces().iter().map(|p| ((p.source == Source::Added) as u8, p.start, p.len)).collect(),
+                added_len,
+                pieces,
             }
         };
         let json = serde_json::to_vec(&journal).map_err(|e| e.to_string())?;
@@ -1158,7 +1193,12 @@ impl LargeFile {
         {
             let mut edits = self.edits.write().unwrap();
             let index = self.index.read().unwrap();
-            let table = PieceTable::restore(&index, self.size(), added, breaks, &pieces)?;
+            // Forced onto a file that only grew, the edits still describe the original's length; what
+            // was appended after it is saved behind the document (appended_since).
+            if journal.size > self.size() {
+                return Err("The file is shorter than the one the edits were made to.".into());
+            }
+            let table = PieceTable::restore(&index, journal.size, added, breaks, &pieces)?;
             *edits = Some(Edits { table, mtime });
         }
         *self.journal.lock().unwrap() = JournalState { generation: journal.added, written: journal.added_len };
@@ -1767,6 +1807,34 @@ mod tests {
     }
 
     #[test]
+    fn forced_restore_onto_a_grown_file_keeps_the_appended_lines() {
+        let dir = temp("journal-grown");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = temp("journal-grown.log");
+        std::fs::write(&path, "one
+two
+").unwrap();
+        let files = LargeFiles::default();
+        let (id, file) = open(&files, &path);
+        insert(&file, 0, 3, "!");
+        file.backup(&dir, "tab").unwrap();
+        files.close(id);
+
+        std::fs::OpenOptions::new().append(true).open(&path).unwrap().write_all(b"three
+").unwrap();
+        let (id, file) = open(&files, &path);
+        assert_eq!(file.restore(&dir, "tab", false).unwrap().status, "conflict");
+        assert_eq!(file.restore(&dir, "tab", true).unwrap().status, "applied");
+        let saved = files.save(id, None, Some((&dir, "tab"))).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"one!
+two
+three
+");
+        files.close(saved.id);
+    }
+
+    #[test]
     fn saving_removes_the_journal() {
         let dir = temp("journal-save");
         let _ = std::fs::remove_dir_all(&dir);
@@ -1782,6 +1850,105 @@ mod tests {
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
         assert_eq!(std::fs::read(&path).unwrap(), b"one!\ntwo\n");
         files.close(saved.id);
+    }
+
+    #[test]
+    fn save_keeps_what_was_appended_and_refuses_a_rewritten_original() {
+        let path = temp("appended.log");
+        std::fs::write(&path, "a
+b
+").unwrap();
+        let files = LargeFiles::default();
+        let (id, file) = open(&files, &path);
+        insert(&file, 0, 1, "!");
+        // A logger that had the file open before the edits began keeps appending (no guard here).
+        *file.guard.lock().unwrap() = None;
+        std::fs::OpenOptions::new().append(true).open(&path).unwrap().write_all(b"c
+").unwrap();
+        let saved = files.save(id, None, None).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"a!
+b
+c
+");
+        // The index of the written file was not the document's: the viewer indexed it again.
+        files.get(saved.id).unwrap().wait_for_index();
+        assert_eq!(texts(&files, saved.id, 0, 4), ["a!", "b", "c", ""]);
+
+        // Rewritten or shortened behind the edits' back: nothing is written, the edits stay.
+        let file = files.get(saved.id).unwrap();
+        insert(&file, 0, 0, "x");
+        *file.guard.lock().unwrap() = None;
+        std::fs::write(&path, "A!
+b
+c
+").unwrap();
+        let err = files.save(saved.id, None, None).map(|_| ()).unwrap_err();
+        assert!(err.contains("changed by another program"), "{err}");
+        assert_eq!(std::fs::read(&path).unwrap(), b"A!
+b
+c
+");
+        assert!(files.info(saved.id).unwrap().dirty);
+        assert!(!path.with_file_name(".appended.log.kladde-save").exists());
+        std::fs::write(&path, "A").unwrap();
+        assert!(files.save(saved.id, None, None).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"A");
+        files.close(saved.id);
+    }
+
+    /// Measures a ~200 MB file: `cargo test --release perf_200mb -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn perf_200mb() {
+        let path = temp("perf-200mb.log");
+        {
+            let mut out = std::io::BufWriter::new(File::create(&path).unwrap());
+            let line = format!("2026-10-28 12:00:00 INFO request handled {}
+", "x".repeat(60));
+            for i in 0..1_800_000u32 {
+                write!(out, "{i:>7} {line}").unwrap();
+            }
+        }
+        let size = std::fs::metadata(&path).unwrap().len();
+        let files = LargeFiles::default();
+        let t = Instant::now();
+        let (id, file) = open(&files, &path);
+        println!("open + index {} MB, {} lines: {:?}", size >> 20, files.info(id).unwrap().lines, t.elapsed());
+
+        // Typing in the middle and near the end: one edit per keystroke, and the lines fetched after it.
+        let mut worst = Duration::ZERO;
+        let t = Instant::now();
+        for i in 0..2000u64 {
+            let at = Instant::now();
+            let line = if i % 2 == 0 { 900_000 } else { 1_799_000 };
+            file.edit(&[Change { from: pos(line, 5), to: pos(line, 5), text: "x".into() }], EditKind::Type).unwrap();
+            files.lines(id, line.saturating_sub(20), 50).unwrap();
+            worst = worst.max(at.elapsed());
+        }
+        println!("2000 keystrokes (edit + 50 lines): avg {:?}, worst {:?}", t.elapsed() / 2000, worst);
+
+        let t = Instant::now();
+        file.edit(&[Change { from: pos(0, 0), to: pos(1_000_000, 0), text: String::new() }], EditKind::Other).unwrap();
+        println!("delete 1,000,000 lines: {:?}", t.elapsed());
+        file.undo(false).unwrap();
+
+        let dir = temp("perf-journal");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let t = Instant::now();
+        file.backup(&dir, "tab").unwrap();
+        println!("journal backup ({} pieces): {:?}", file.edits.read().unwrap().as_ref().unwrap().table.pieces().len(), t.elapsed());
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let t = Instant::now();
+        let found = find(&file, query("999999 ", 0, 0, true, true, true, false));
+        println!("search in the edited document: {:?} ({found:?})", t.elapsed());
+
+        let t = Instant::now();
+        let saved = files.save(id, None, None).unwrap();
+        println!("save: {:?}", t.elapsed());
+        files.close(saved.id);
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
