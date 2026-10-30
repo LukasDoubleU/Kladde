@@ -19,11 +19,14 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-/// LanguageTool 6.6 needs Java 17 or later (its README); the JRE is an LTS release of Eclipse Temurin.
-pub const LT_VERSION: &str = "6.6";
-const LT_URL: &str = "https://languagetool.org/download/LanguageTool-6.6.zip";
-const LT_SHA256: &str = "53600506b399bb5ffe1e4c8dec794fd378212f14aaf38ccef9b6f89314d11631";
-const LT_SIZE: u64 = 251_998_221;
+/// LanguageTool 6.8 needs Java 17 or later (its README); the JRE is an LTS release of Eclipse Temurin. The zip is the
+/// standalone distribution from Maven Central, whose URLs are permanent (languagetool.org/download only holds the
+/// current release and moves it away); its SHA-256 is published next to it as `.zip.sha256`.
+pub const LT_VERSION: &str = "6.8";
+const LT_URL: &str =
+    "https://repo1.maven.org/maven2/org/languagetool/languagetool-standalone/6.8/languagetool-standalone-6.8.zip";
+const LT_SHA256: &str = "f04aecf37e35ef17d44b336da9668a5a3a871edd14bd83a766a7e110b9ebcd21";
+const LT_SIZE: u64 = 258_509_167;
 
 pub const JRE_VERSION: &str = "21.0.13+9";
 const JRE_URL: &str = "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.13%2B9/OpenJDK21U-jre_x64_windows_hotspot_21.0.13_9.zip";
@@ -282,7 +285,7 @@ fn host_of(url: &str) -> &str {
 
 // ------------------------------------------------------------------ extraction
 
-/// Unpacks `archive` into `dest`, dropping the archive's top-level folder (`LanguageTool-6.6/`,
+/// Unpacks `archive` into `dest`, dropping the archive's top-level folder (`LanguageTool-6.8/`,
 /// `jdk-…-jre/`). Entries that would leave `dest` are skipped.
 fn extract(
     archive: &Path,
@@ -514,7 +517,7 @@ mod tests {
 
     fn archives() -> (Vec<u8>, Vec<u8>) {
         (
-            zip_of("LanguageTool-6.6", &[("languagetool-server.jar", b"jar"), ("libs/a.jar", b"a")]),
+            zip_of("LanguageTool-6.8", &[("languagetool-server.jar", b"jar"), ("libs/a.jar", b"a")]),
             zip_of("jdk-21-jre", &[("bin/java.exe", b"exe")]),
         )
     }
@@ -683,7 +686,7 @@ mod tests {
     fn an_archive_without_the_expected_file_is_not_installed() {
         let data = temp("marker");
         let (_, jre) = archives();
-        let lt = zip_of("LanguageTool-6.6", &[("readme.txt", b"no server in here")]);
+        let lt = zip_of("LanguageTool-6.8", &[("readme.txt", b"no server in here")]);
         let sources = sources_for(&lt, &jre);
         let error = install(&data, &sources, &AtomicBool::new(false), &mut |_| {}).unwrap_err();
         assert!(error.message.contains(LT_MARKER), "{}", error.message);

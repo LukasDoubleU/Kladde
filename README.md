@@ -230,14 +230,14 @@ turn it on, and nothing is downloaded, started or sent anywhere before that.
 Run **Toggle grammar checking (LanguageTool)** from the command palette (the state is remembered). Without a
 server set up, Kladde offers three ways:
 
-- **Download** (the default): Kladde downloads LanguageTool 6.6 and a Java runtime (Eclipse Temurin 21) once,
-  about 300 MB (557 MB on disk), from languagetool.org and the Eclipse Temurin releases on GitHub, into its data
+- **Download** (the default): Kladde downloads LanguageTool 6.8 and a Java runtime (Eclipse Temurin 21) once,
+  about 300 MB (566 MB on disk), from Maven Central and the Eclipse Temurin releases on GitHub, into its data
   folder. Both files are checked against fixed SHA-256 checksums
   before they are unpacked; a download that does not match is deleted. **After the download nothing leaves your
   machine**: Kladde starts LanguageTool in the background with the first check (a few seconds; the status bar says
   "Starting LanguageTool…"), keeps it on a port of your own computer that no other machine can reach, stops it
   after 15 minutes without a check, when you turn checking off and when Kladde ends (also if it crashes), and
-  starts it again when needed. While it runs it uses about 0.6–0.9 GB of RAM (Java heap limited to 768 MB).
+  starts it again when needed. While it runs it uses about 0.6–0.95 GB of RAM (Java heap limited to 768 MB).
   Progress shows in the status bar, a click on it cancels, and a download that is cancelled or fails leaves
   nothing half installed.
 - **Use the public API**: your text is then **sent to a third party** (`https://api.languagetool.org`). Kladde asks

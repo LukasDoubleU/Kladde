@@ -128,13 +128,13 @@ Key mechanisms:
     output>. It starts again with the next check") and the next request restarts it; a start that fails (Java
     missing, an error at start) reports the exit code and the last lines of its output once, and the frontend's
     backoff retries. A request that outlives a stop (error kind `stopped`) is no failure.
-  - *Heap and measurements* (real LanguageTool 6.6 and Temurin 21.0.13 on a Windows 11 development machine, text of
-    English and German with many errors): `-Xmx768m`. At 384 MB a request of 15 000 German characters (the request
+  - *Heap and measurements* (real LanguageTool 6.8 and Temurin 21.0.13 on a Windows 11 development machine, text of
+    English and German with many errors): `-Xmx768m`. (Heap limits were tried with 6.6; the real run with 6.8 gave the same picture.) At 384 MB a request of 15 000 German characters (the request
     limit) fails with HTTP 500; 512 MB works but is close to the edge (up to 27 s with `SerialGC`, 6–10 s with G1);
     768 MB takes 6–10 s for that worst case and 1–4 s for a normal paragraph. Working set of the Java process:
-    ~250 MB right after the start (1.2–1.4 s until it answers), ~560 MB after the first English check (2 s), ~900 MB
-    after English and German (the first German check ~4 s, 0.9 s once loaded). Download 49 MB + 252 MB, 557 MB on
-    disk (152 MB runtime, 405 MB LanguageTool); the whole install takes ~30 s on a fast line.
+    ~250 MB right after the start (1.2–1.4 s until it answers), ~600 MB after the first English check (2 s), ~935 MB
+    after English and German (the first German check ~4 s, 0.9 s once loaded). Download 49 MB + 259 MB, 566 MB on
+    disk (152 MB runtime, 414 MB LanguageTool); the whole install takes ~30–60 s on a fast line.
   - *Test overrides* (isolated profile only, like `KLADDE_UPDATE_URL`): `KLADDE_LT_DOWNLOADS` (URLs, hashes and sizes
     of the two archives), `KLADDE_LT_COMMAND` (another program instead of Java; Kladde appends `--port <n>`),
     `KLADDE_LT_IDLE_SECS`. See [testing.md](testing.md).

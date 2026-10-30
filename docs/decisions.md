@@ -58,8 +58,9 @@ The default preset contains deliberate choices; presets (Notepad++, VS Code) and
 - **The local LanguageTool (issue #12, #18):** Kladde downloads, starts and stops it itself, so the user only flips a
   switch and, after the download, nothing leaves the machine. It is **never bundled** (the installer stays ~5 MB) and
   never fetched without a click. The download is the only network access besides the update check (GitHub) and the
-  servers the user configured: LanguageTool 6.6 from `https://languagetool.org/download/LanguageTool-6.6.zip`
-  (SHA-256 `53600506b399bb5ffe1e4c8dec794fd378212f14aaf38ccef9b6f89314d11631`, 252 MB) and Eclipse Temurin JRE
+  servers the user configured: LanguageTool 6.8, the standalone zip from Maven Central (permanent URLs,
+  `https://repo1.maven.org/maven2/org/languagetool/languagetool-standalone/6.8/languagetool-standalone-6.8.zip`;
+  SHA-256 `f04aecf37e35ef17d44b336da9668a5a3a871edd14bd83a766a7e110b9ebcd21`, 259 MB) and Eclipse Temurin JRE
   21.0.13+9 for Windows x64 from the adoptium GitHub releases (SHA-256
   `2332c0b4cff6bed722da3567c91d5e47568bcba863fa4945d0a8d6fc76158628`, 49 MB). URLs and hashes are constants in
   `src-tauri/src/lt_install.rs`; a file is hashed while it downloads and checked before anything is unpacked, a

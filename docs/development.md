@@ -107,9 +107,14 @@
   `languages.ts`. Formatters are mapped by language name in `formatters.ts`.
 - **Colored UI:** a role variable in `themes.css` (built from the palette), `THEME_VARIABLES` in `theme.ts`, README
   theming table; never literal colors in components.
-- **New LanguageTool or Java version:** change the version, URL, SHA-256 and size constants in `lt_install.rs`
-  (download the file yourself, compute the hash, compare with the published checksum — adoptium publishes
-  `.sha256.txt` — and check LanguageTool's README for the Java it needs), re-measure memory and startup with a
-  manual run (docs/architecture.md, "Heap and measurements"), update the numbers in README, decisions.md and the
-  architecture notes. Old versions are removed on the next install automatically.
+- **New LanguageTool or Java version:** change the version, URL, SHA-256 and size constants in `lt_install.rs`.
+  - LanguageTool: take the version from Maven Central's `maven-metadata.xml` for
+    `org.languagetool:languagetool-standalone` (`https://repo1.maven.org/maven2/org/languagetool/languagetool-standalone/maven-metadata.xml`),
+    the zip from `…/<version>/languagetool-standalone-<version>.zip` (permanent URLs) and the hash from the
+    `.zip.sha256` file next to it; download the zip once and check that the hash matches, the top folder is
+    `LanguageTool-<version>/` and the README's Java requirement still fits the bundled JRE.
+  - Java: an LTS Temurin JRE zip from the adoptium GitHub releases, with the hash from its `.sha256.txt`.
+  - Then re-measure memory and startup with a manual run (docs/architecture.md, "Heap and measurements") and update the
+    numbers in README, decisions.md and the architecture notes. Old versions are removed on the next install
+    automatically.
 - **Big dependency:** dynamic `import()` at the point of use, and report the chunk size (`npm run build`).

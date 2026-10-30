@@ -487,7 +487,7 @@ class Workspace {
         { id: "public", label: "Use the public API" },
         { id: "cancel", label: "Cancel" },
       ],
-      "Kladde can download LanguageTool and a Java runtime once (about 300 MB, 550 MB on disk) and run them on " +
+      "Kladde can download LanguageTool and a Java runtime once (about 300 MB, 570 MB on disk) and run them on " +
         "your computer: after the download nothing leaves your machine. The public API at api.languagetool.org is " +
         "run by a third party and receives your text. For a server of your own, set languageToolServer on the " +
         "settings page (Ctrl+Alt+S).",

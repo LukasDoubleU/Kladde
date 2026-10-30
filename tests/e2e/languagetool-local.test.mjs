@@ -33,8 +33,8 @@ after(async () => {
 async function downloadServer({ delay = 0, chunk = 16 * 1024 } = {}) {
   const sha = (buffer) => createHash("sha256").update(buffer).digest("hex");
   const lt = makeZip([
-    ["LanguageTool-6.6/languagetool-server.jar", "stand-in for the server jar"],
-    ["LanguageTool-6.6/libs/padding.bin", randomBytes(1_500_000)],
+    ["LanguageTool-6.8/languagetool-server.jar", "stand-in for the server jar"],
+    ["LanguageTool-6.8/libs/padding.bin", randomBytes(1_500_000)],
   ]);
   const jre = makeZip([
     ["jdk-21.0.13+9-jre/bin/java.exe", "stand-in for java"],
@@ -130,7 +130,7 @@ async function until(condition, what, timeout = 20000) {
 
 const lastPid = (profile) => startedPids(profile).at(-1);
 const dataPath = (profile, ...parts) => join(profile, "data", ...parts);
-const ltDir = (profile) => dataPath(profile, "languagetool", "6.6");
+const ltDir = (profile) => dataPath(profile, "languagetool", "6.8");
 const jreDir = (profile) => dataPath(profile, "jre", "21.0.13+9");
 
 async function open(port, profile, dl, file, extra) {
@@ -244,7 +244,7 @@ test("stops when idle or when checking is turned off, starts again on demand, an
     await app.key("Ctrl+Alt+S");
     await app.waitFor("document.querySelector('[data-local-languagetool] .status')", 5000);
     const panel = () => app.eval("document.querySelector('[data-local-languagetool]').textContent.replace(/\\s+/g, ' ')");
-    assert.match(await panel(), /Installed: LanguageTool 6\.6 with Java 21\.0\.13\+9, \d+ MB on disk\. Not running/);
+    assert.match(await panel(), /Installed: LanguageTool 6\.8 with Java 21\.0\.13\+9, \d+ MB on disk\. Not running/);
     await app.key("Escape");
     await app.waitFor("document.querySelector('.tab.active .title')?.textContent === 'doc.md'");
 
