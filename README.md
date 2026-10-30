@@ -21,6 +21,11 @@ A text editor, simple yet powerful like Notepad++, without becoming an IDE.
 So: single files in tabs, no project tree, no Git, no language servers. It opens anything you throw at it,
 starts in a fraction of a second, and never loses what you typed.
 
+**Opinionated by design.** I build Kladde for my own use, so its features and defaults follow my preferences:
+Windows only, English only, Catppuccin-themed (a pastel color palette), my own choice of keyboard shortcuts, and
+only the features I need. Most of it should work as sensible defaults for others too, and you're welcome to use
+it, but I may decline requests that don't fit how I work, and there is no promise of support.
+
 ## Features
 
 **Editing**
