@@ -131,6 +131,13 @@ export interface UpdateInfo {
   portable: boolean;
 }
 
+export interface UpdateStatus {
+  /** Unix seconds of the last completed check; null when there was none. */
+  lastCheck: number | null;
+  /** Seconds between the automatic checks of a running app. */
+  periodSecs: number;
+}
+
 export type UpdateProgress =
   | { event: "downloading"; downloaded: number; total: number | null }
   | { event: "installing" };
@@ -198,8 +205,9 @@ export const api = {
   integrationUnregister: () => invoke<void>("integration_unregister"),
   integrationDismissOffer: () => invoke<void>("integration_dismiss_offer"),
 
-  /** manual: always ask; otherwise the check is skipped when one succeeded in the last 24 hours. */
+  /** manual: always ask; otherwise the check is skipped when one completed within the last hour. */
   updateCheck: (manual: boolean) => invoke<UpdateInfo | null>("update_check", { manual }),
+  updateStatus: () => invoke<UpdateStatus>("update_status"),
   /** Downloads and installs; the app exits and restarts through the installer when this succeeds. */
   updateInstall: (onEvent: (e: UpdateProgress) => void) => {
     const channel = new Channel<UpdateProgress>();

@@ -1,9 +1,11 @@
 //! Update check and install on top of tauri-plugin-updater.
 //!
 //! The webview never talks to the updater plugin directly (no permissions in the capability file): it
-//! calls the commands below, so the endpoint, the once-a-day limit and the portable/installed decision
-//! stay in one place. Releases publish a signed `latest.json` (see .github/workflows/release.yml); the
-//! public key that verifies the installer is in `plugins.updater.pubkey` of tauri.conf.json.
+//! calls the commands below, so the endpoint, the throttle and the portable/installed decision stay in one
+//! place. The automatic check runs at every start and then every few hours while Kladde is open (the timer
+//! is in `updates.svelte.ts`); it is throttled here, so neither can hammer GitHub. Releases publish a signed
+//! `latest.json` (see .github/workflows/release.yml); the public key that verifies the installer is in
+//! `plugins.updater.pubkey` of tauri.conf.json.
 
 use serde::Serialize;
 use std::path::Path;
@@ -18,9 +20,17 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 /// profile without it does not check at all.
 pub const URL_ENV: &str = "KLADDE_UPDATE_URL";
 
+/// Makes the periodic check of a running app fire after this many seconds and switches the throttle off, so a
+/// test does not have to wait hours. Honored only with an isolated profile, like `URL_ENV`.
+pub const PERIOD_ENV: &str = "KLADDE_UPDATE_PERIOD_SECS";
+
 /// Time of the last successful check, kept in the data folder (not in settings.json).
 const CHECK_FILE: &str = "last-update-check";
-const CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+/// An automatic check is skipped when one completed less than this long ago. Short, because a manual check
+/// writes the marker too: with a day here, one in the afternoon hid a release published that evening.
+const CHECK_THROTTLE: Duration = Duration::from_secs(60 * 60);
+/// How often an open Kladde checks again (automatic, so throttled as well).
+const CHECK_PERIOD: Duration = Duration::from_secs(6 * 60 * 60);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// The update found by the last check, waiting for "Update now".
@@ -53,12 +63,22 @@ fn now_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
-/// A check is due once a day. A timestamp in the future (clock changed) counts as due.
-fn is_due(last: Option<u64>, now: u64) -> bool {
+/// An automatic check is due when none completed within `throttle`. A timestamp in the future (clock
+/// changed) counts as due.
+fn is_due(last: Option<u64>, now: u64, throttle: Duration) -> bool {
     match last {
-        Some(last) if last <= now => now - last >= CHECK_INTERVAL.as_secs(),
+        Some(last) if last <= now => now - last >= throttle.as_secs(),
         _ => true,
     }
+}
+
+fn period_override() -> Option<u64> {
+    crate::session::isolated_profile()?;
+    std::env::var(PERIOD_ENV).ok()?.trim().parse().ok().filter(|&secs| secs > 0)
+}
+
+fn throttle() -> Duration {
+    if period_override().is_some() { Duration::ZERO } else { CHECK_THROTTLE }
 }
 
 fn last_check(dir: &Path) -> Option<u64> {
@@ -79,8 +99,9 @@ async fn find_update(app: &AppHandle) -> Result<Option<Update>, String> {
     builder.build().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())
 }
 
-/// Looks for a newer version. `manual` (the command) always asks; the automatic check at start skips the
-/// request when one succeeded within the last day. Returns None when there is nothing new (or nothing to do).
+/// Looks for a newer version. `manual` (the command, the settings page) always asks; an automatic check skips
+/// the request when one completed within the last hour. Returns None when there is nothing new (or nothing to
+/// do).
 #[tauri::command]
 pub async fn update_check(
     app: AppHandle,
@@ -88,7 +109,7 @@ pub async fn update_check(
     manual: bool,
 ) -> Result<Option<UpdateInfo>, String> {
     let dir = crate::session::data_dir(&app)?;
-    if !manual && !is_due(last_check(&dir), now_secs()) {
+    if !manual && !is_due(last_check(&dir), now_secs(), throttle()) {
         return Ok(None);
     }
     // Test profiles never talk to the real GitHub: they get a fake manifest or no check at all.
@@ -105,6 +126,26 @@ pub async fn update_check(
     });
     *pending.0.lock().map_err(|e| e.to_string())? = update;
     Ok(info)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateStatus {
+    /// Unix seconds of the last completed check; None when there was none yet.
+    last_check: Option<u64>,
+    /// Seconds between the automatic checks of a running app.
+    period_secs: u64,
+}
+
+/// What the page needs besides the check itself: when it last completed (the settings page shows it) and the
+/// period of the timer.
+#[tauri::command]
+pub fn update_status(app: AppHandle) -> Result<UpdateStatus, String> {
+    let dir = crate::session::data_dir(&app)?;
+    Ok(UpdateStatus {
+        last_check: last_check(&dir),
+        period_secs: period_override().unwrap_or(CHECK_PERIOD.as_secs()),
+    })
 }
 
 /// Downloads and verifies the update found by `update_check`, then runs the installer (passive mode). On
@@ -158,13 +199,17 @@ mod tests {
     }
 
     #[test]
-    fn check_is_due_once_a_day() {
-        let day = CHECK_INTERVAL.as_secs();
-        assert!(is_due(None, 1_000_000));
-        assert!(!is_due(Some(1_000_000), 1_000_000 + day - 1));
-        assert!(is_due(Some(1_000_000), 1_000_000 + day));
+    fn check_is_due_an_hour_after_the_last_one() {
+        let hour = CHECK_THROTTLE.as_secs();
+        assert_eq!(hour, 3600);
+        assert!(is_due(None, 1_000_000, CHECK_THROTTLE));
+        assert!(!is_due(Some(1_000_000), 1_000_000, CHECK_THROTTLE));
+        assert!(!is_due(Some(1_000_000), 1_000_000 + hour - 1, CHECK_THROTTLE));
+        assert!(is_due(Some(1_000_000), 1_000_000 + hour, CHECK_THROTTLE));
         // Clock set back: ask again instead of waiting for the old timestamp.
-        assert!(is_due(Some(2_000_000), 1_000_000));
+        assert!(is_due(Some(2_000_000), 1_000_000, CHECK_THROTTLE));
+        // No throttle (the test override): always due.
+        assert!(is_due(Some(1_000_000), 1_000_000, Duration::ZERO));
     }
 
     #[test]

@@ -5,7 +5,7 @@
 | Command | What it covers | Needs |
 |---|---|---|
 | `npm run check` | svelte-check (types of all `.ts`/`.svelte`) | — |
-| `npm run test:unit` | Node's test runner on `tests/unit/*.test.mjs`: formatters, keys/presets, grammar text side, themes, settings metadata, update manifest | — |
+| `npm run test:unit` | Node's test runner on `tests/unit/*.test.mjs`: formatters, keys/presets, grammar text side, themes, settings metadata, update manifest, last-check time format | — |
 | `cd src-tauri && cargo test` | file I/O and encodings, safe saving, large viewer (index, search, piece table, editing, streaming save, journal), LanguageTool client (local socket), registry code (throwaway key), updater helpers | Rust |
 | `npm run test:e2e` | the real app through the DevTools protocol: `tests/e2e/*.test.mjs` | `npx tauri build --debug --no-bundle` first |
 
@@ -62,9 +62,9 @@ Rules:
 | preview | 9346, 9376 |
 | settings | 9352–9353 |
 | theme | 9348, 9381–9383 |
-| update | 9349, 9394–9396 |
+| update | 9349, 9359–9362, 9366–9368, 9394–9396 |
 
-Free for new files: 9359–9362, 9366–9370, 9374–9375, 9377–9380, 9390.
+Free for new files: 9369–9370, 9374–9375, 9377–9380, 9390.
 
 ## Environment variables
 
@@ -75,6 +75,7 @@ Free for new files: 9359–9362, 9366–9370, 9374–9375, 9377–9380, 9390.
 | `KLADDE_TEST_KEY` | Name of the registry test key `HKCU\Software\KladdeTest\<key>` used by an isolated profile |
 | `KLADDE_TEST_OFFER=1` | Shows the default-editor offer in an isolated profile |
 | `KLADDE_UPDATE_URL` | Update manifest URL (isolated profile only); tests serve a fake `latest.json` |
+| `KLADDE_UPDATE_PERIOD_SECS` | Period of the automatic check of a running app in seconds, and no one-hour throttle (isolated profile only); the real period is 6 h |
 | `KLADDE_E2E_START_TIMEOUT` | Harness: how long to wait for the app to come up (ms, default 20000; CI uses 90000) |
 
 ## Pitfalls we hit (and how the harness handles them)

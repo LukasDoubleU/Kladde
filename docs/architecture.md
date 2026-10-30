@@ -231,8 +231,12 @@ Key mechanisms:
   start. `--unregister-integration` (run by the NSIS uninstaller, not during updates) removes everything; the
   dismissal of the start-up offer is a marker file, not a setting.
 - `update.rs` wraps tauri-plugin-updater (`update_check`, `update_install`); the page never calls the plugin. The
-  check runs 5 s after start, at most once per day (marker file `last-update-check`), against
-  `releases/latest/download/latest.json` (pre-releases are never offered). An exe with `uninstall.exe` next to it is
+  automatic check runs 5 s after start and then every 6 h while the app is open (timer in `updates.svelte.ts`,
+  period from `update_status`), skipped when a check completed less than an hour ago (marker file
+  `last-update-check`, also written by manual checks; a timestamp in the future counts as due). A version
+  dismissed with **Later** is not announced again by the automatic checks until the next start, a newer one is.
+  The settings page header shows the version, **Check now** and the time of the marker (`update_status`). Checks go
+  against `releases/latest/download/latest.json` (pre-releases are never offered). An exe with `uninstall.exe` next to it is
   the installed version (that is how the NSIS installer lays it out) and can update in place (passive mode, the
   installer relaunches Kladde); otherwise it is portable and gets a "Download" button. The session is saved before
   installing.

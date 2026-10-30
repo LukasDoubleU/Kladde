@@ -53,7 +53,7 @@ The default preset contains deliberate choices; presets (Notepad++, VS Code) and
 
 - Nothing leaves the machine unless the user turns it on: LanguageTool needs a configured server and an explicit
   toggle; the public LanguageTool API asks for a one-time confirmation.
-- The update check (once a day, GitHub only) is on by default (`checkForUpdates`), and documented.
+- The update check (at start and every six hours, never more than once an hour, GitHub only) is on by default (`checkForUpdates`), and documented.
 - Remote images in Markdown previews are allowed (https), local images load through the asset protocol.
 
 ## Windows integration

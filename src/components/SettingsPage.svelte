@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { runAction } from "../lib/actions";
   import {
     coerceSetting,
@@ -10,6 +11,8 @@
     type Settings,
   } from "../lib/settings-schema";
   import { defaultSettings, settings, settingsStatus, updateSettingsFile } from "../lib/settings.svelte";
+  import { formatLastCheck } from "../lib/update-time";
+  import { updates } from "../lib/updates.svelte";
   import { workspace } from "../lib/workspace.svelte";
 
   let { active }: { active: boolean } = $props();
@@ -50,6 +53,12 @@
     });
   });
 
+  // The version and the time of the last check are read again whenever the tab comes back: a check in the
+  // background may have completed meanwhile.
+  $effect(() => {
+    if (active) untrack(() => void updates.loadStatus());
+  });
+
   /** Writes entries of settings.json and applies them; the three that mirror a session state follow it too. */
   async function write(name: Name, value: unknown) {
     const error = await updateSettingsFile({ [name]: value === defaultSettings[name] ? undefined : value });
@@ -76,6 +85,12 @@
     return value === "" ? "empty" : `“${value}”`;
   }
 
+  /** A real link (the address shows on hover), opened in the browser instead of in the app's webview. */
+  function openRelease(e: MouseEvent, version: string) {
+    e.preventDefault();
+    updates.openRelease(version);
+  }
+
   function onKeydown(e: KeyboardEvent) {
     if (e.key !== "Escape") return;
     e.preventDefault();
@@ -87,6 +102,42 @@
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div class="page" class:hidden={!active} role="region" aria-label="Settings" onkeydown={onKeydown}>
+  <!-- Above the search and not part of it: the version and the update check are always at hand. -->
+  <div class="about" role="group" aria-label="Kladde version and updates">
+    <div class="line">
+      {#if updates.version}
+        <strong class="version">Kladde {updates.version}</strong>
+        <a class="link" href={updates.releaseUrl(updates.version)} onclick={(e) => openRelease(e, updates.version)}>
+          Release notes
+        </a>
+      {/if}
+      <span class="last">Last checked: {formatLastCheck(updates.lastCheck)}</span>
+      <button class="check" disabled={updates.checking || !!updates.installing} onclick={() => updates.check(true, true)}>
+        Check now
+      </button>
+    </div>
+    {#if updates.installing || updates.checking || updates.available || updates.result}
+      <div class="line outcome" role="status">
+        {#if updates.installing}
+          <span>{updates.installing} Kladde restarts when it is done.</span>
+        {:else if updates.checking}
+          <span class="dim">Checking…</span>
+        {:else if updates.available}
+          {@const info = updates.available}
+          <span>Kladde {info.version} is available.</span>
+          <button onclick={() => updates.install()}>{info.portable ? "Download" : "Update now"}</button>
+          <a class="link" href={updates.releaseUrl(info.version)} onclick={(e) => openRelease(e, info.version)}>
+            Release notes
+          </a>
+        {:else if updates.result?.kind === "error"}
+          <span class="problem-text">Could not check for updates: {updates.result.message}</span>
+        {:else}
+          <span class="dim">Up to date</span>
+        {/if}
+      </div>
+    {/if}
+  </div>
+
   <header>
     <div class="bar">
       <input
@@ -213,6 +264,7 @@
     border-bottom: 1px solid var(--border);
     padding: 12px 24px 10px;
   }
+  .about,
   .bar,
   main {
     max-width: 880px;
@@ -221,6 +273,38 @@
   .bar {
     display: flex;
     gap: 10px;
+  }
+  .about {
+    padding: 14px 24px 2px;
+  }
+  .line {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 12px;
+    align-items: center;
+    min-height: 28px;
+  }
+  .version {
+    font-size: 14px;
+  }
+  .link {
+    color: var(--link);
+  }
+  .link:hover {
+    text-decoration: underline;
+  }
+  .last {
+    margin-left: auto;
+    color: var(--fg-dim);
+  }
+  .outcome {
+    padding-bottom: 6px;
+  }
+  .dim {
+    color: var(--fg-dim);
+  }
+  .problem-text {
+    color: var(--error);
   }
   main {
     padding: 4px 24px 40px;
@@ -251,7 +335,11 @@
   button:hover:not(:disabled) {
     background: var(--bg-hover);
   }
+  button:disabled {
+    opacity: 0.5;
+  }
   button:focus-visible,
+  .link:focus-visible,
   .switch:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 1px;

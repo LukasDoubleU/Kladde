@@ -47,7 +47,7 @@ export interface Settings {
   keymap: "default" | "notepad++" | "vscode";
   /** Offer once at start to make Kladde selectable as the default editor in Windows. */
   offerDefaultEditor: boolean;
-  /** Look for a newer version on GitHub a few seconds after start, at most once a day. */
+  /** Look for a newer version on GitHub a few seconds after start and every six hours while Kladde is open. */
   checkForUpdates: boolean;
 }
 
@@ -281,7 +281,7 @@ export const SETTING_META: Record<keyof Settings, SettingMeta> = {
   checkForUpdates: {
     group: "updates",
     label: "Check for updates",
-    description: "Look for a newer version on GitHub a few seconds after start, at most once a day. The command works either way.",
+    description: "Look for a newer version on GitHub a few seconds after start and every six hours while Kladde is open (never more than once an hour). The command and the Check now button on this page work either way.",
     control: { type: "boolean" },
   },
 

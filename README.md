@@ -114,11 +114,14 @@ so SmartScreen may ask for confirmation on the first start. You can also [build 
 
 ### Updates
 
-Kladde looks for a newer version a few seconds after start, at most once a day, in the background. When there
-is one, a banner says so: **Update now** (downloads the installer, checks its signature, installs it and
-restarts Kladde; unsaved text is backed up first and comes back), **Release notes** or **Later**. The command
-**Check for updates** asks right away and tells you when you are up to date. The portable exe cannot replace
-itself, so its banner offers **Download**, which opens the release page.
+Kladde looks for a newer version a few seconds after start and then every six hours while it is open, in the
+background; it never asks more than once an hour, so restarting does not repeat the request. When there is one, a
+banner says so: **Update now** (downloads the installer, checks its signature, installs it and restarts Kladde;
+unsaved text is backed up first and comes back), **Release notes** or **Later**. **Later** hides that version
+until the next start; a newer one is announced anyway. The command **Check for updates** asks right away and
+tells you when you are up to date; the top of the settings page (`Ctrl+Alt+S`) does the same with **Check now**,
+next to the running version, a link to its release notes and the time of the last check. The portable exe cannot
+replace itself, so its banner offers **Download**, which opens the release page.
 
 The check is one request for `latest.json` from the GitHub release page of this repository; Kladde sends
 nothing but the request itself (GitHub sees your IP address, as with any download), no identifier and nothing about your files. Update packages are signed with a key whose public half is built into Kladde,
@@ -254,7 +257,10 @@ integration), a search box (it matches the label, the description and the settin
 list or text box per setting, a mark on the ones that differ from the default and **Reset to default** for each.
 Changes are written to `settings.json` at once and applied at once; entries Kladde does not know stay in the file,
 and a setting set back to its default is removed from it. `Escape` clears the search, then returns to the previous
-tab. The page also links to `settings.json`, the shortcut editor and `theme.css`.
+tab. The page also links to `settings.json`, the shortcut editor and `theme.css`. Above the search, which does
+not filter it, a header shows the running version with a link to its release notes, **Check now**, the result of
+the check (up to date, an update with **Update now** or **Download**, or the error) and when the last check
+completed.
 
 **Open settings (settings.json)** in the command palette opens the file itself; saving it applies the changes, and
 the page shows them. The table lists every setting:
@@ -280,7 +286,7 @@ the page shows them. The table lists every setting:
 | `largeFileThresholdMB` | `32` | larger files open in the large file view |
 | `keymap` | `default` | base for the keyboard shortcuts: `default`, `notepad++` or `vscode` |
 | `offerDefaultEditor` | `true` | offer once at start to register Kladde as a default editor candidate |
-| `checkForUpdates` | `true` | look for a newer version at start (once a day, contacts GitHub); the command works either way |
+| `checkForUpdates` | `true` | look for a newer version at start and every six hours (never more than once an hour, contacts GitHub); the command and **Check now** work either way |
 
 Settings, keyboard shortcuts, the custom theme, the session, the time of the last update check and backups of
 unsaved text live in

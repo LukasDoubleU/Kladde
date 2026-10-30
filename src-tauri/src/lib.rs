@@ -480,6 +480,7 @@ pub fn run() {
             integration_unregister,
             integration_dismiss_offer,
             update::update_check,
+            update::update_status,
             update::update_install,
         ])
         .run(tauri::generate_context!())
