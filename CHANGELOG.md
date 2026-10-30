@@ -2,6 +2,15 @@
 
 All notable changes to Kladde. Versions follow [Semantic Versioning](https://semver.org), commit messages
 [Conventional Commits](https://www.conventionalcommits.org).
+## [0.5.0](https://github.com/LukasDoubleU/Kladde/releases/tag/v0.5.0) – 2026-10-30
+
+### 🚀 Features
+
+- **updater:** Check at every start and every 6 h, show update state on the settings page ([970c17a](https://github.com/LukasDoubleU/Kladde/commit/970c17af3c5c026851318813234b6f50e3ce1be7))
+
+### 📚 Documentation
+
+- Say that Kladde is opinionated ([01cd5e8](https://github.com/LukasDoubleU/Kladde/commit/01cd5e86b21f6c1e063cd11817e239924a6f1b5f))
 ## [0.4.0](https://github.com/LukasDoubleU/Kladde/releases/tag/v0.4.0) – 2026-10-29
 
 ### 🚀 Features
