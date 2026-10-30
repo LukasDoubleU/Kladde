@@ -74,6 +74,11 @@
 - `Emulation.setFocusEmulationEnabled` and other CDP tricks only exist for tests; production code must not rely on
   them.
 - `ReplaceFileW` fails on some file systems or locked files; `write_safely` then writes in place.
+- Renaming a folder right after writing many files into it fails with "access denied" while a virus scanner still
+  holds them (it happened on the first real install of the local LanguageTool): extract in place and write a marker
+  last instead (`lt_install.rs`), and retry deletions.
+- A Windows job object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` is how a child process is tied to Kladde (the
+  local LanguageTool): the OS kills it when the handle closes, whatever way Kladde ends.
 
 ## Svelte 5 pitfalls
 
@@ -102,4 +107,9 @@
   `languages.ts`. Formatters are mapped by language name in `formatters.ts`.
 - **Colored UI:** a role variable in `themes.css` (built from the palette), `THEME_VARIABLES` in `theme.ts`, README
   theming table; never literal colors in components.
+- **New LanguageTool or Java version:** change the version, URL, SHA-256 and size constants in `lt_install.rs`
+  (download the file yourself, compute the hash, compare with the published checksum — adoptium publishes
+  `.sha256.txt` — and check LanguageTool's README for the Java it needs), re-measure memory and startup with a
+  manual run (docs/architecture.md, "Heap and measurements"), update the numbers in README, decisions.md and the
+  architecture notes. Old versions are removed on the next install automatically.
 - **Big dependency:** dynamic `import()` at the point of use, and report the chunk size (`npm run build`).

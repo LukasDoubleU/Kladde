@@ -51,8 +51,22 @@ The default preset contains deliberate choices; presets (Notepad++, VS Code) and
 
 ## Privacy and the outside world
 
-- Nothing leaves the machine unless the user turns it on: LanguageTool needs a configured server and an explicit
-  toggle; the public LanguageTool API asks for a one-time confirmation.
+- Nothing leaves the machine unless the user turns it on. Grammar checking is off until toggled. Turning it on
+  without a configured server offers (dialog) to **download** a local LanguageTool, to use the **public API** (one-time
+  confirmation, a third party receives the text) or to cancel. A `languageToolServer` that is set (own server or the
+  public API) always wins over the local one.
+- **The local LanguageTool (issue #12, #18):** Kladde downloads, starts and stops it itself, so the user only flips a
+  switch and, after the download, nothing leaves the machine. It is **never bundled** (the installer stays ~5 MB) and
+  never fetched without a click. The download is the only network access besides the update check (GitHub) and the
+  servers the user configured: LanguageTool 6.6 from `https://languagetool.org/download/LanguageTool-6.6.zip`
+  (SHA-256 `53600506b399bb5ffe1e4c8dec794fd378212f14aaf38ccef9b6f89314d11631`, 252 MB) and Eclipse Temurin JRE
+  21.0.13+9 for Windows x64 from the adoptium GitHub releases (SHA-256
+  `2332c0b4cff6bed722da3567c91d5e47568bcba863fa4945d0a8d6fc76158628`, 49 MB). URLs and hashes are constants in
+  `src-tauri/src/lt_install.rs`; a file is hashed while it downloads and checked before anything is unpacked, a
+  mismatch deletes it. The server listens on the loopback interface only, on a port Kladde picks; its process is
+  tied to Kladde (see architecture.md). Upgrading LanguageTool or Java is a deliberate code change (new constants).
+- Why Java and the real LanguageTool rather than a lighter engine: it is the one that checks German properly.
+  Harper (Rust, tiny, instant) is a candidate for a future engine once it supports German.
 - The update check (at start and every six hours, never more than once an hour, GitHub only) is on by default (`checkForUpdates`), and documented.
 - Remote images in Markdown previews are allowed (https), local images load through the asset protocol.
 

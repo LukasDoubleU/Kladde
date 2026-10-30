@@ -27,6 +27,8 @@ How Kladde is built and why. For product decisions see [decisions.md](decisions.
 | `integration.rs` | Windows registration (ProgID, capabilities, "Open with", context menu) under a passed-in registry root |
 | `update.rs` | Update check/install on top of tauri-plugin-updater |
 | `languagetool.rs` | HTTP client for LanguageTool (`ureq`, Windows TLS) |
+| `lt_install.rs` | Download, verification and installation of the local LanguageTool and its Java runtime (pinned URLs and SHA-256, `zip`, `sha2`) |
+| `lt_server.rs` | The managed local LanguageTool server: routing, lazy start, job object, idle stop |
 
 Key mechanisms:
 
@@ -88,6 +90,54 @@ Key mechanisms:
   session file, and the journal must not be pruned unseen. `LargeFile::restore` applies it only if size, mtime
   and fingerprint match the file; otherwise the tab shows a banner (Apply anyway / Discard my changes), typing
   is refused until the user decides and the journal stays.
+- **Local LanguageTool (`lt_install.rs`, `lt_server.rs`):** grammar checking works without any setup by downloading
+  LanguageTool and a Java runtime on request (see decisions.md for why, the sources and the hashes).
+  - *Layout:* `<data>/languagetool/<version>/` and `<data>/jre/<version>/`. A version folder counts as installed
+    when `.kladde-complete` (written last, after the archive was unpacked and its main file found) and
+    `languagetool-server.jar` / `bin/java.exe` exist; `.download.part` is the download in progress. The folder is
+    extracted in place and not renamed from a temporary one: right after the extraction a virus scanner holds the new
+    files and Windows refuses the rename ("access denied", seen in the first real run). A failed or cancelled install
+    deletes the folder and the part file; a Kladde killed half way leaves a folder without the marker, which the next
+    install deletes first. Installing the pinned version also deletes the folders of other versions. The Java
+    runtime goes first, so a failing LanguageTool download does not repeat it.
+  - *Download:* `ureq` (the stack of the LanguageTool client, Windows TLS), streamed to the part file while the
+    SHA-256 is computed, checked before extraction (mismatch: file deleted, error kind `hash`), cancellable through a
+    flag (`languagetool_local_cancel`, checked between 64 KB chunks; a stalled connection only ends at the 30 s
+    response or 30 min body timeout). Progress goes through a Tauri `Channel` (`downloading`: bytes of both archives
+    together, `extracting`: bytes), at most ten events a second; the status bar shows it and a click cancels. Errors
+    carry a kind (`cancelled`, `network`, `hash`, `disk`, `other`) and a message that is shown as a notice; a full
+    disk is explained. Extraction (`zip` crate with flate2/zlib-rs) skips entries that would leave the target
+    (`enclosed_name`) and drops the archive's top-level folder.
+  - *Routing:* `languagetool_check` decides per request (`lt_server::route`): a non-empty `languageToolServer` goes to
+    that server, whatever else is installed; an empty one goes to the managed server if the local LanguageTool is
+    installed, otherwise the request fails with a `config` error. The frontend sends the same request either way, the
+    server address is just empty for the local one.
+  - *Lifecycle:* nothing runs at start. The first routed request starts `java.exe -Xmx768m -cp languagetool-server.jar
+    org.languagetool.server.HTTPServer --port <free port>` (working directory the LanguageTool folder, no console
+    window through `CREATE_NO_WINDOW`; the server binds the loopback interface only, which is its default, `--public`
+    is never passed) and waits until `GET /v2/languages` answers (up to 120 s). Concurrent requests wait for the same
+    start. A bind error on the chosen port (someone took it meanwhile) is retried with another port, up to three times.
+    The child lives in a Windows **job object with `KILL_ON_JOB_CLOSE`**: when Kladde ends, is killed or crashes, the OS
+    closes the handle and kills the server, so no Java process is left behind (the e2e test kills Kladde and checks).
+    A monitor thread stops the server after 15 minutes without a request (`IDLE_TIMEOUT`; every request touches the
+    timer before and after) and notices when it dies. `languagetool_local_stop` stops it when checking is turned off,
+    when a server of the user's own is set, and (in Rust) before an install or removal, because the folders are in use.
+    The frontend follows through the `languagetool-state` event (`starting`, `running`, `stopped`): the status bar says
+    "Grammar: starting LanguageTool…" while a check waits for the start, and the request simply resolves afterwards,
+    so no error shows in between. A request that fails because the server died says so ("exited (exit code N): <last
+    output>. It starts again with the next check") and the next request restarts it; a start that fails (Java
+    missing, an error at start) reports the exit code and the last lines of its output once, and the frontend's
+    backoff retries. A request that outlives a stop (error kind `stopped`) is no failure.
+  - *Heap and measurements* (real LanguageTool 6.6 and Temurin 21.0.13 on a Windows 11 development machine, text of
+    English and German with many errors): `-Xmx768m`. At 384 MB a request of 15 000 German characters (the request
+    limit) fails with HTTP 500; 512 MB works but is close to the edge (up to 27 s with `SerialGC`, 6–10 s with G1);
+    768 MB takes 6–10 s for that worst case and 1–4 s for a normal paragraph. Working set of the Java process:
+    ~250 MB right after the start (1.2–1.4 s until it answers), ~560 MB after the first English check (2 s), ~900 MB
+    after English and German (the first German check ~4 s, 0.9 s once loaded). Download 49 MB + 252 MB, 557 MB on
+    disk (152 MB runtime, 405 MB LanguageTool); the whole install takes ~30 s on a fast line.
+  - *Test overrides* (isolated profile only, like `KLADDE_UPDATE_URL`): `KLADDE_LT_DOWNLOADS` (URLs, hashes and sizes
+    of the two archives), `KLADDE_LT_COMMAND` (another program instead of Java; Kladde appends `--port <n>`),
+    `KLADDE_LT_IDLE_SECS`. See [testing.md](testing.md).
 - **Isolated profile:** `KLADDE_DATA_DIR` replaces the data and config folders, disables the single-instance plugin
   (so a test instance can run next to the normal one), switches registry writes to a test key and keeps the updater
   away from the real server. See [testing.md](testing.md).
@@ -105,6 +155,7 @@ Key mechanisms:
 | `lib/format.ts`, `format-xml.ts`, `formatters.ts` | Own JSON and XML formatters; dispatch by language to lazily loaded Prettier and sql-formatter |
 | `lib/compare.ts` | Merge views for compare tabs (`@codemirror/merge`, custom diff for ignore whitespace/case) |
 | `lib/grammar.ts`, `grammar-text.ts` | LanguageTool: lint integration (lazy) and the pure text side (Markdown masking via LanguageTool's `data` format, paragraphs, request budget, offset mapping) |
+| `lib/languagetool-local.svelte.ts`, `components/LocalLanguageTool.svelte` | The local LanguageTool in the UI: install state, download progress, server state (event from Rust); the block in the settings page's "Spelling and grammar" section |
 | `lib/theme.ts`, `src/themes.css`, `src/app.css` | Flavors, accents, role variables, user `theme.css` |
 | `lib/integration.svelte.ts`, `components/DefaultEditor.svelte` | Default-editor offer and Explorer integration UI |
 | `lib/updates.svelte.ts`, `components/UpdateBanner.svelte` | Update check banner |
@@ -141,7 +192,7 @@ Key mechanisms:
 - Data folder layout: `session.json` (tab list, active tab, wrap, spell check, zoom, per-tab language/encoding/eol/
   preview/cursor/scroll, `hasBackup`), `backup/<id>.txt` (current text of dirty or untitled tabs) and
   `backup/<id>.<n>.txt` (up to 5 older versions, at least 5 minutes apart), plus marker files
-  (`no-default-editor-offer`, `last-update-check`). Config folder: `settings.json`, `keybindings.json`, `theme.css`.
+  (`no-default-editor-offer`, `last-update-check`) and the downloaded local LanguageTool (`languagetool/`, `jre/`). Config folder: `settings.json`, `keybindings.json`, `theme.css`.
 - Restore reads disk + backup: a tab with a backup is dirty if it differs from disk; a vanished file stays as a
   dirty tab marked "deleted". Compare tabs are snapshots and are not restored.
 - External changes are checked on window focus and every 2 s for the active tab while focused: unmodified text tabs

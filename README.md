@@ -43,7 +43,8 @@ it, but I may decline requests that don't fit how I work, and there is no promis
   LESS, HTML, Vue, Markdown and YAML (Prettier). With a selection only those lines are formatted; indentation
   follows the tab settings. The formatters load on first use, so they cost nothing at startup.
 - Optional spell checking with the Windows dictionaries.
-- Optional grammar and style checking with [LanguageTool](https://languagetool.org) (see below).
+- Optional grammar and style checking with [LanguageTool](https://languagetool.org), which Kladde downloads and
+  runs locally on request (see below).
 
 **Compare**
 - Side-by-side diff of two open tabs, a tab and its file on disk, or a tab and the clipboard
@@ -223,16 +224,33 @@ Entries that only repeat a command's built-in default are ignored while a preset
 `keybindings.json` that lists every default (as older versions created) does not pin them.
 ## Grammar checking
 
-Kladde can check grammar, style and spelling with [LanguageTool](https://languagetool.org). It is off until
-you set it up, and nothing is sent anywhere before you turn it on.
+Kladde can check grammar, style and spelling with [LanguageTool](https://languagetool.org). It is off until you
+turn it on, and nothing is downloaded, started or sent anywhere before that.
 
-1. Set `languageToolServer` in `settings.json`:
-   - `http://localhost:8081` for a LanguageTool server on your machine (the HTTP server from the
-     LanguageTool download; **nothing leaves your machine**), or
-   - `https://api.languagetool.org` for the public API. Your text is then **sent to a third party**: Kladde
-     asks for confirmation once, and the public API limits requests (about 20 a minute), so long documents
-     are checked in pieces.
-2. Run **Toggle grammar checking (LanguageTool)** from the command palette. The state is remembered.
+Run **Toggle grammar checking (LanguageTool)** from the command palette (the state is remembered). Without a
+server set up, Kladde offers three ways:
+
+- **Download** (the default): Kladde downloads LanguageTool 6.6 and a Java runtime (Eclipse Temurin 21) once,
+  about 300 MB (557 MB on disk), from languagetool.org and the Eclipse Temurin releases on GitHub, into its data
+  folder. Both files are checked against fixed SHA-256 checksums
+  before they are unpacked; a download that does not match is deleted. **After the download nothing leaves your
+  machine**: Kladde starts LanguageTool in the background with the first check (a few seconds; the status bar says
+  "Starting LanguageTool…"), keeps it on a port of your own computer that no other machine can reach, stops it
+  after 15 minutes without a check, when you turn checking off and when Kladde ends (also if it crashes), and
+  starts it again when needed. While it runs it uses about 0.6–0.9 GB of RAM (Java heap limited to 768 MB).
+  Progress shows in the status bar, a click on it cancels, and a download that is cancelled or fails leaves
+  nothing half installed.
+- **Use the public API**: your text is then **sent to a third party** (`https://api.languagetool.org`). Kladde asks
+  for confirmation once, and the public API limits requests (about 20 a minute), so long documents are checked in
+  pieces.
+- **A server of your own**: set `languageToolServer` on the settings page (`Ctrl+Alt+S`), e.g.
+  `http://localhost:8081` for the HTTP server from a LanguageTool download you run yourself. A server set there
+  (your own or the public API) always wins; the local LanguageTool is not started while it is set. Empty the
+  field to go back to the local one.
+
+The **Spelling and grammar** section of the settings page shows the local LanguageTool (installed version and size,
+running or not) with **Download** and **Remove**; the same commands are in the palette (**Download local
+LanguageTool**, **Remove local LanguageTool**). Removing stops the server and deletes both folders.
 
 Findings are underlined (red wavy: spelling, blue wavy: grammar, orange dotted: style). Hover one to read
 the message and click a suggestion to apply it; it is a normal edit you can undo. **Ignore word** / **Ignore
@@ -244,8 +262,8 @@ rule** hides a finding until Kladde restarts. The status bar shows the number of
   typing or scrolling. Unchanged paragraphs are remembered, so only edited ones are sent again.
 - The language is detected automatically. Pick one for a file with **Set grammar checking language…**
   (remembered with the session), or put `lang: de` in the front matter of a Markdown file.
-- If the server is unreachable or refuses, Kladde reports it once, keeps your text as is and tries again
-  later with growing pauses.
+- If the server is unreachable or refuses, or the local LanguageTool cannot be started, Kladde reports it once,
+  keeps your text as is and tries again later with growing pauses.
 - It works next to the Windows spell checker; turn that off with **Toggle spell checking** if the double
   underlines bother you.
 
@@ -276,8 +294,8 @@ the page shows them. The table lists every setting:
 | `tabSize`, `insertSpaces` | `4`, `true` | |
 | `wordWrap`, `lineNumbers`, `highlightActiveLine` | `false`, `true`, `true` | |
 | `spellCheck` | `false` | can also be toggled from the command palette |
-| `grammarCheck` | `false` | grammar checking at start; needs `languageToolServer`; toggled from the command palette |
-| `languageToolServer` | `""` | address of a LanguageTool server, e.g. `http://localhost:8081`; empty means not set up |
+| `grammarCheck` | `false` | grammar checking at start; toggled from the command palette; offers to download LanguageTool on first use |
+| `languageToolServer` | `""` | address of a LanguageTool server of your own, e.g. `http://localhost:8081`, or `https://api.languagetool.org`; empty means the local LanguageTool that Kladde downloads, starts and stops itself |
 | `languageToolLanguage` | `auto` | `auto` detects the language, or a code such as `de-DE` or `en-GB` |
 | `languageToolVariants` | `en-US,de-DE` | variants preferred when the language is detected (`en` can be US, UK, …) |
 | `languageToolAllFiles` | `false` | check every text file, not only Markdown and plain text |
@@ -288,8 +306,8 @@ the page shows them. The table lists every setting:
 | `offerDefaultEditor` | `true` | offer once at start to register Kladde as a default editor candidate |
 | `checkForUpdates` | `true` | look for a newer version at start and every six hours (never more than once an hour, contacts GitHub); the command and **Check now** work either way |
 
-Settings, keyboard shortcuts, the custom theme, the session, the time of the last update check and backups of
-unsaved text live in
+Settings, keyboard shortcuts, the custom theme, the session, the time of the last update check, backups of
+unsaved text and the downloaded LanguageTool (`languagetool/`, `jre/`) live in
 `%APPDATA%\io.github.lukasdoubleu.kladde`.
 
 ### Themes

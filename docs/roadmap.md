@@ -34,7 +34,15 @@ copy of the signed `kladde.exe`). The updater's minisign `.sig` must be created 
     over a line break is highlighted on its first line only.
 - **Grammar (LanguageTool):** keyboard access to findings (F8 / `lintKeymap`, apply fix by key); persistent "ignore
   word/rule" (a user dictionary); the public-API consent lives in WebView `localStorage` instead of the data folder;
-  untested against a real local LanguageTool server; auto-detection is weak on very short paragraphs.
+  auto-detection is weak on very short paragraphs.
+  - Local LanguageTool (#18, done): the e2e tests use a stand-in server and small zips; the real downloads were only
+    run by hand (numbers in architecture.md). The pinned LanguageTool 6.6 comes from `languagetool.org/download/`,
+    which holds the current release: when a newer one is published the file moves and the pinned URL may stop
+    working (the hash would catch a changed file), so the constants need a bump then (see development.md). No
+    resume of an interrupted download, no ngram data (the confusion-word rules), no fastText model (language
+    detection uses LanguageTool's built-in one), no choice of the heap size.
+  - **Harper** (Rust, no JVM, instant) as an additional, much lighter engine once it supports German; the local
+    LanguageTool stays the engine for German until then.
 - **Formatters:** TOML (Prettier has none); JSON with comments (`.jsonc` uses the strict own formatter and reports an
   error); GraphQL (no language entry); indented Sass; Prettier options (quotes, print width) are not configurable.
 - **Keys:** "insert line above", Notepad++ "split lines"; non-US keyboard layouts may need different punctuation

@@ -24,8 +24,8 @@ anything employer-related out of code, commits, issues, release notes and docs.
 
 - `src-tauri/src/`: `files.rs` (encodings, `write_safely`), `large.rs` (large file viewer: index, search, editing,
   streaming save, journal), `pieces.rs` (piece table), `session.rs` (session, backups, config, isolated profile),
-  `integration.rs` (Windows registration), `update.rs` (updater), `languagetool.rs` (HTTP client), `lib.rs`
-  (commands, plugins).
+  `integration.rs` (Windows registration), `update.rs` (updater), `languagetool.rs` (HTTP client),
+  `lt_install.rs` / `lt_server.rs` (download and run the local LanguageTool), `lib.rs` (commands, plugins).
   `src-tauri/windows/installer-hooks.nsh` unregisters on uninstall.
 - `src/App.svelte`: layout, command list, window events. `src/lib/workspace.svelte.ts`: tabs, files, session,
   preview, compare, formatting. `src/lib/editor.ts`: CodeMirror setup. Keys: `actions.ts`, `keys.ts`, `keymaps.ts`,
@@ -69,8 +69,9 @@ Run check, unit, cargo and e2e tests before merging anything.
 - **One owner per key.** Commands are actions with stable public ids; editor commands live in `editor-actions.ts`
   and their stock CodeMirror bindings are removed. Default keys include deliberate owner choices (`Ctrl+D` delete
   line, `Alt+Shift+W` reveal, `Ctrl+T`, `F5`, `Alt+Left`/`Alt+Right`) — see docs/decisions.md.
-- **Privacy:** nothing leaves the machine unless the user enables it (LanguageTool needs a server and a toggle;
-  the public API asks first). The update check contacts GitHub only.
+- **Privacy:** nothing leaves the machine unless the user enables it (grammar checking is a toggle; it offers to
+  download the local LanguageTool, whose downloads are pinned by SHA-256 and the only network access besides the
+  update check, or to use the public API, which asks first). The update check contacts GitHub only.
 - **Tests never touch the real world:** use the isolated profile (`KLADDE_DATA_DIR`) through the e2e harness, own
   DevTools ports per test file, never send input to the desktop, never write real registry associations, never
   start an installer, never call the public LanguageTool API from tests.

@@ -6,7 +6,7 @@
 |---|---|---|
 | `npm run check` | svelte-check (types of all `.ts`/`.svelte`) | — |
 | `npm run test:unit` | Node's test runner on `tests/unit/*.test.mjs`: formatters, keys/presets, grammar text side, themes, settings metadata, update manifest, last-check time format | — |
-| `cd src-tauri && cargo test` | file I/O and encodings, safe saving, large viewer (index, search, piece table, editing, streaming save, journal), LanguageTool client (local socket), registry code (throwaway key), updater helpers | Rust |
+| `cd src-tauri && cargo test` | file I/O and encodings, safe saving, large viewer (index, search, piece table, editing, streaming save, journal), LanguageTool client (local socket), local LanguageTool (hash check, download, atomic install, version cleanup, routing, idle stop, start/stop/crash of a stand-in process, job object), registry code (throwaway key), updater helpers | Rust |
 | `npm run test:e2e` | the real app through the DevTools protocol: `tests/e2e/*.test.mjs` | `npx tauri build --debug --no-bundle` first |
 
 Run all four before merging anything. For e2e prefer `node --test --test-concurrency=1 "tests/e2e/*.test.mjs"`:
@@ -58,13 +58,14 @@ Rules:
 | hot-exit | 9344, 9354–9358 |
 | integration | 9347 |
 | keys | 9350–9351, 9384–9386 |
+| languagetool-local | 9369–9370, 9374–9375, 9377–9378 |
 | large | 9345, 9391–9393, 9397–9399 (the editing tests reuse earlier ports one app at a time) |
 | preview | 9346, 9376 |
 | settings | 9352–9353 |
 | theme | 9348, 9381–9383 |
 | update | 9349, 9359–9362, 9366–9368, 9394–9396 |
 
-Free for new files: 9369–9370, 9374–9375, 9377–9380, 9390.
+Free for new files: 9379–9380, 9390.
 
 ## Environment variables
 
@@ -76,6 +77,9 @@ Free for new files: 9369–9370, 9374–9375, 9377–9380, 9390.
 | `KLADDE_TEST_OFFER=1` | Shows the default-editor offer in an isolated profile |
 | `KLADDE_UPDATE_URL` | Update manifest URL (isolated profile only); tests serve a fake `latest.json` |
 | `KLADDE_UPDATE_PERIOD_SECS` | Period of the automatic check of a running app in seconds, and no one-hour throttle (isolated profile only); the real period is 6 h |
+| `KLADDE_LT_DOWNLOADS` | JSON `{"languagetool": {url, sha256, size}, "java": {…}}` replacing the pinned downloads of the local LanguageTool (isolated profile only); tests serve small zips |
+| `KLADDE_LT_COMMAND` | JSON array `[program, args…]` started instead of Java for the local LanguageTool; Kladde appends `--port <n>` (isolated profile only) |
+| `KLADDE_LT_IDLE_SECS` | Idle time in seconds after which the local LanguageTool stops, instead of 15 minutes (isolated profile only) |
 | `KLADDE_E2E_START_TIMEOUT` | Harness: how long to wait for the app to come up (ms, default 20000; CI uses 90000) |
 
 ## Pitfalls we hit (and how the harness handles them)
@@ -94,7 +98,20 @@ Free for new files: 9369–9370, 9374–9375, 9377–9380, 9390.
   `HKCU\Software\Kladde`). The isolated profile and `cargo test` use `HKCU\Software\KladdeTest\…` and delete it.
   An early bug built `HKCU\SoftwareKladdeTest…` (missing backslash); `target_for` now has a unit test.
 - **Updates:** `update_install` refuses to run in an isolated profile; tests never download an installer.
-- **LanguageTool:** e2e tests run a fake server in the test; never point tests at the public API.
+- **LanguageTool:** e2e tests run a fake server in the test; never point tests at the public API. The local
+  LanguageTool is tested with the overrides above, never with the real 300 MB downloads (CI must not fetch them):
+  `languagetool-local.test.mjs` serves two small zips (`zip.mjs` writes them) and starts `fake-languagetool.mjs`
+  (a Node script with the LanguageTool API, `fake-lt.mjs` is the matching logic it shares with `grammar.test.mjs`)
+  in place of Java. It covers: the offer dialog, progress and cancel, install, findings through the managed server
+  ("Starting LanguageTool…" in between, no error), the process ending when Kladde is killed, idle stop and restart,
+  off, removal (also while running), a configured server winning, a checksum mismatch, a server that fails to start,
+  and declining the public API. The fake does not slow the check down, so the real startup is not exercised there:
+  a manual run with the real downloads (isolated temp profile, English and German text, memory and timings) is the
+  check before changing the pinned versions or the Java flags. Real extraction speed: `KLADDE_TEST_ZIP=<zip> cargo
+  test real_extract -- --ignored --nocapture`.
+  Kladde starts the server with the LanguageTool folder inside the profile as its working directory, which Windows
+  does not let anyone delete: tests end the server (by killing Kladde, which closes the job object) before
+  `removeProfile`, and the `after` hook kills stragglers.
 - **Large files:** lower `largeFileThresholdMB` in the isolated profile's `settings.json` instead of generating
   huge fixtures; delete generated files. Editing tests focus `.large .input` (the hidden textarea), type with
   `type()`/`key()` and check `.large .line .text`; a kill is only safe once the journal in `data/backup`
