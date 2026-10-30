@@ -29,7 +29,7 @@ export interface Settings {
   accent: Accent;
   /** Grammar checking with LanguageTool at start; toggled per session with the command palette. */
   grammarCheck: boolean;
-  /** Address of a LanguageTool server; empty means grammar checking is not set up. */
+  /** Address of a LanguageTool server; empty means the local LanguageTool that Kladde manages itself. */
   languageToolServer: string;
   /** "auto" detects the language per paragraph, or a code such as "de-DE". */
   languageToolLanguage: string;
@@ -250,13 +250,13 @@ export const SETTING_META: Record<keyof Settings, SettingMeta> = {
   grammarCheck: {
     group: "spelling",
     label: "Grammar checking",
-    description: "Check grammar with LanguageTool at start. Needs a server address below.",
+    description: "Check grammar with LanguageTool at start. Without a server below, Kladde offers to download its own LanguageTool the first time.",
     control: { type: "boolean" },
   },
   languageToolServer: {
     group: "spelling",
     label: "LanguageTool server",
-    description: "Address of a LanguageTool server. Empty means grammar checking is not set up.",
+    description: "Address of a LanguageTool server of your own, or the public API (https://api.languagetool.org, a third party that receives your text). Empty means the local LanguageTool that Kladde downloads, starts and stops itself.",
     control: { type: "text", placeholder: "http://localhost:8081" },
   },
   languageToolLanguage: {

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { runAction, shortcutLabel } from "../lib/actions";
   import { keyHint } from "../lib/keyhint.svelte";
+  import { localLanguageTool } from "../lib/languagetool-local.svelte";
   import { workspace } from "../lib/workspace.svelte";
 
   let { imageSize }: { imageSize: { w: number; h: number } | null } = $props();
@@ -65,6 +66,15 @@
       {workspace.ui.zoom > 0 ? "+" : ""}{workspace.ui.zoom} pt
     </button>
   {/if}
+  {#if localLanguageTool.label}
+    <button
+      title="LanguageTool is being downloaded once; nothing else is sent anywhere. Click to cancel."
+      disabled={localLanguageTool.cancelling}
+      onclick={() => localLanguageTool.cancel()}
+    >
+      {localLanguageTool.label}
+    </button>
+  {/if}
   {#if tab?.kind === "text"}
     {#if workspace.grammar.state !== "off"}
       {@const g = workspace.grammar}
@@ -74,7 +84,9 @@
         onclick={() => runAction("view.setGrammarLanguage")}
       >
         {g.state === "checking"
-          ? "Grammar: checking…"
+          ? localLanguageTool.server === "starting"
+            ? "Grammar: starting LanguageTool…"
+            : "Grammar: checking…"
           : g.state === "error"
             ? "Grammar: unavailable"
             : g.state === "limited"

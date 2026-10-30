@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import { runAction } from "../lib/actions";
+  import LocalLanguageTool from "./LocalLanguageTool.svelte";
   import {
     coerceSetting,
     SETTING_GROUPS,
@@ -164,6 +165,7 @@
     {#each sections as group (group.id)}
       <section aria-labelledby="group-{group.id}" data-group={group.id}>
         <h2 id="group-{group.id}">{group.label}</h2>
+        {#if group.id === "spelling"}<LocalLanguageTool {active} />{/if}
         {#each group.names as name (name)}
           {@const meta = SETTING_META[name]}
           {@const control = meta.control}

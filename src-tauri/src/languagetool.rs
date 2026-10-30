@@ -19,7 +19,7 @@ pub struct CheckError {
 }
 
 impl CheckError {
-    fn new(kind: &'static str, message: impl Into<String>) -> Self {
+    pub(crate) fn new(kind: &'static str, message: impl Into<String>) -> Self {
         CheckError { kind, status: None, retry_after: None, message: message.into() }
     }
 }
@@ -38,6 +38,11 @@ pub fn endpoint(server: &str) -> Result<String, CheckError> {
     Ok(format!("{server}/v2/check"))
 }
 
+/// TLS from the operating system, shared with the download of the local LanguageTool.
+pub fn tls_config() -> TlsConfig {
+    TlsConfig::builder().provider(TlsProvider::NativeTls).root_certs(RootCerts::PlatformVerifier).build()
+}
+
 /// Sends one check request and returns the response body (JSON). `data` is LanguageTool's annotated text.
 pub fn check(server: &str, data: &str, language: &str, variants: &str) -> Result<String, CheckError> {
     let url = endpoint(server)?;
@@ -46,9 +51,7 @@ pub fn check(server: &str, data: &str, language: &str, variants: &str) -> Result
         .timeout_connect(Some(Duration::from_secs(6)))
         .http_status_as_error(false)
         .user_agent(concat!("Kladde/", env!("CARGO_PKG_VERSION")))
-        .tls_config(
-            TlsConfig::builder().provider(TlsProvider::NativeTls).root_certs(RootCerts::PlatformVerifier).build(),
-        )
+        .tls_config(tls_config())
         .build();
     let agent: ureq::Agent = config.into();
     let mut form = vec![("data", data), ("language", language)];

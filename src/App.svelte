@@ -139,6 +139,8 @@
       enabled: textTab,
     },
     { id: "view.setGrammarLanguage", label: "Set grammar checking language…", run: () => workspace.setGrammarLanguage(), enabled: textTab },
+    { id: "grammar.downloadLocal", label: "Download local LanguageTool", run: () => workspace.downloadLocalLanguageTool() },
+    { id: "grammar.removeLocal", label: "Remove local LanguageTool", run: () => workspace.removeLocalLanguageTool() },
     {
       id: "format.document",
       label: "Format document or selection",

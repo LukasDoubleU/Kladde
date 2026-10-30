@@ -142,6 +142,29 @@ export type UpdateProgress =
   | { event: "downloading"; downloaded: number; total: number | null }
   | { event: "installing" };
 
+/** The local LanguageTool that Kladde downloads and runs itself. */
+export interface LocalLanguageTool {
+  installed: boolean;
+  /** LanguageTool's version and the Java runtime's, as pinned in the app. */
+  version: string;
+  javaVersion: string;
+  /** Bytes on disk. */
+  size: number;
+  running: boolean;
+  installing: boolean;
+}
+
+export type LocalInstallProgress =
+  /** Bytes of both downloads together. */
+  | { event: "downloading"; downloaded: number; total: number }
+  | { event: "extracting"; done: number; total: number };
+
+/** Why the download or installation failed; "cancelled" is the user's own doing. */
+export interface LocalInstallError {
+  kind: "cancelled" | "network" | "hash" | "disk" | "other";
+  message: string;
+}
+
 export const api = {
   /** Shows and focuses the main window (a test instance stays in the background). */
   showWindow: () => invoke<void>("show_window"),
@@ -189,9 +212,24 @@ export const api = {
   backupReadVersion: (id: string, n: number) => invoke<string | null>("backup_read_version", { id, n }),
   backupPrune: (keep: string[]) => invoke<void>("backup_prune", { keep }),
 
-  /** One LanguageTool check; resolves to the response JSON, rejects with { kind, status?, retryAfter?, message }. */
+  /**
+   * One LanguageTool check; resolves to the response JSON, rejects with { kind, status?, retryAfter?, message }.
+   * An empty `server` is the local LanguageTool, which Rust starts on the first request.
+   */
   languageToolCheck: (server: string, data: string, language: string, variants: string) =>
     invoke<string>("languagetool_check", { server, data, language, variants }),
+
+  languageToolLocalStatus: () => invoke<LocalLanguageTool>("languagetool_local_status"),
+  /** Downloads and installs the local LanguageTool; rejects with a LocalInstallError. */
+  languageToolLocalInstall: (onEvent: (e: LocalInstallProgress) => void) => {
+    const channel = new Channel<LocalInstallProgress>();
+    channel.onmessage = onEvent;
+    return invoke<void>("languagetool_local_install", { onEvent: channel });
+  },
+  languageToolLocalCancel: () => invoke<void>("languagetool_local_cancel"),
+  /** Stops the local server; it starts again with the next check. */
+  languageToolLocalStop: () => invoke<void>("languagetool_local_stop"),
+  languageToolLocalRemove: () => invoke<void>("languagetool_local_remove"),
 
   configRead: (name: string) => invoke<string | null>("config_read", { name }),
   configFile: (name: string, defaultContent: string) =>

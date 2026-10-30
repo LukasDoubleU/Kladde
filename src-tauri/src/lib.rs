@@ -2,6 +2,8 @@ mod files;
 mod integration;
 mod languagetool;
 mod large;
+mod lt_install;
+mod lt_server;
 mod pieces;
 mod session;
 mod update;
@@ -220,16 +222,103 @@ async fn backup_prune(app: AppHandle, keep: Vec<String>) -> Result<(), String> {
 }
 
 /// One LanguageTool check request (see languagetool.rs); the blocking HTTP call runs off the async runtime.
+/// An empty `server` is the local LanguageTool managed by Kladde (lt_server.rs), a configured one always wins.
 #[tauri::command]
 async fn languagetool_check(
+    app: AppHandle,
     server: String,
     data: String,
     language: String,
     variants: String,
 ) -> Result<String, languagetool::CheckError> {
-    tauri::async_runtime::spawn_blocking(move || languagetool::check(&server, &data, &language, &variants))
-        .await
-        .map_err(|e| languagetool::CheckError { kind: "network", status: None, retry_after: None, message: e.to_string() })?
+    use languagetool::CheckError;
+    let dir = session::data_dir(&app).map_err(|e| CheckError::new("config", e))?;
+    tauri::async_runtime::spawn_blocking(move || match lt_server::route(&server, lt_install::is_installed(&dir)) {
+        lt_server::Route::Configured => languagetool::check(&server, &data, &language, &variants),
+        lt_server::Route::Local => app.state::<lt_server::Managed>().check(&dir, &data, &language, &variants),
+        lt_server::Route::NotInstalled => Err(CheckError::new(
+            "config",
+            "The local LanguageTool is not installed. Download it on the settings page, or set languageToolServer.",
+        )),
+    })
+    .await
+    .map_err(|e| CheckError::new("network", e.to_string()))?
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LocalLanguageTool {
+    installed: bool,
+    version: &'static str,
+    java_version: &'static str,
+    /// Bytes on disk of the local LanguageTool and its Java runtime.
+    size: u64,
+    running: bool,
+    installing: bool,
+}
+
+/// What the settings page shows of the local LanguageTool.
+#[tauri::command]
+async fn languagetool_local_status(app: AppHandle) -> Result<LocalLanguageTool, String> {
+    let dir = session::data_dir(&app)?;
+    tauri::async_runtime::spawn_blocking(move || LocalLanguageTool {
+        installed: lt_install::is_installed(&dir),
+        version: lt_install::LT_VERSION,
+        java_version: lt_install::JRE_VERSION,
+        size: lt_install::size_on_disk(&dir),
+        running: app.state::<lt_server::Managed>().is_running(),
+        installing: app.state::<lt_install::Installer>().is_busy(),
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Downloads and installs the local LanguageTool, reporting progress; see lt_install.rs.
+#[tauri::command]
+async fn languagetool_local_install(
+    app: AppHandle,
+    on_event: tauri::ipc::Channel<lt_install::Progress>,
+) -> Result<(), lt_install::InstallError> {
+    let dir = session::data_dir(&app).map_err(lt_install::InstallError::other)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        // A running server holds files of the old version open.
+        app.state::<lt_server::Managed>().stop();
+        let mut last = std::time::Instant::now() - std::time::Duration::from_secs(1);
+        app.state::<lt_install::Installer>().run(&dir, &lt_install::sources(), &mut |progress| {
+            if last.elapsed() >= std::time::Duration::from_millis(100) {
+                last = std::time::Instant::now();
+                let _ = on_event.send(progress);
+            }
+        })
+    })
+    .await
+    .map_err(|e| lt_install::InstallError::other(e.to_string()))?
+}
+
+#[tauri::command]
+fn languagetool_local_cancel(installer: State<'_, lt_install::Installer>) {
+    installer.cancel();
+}
+
+/// Stops the local server (grammar checking was turned off); it starts again with the next check.
+#[tauri::command]
+async fn languagetool_local_stop(app: AppHandle) {
+    let _ = tauri::async_runtime::spawn_blocking(move || app.state::<lt_server::Managed>().stop()).await;
+}
+
+/// Stops the server and deletes the local LanguageTool and its Java runtime.
+#[tauri::command]
+async fn languagetool_local_remove(app: AppHandle) -> Result<(), String> {
+    let dir = session::data_dir(&app)?;
+    if app.state::<lt_install::Installer>().is_busy() {
+        return Err("LanguageTool is being downloaded. Cancel that first.".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<lt_server::Managed>().stop();
+        lt_install::remove(&dir)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -437,7 +526,14 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(large::LargeFiles::default())
         .manage(update::Pending::default())
+        .manage(lt_install::Installer::default())
         .setup(|app| {
+            // Told when the local LanguageTool starts or stops (the page shows it); nothing runs before the
+            // first check request.
+            let handle = app.handle().clone();
+            app.manage(lt_server::Managed::new(move |state| {
+                let _ = handle.emit("languagetool-state", state);
+            }));
             create_main_window(app.handle())?;
             Ok(())
         })
@@ -474,6 +570,11 @@ pub fn run() {
             config_file,
             config_dir,
             languagetool_check,
+            languagetool_local_status,
+            languagetool_local_install,
+            languagetool_local_cancel,
+            languagetool_local_stop,
+            languagetool_local_remove,
             integration_status,
             integration_register,
             integration_open_default_apps,

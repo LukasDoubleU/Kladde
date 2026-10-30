@@ -8,7 +8,6 @@ import { EditorSelection, type EditorState, type StateEffect, Text } from "@code
 import { EditorView, highlightActiveLine, type ViewUpdate } from "@codemirror/view";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { runAction } from "./actions";
 import { api, type Eol, type FileContent } from "./api";
 import {
   activeLine,
@@ -28,9 +27,10 @@ import { minifyJson } from "./format";
 import type { GrammarHost } from "./grammar";
 import { frontMatterLanguage, isPublicServer, LANGUAGES, normalizeLanguage } from "./grammar-text";
 import { formatterFor, formattableLanguages, formatWith, mapCursor, type Formatter } from "./formatters";
+import { localLanguageTool as localLt } from "./languagetool-local.svelte";
 import { allLanguages, detectLanguage, extensionOf, findLanguage, IMAGE_EXTENSIONS, isMarkdown } from "./languages";
 import { dirname, renderMarkdown, renderSvg, resolvePath, setLanguageLoadedHandler } from "./markdown";
-import { settings } from "./settings.svelte";
+import { settings, updateSettingsFile } from "./settings.svelte";
 
 export type TabKind = "text" | "large" | "image" | "compare" | "settings";
 export type PreviewMode = "off" | "split" | "only";
@@ -222,6 +222,7 @@ function blobToBase64(blob: Blob): Promise<string> {
 
 /** localStorage key: the user agreed to send text to the public LanguageTool server. */
 const PUBLIC_SERVER_CONSENT = "kladde.languageToolPublicServer";
+const PUBLIC_SERVER = "https://api.languagetool.org";
 
 class Workspace {
   tabs: Tab[] = $state([]);
@@ -366,8 +367,9 @@ class Workspace {
   private grammarHost: GrammarHost = {
     options: (view) => {
       const tab = this.active;
+      // An empty server is the local LanguageTool, once it is installed.
       const server = settings.languageToolServer.trim();
-      if (!tab || view !== this.view || !server || !this.ui.grammarCheck || !this.grammarEligible(tab)) return null;
+      if (!tab || view !== this.view || (!server && !localLt.installed) || !this.ui.grammarCheck || !this.grammarEligible(tab)) return null;
       // The public server only ever gets text after the user agreed (see confirmGrammarServer).
       if (isPublicServer(server) && localStorage.getItem(PUBLIC_SERVER_CONSENT) !== "1") return null;
       const markdown = isMarkdown(tab.language);
@@ -395,8 +397,7 @@ class Workspace {
       ],
       "Grammar checking sends the paragraphs around the visible part of the document to " +
         "api.languagetool.org, a server run by a third party. Do not use it for confidential text. " +
-        "For a setup where nothing leaves your machine, run LanguageTool locally and set " +
-        "languageToolServer to http://localhost:8081.",
+        "The local LanguageTool, which Kladde can download for you, keeps everything on your machine.",
     ).then((choice) => {
       this.grammarConsent = null;
       if (choice === "send") localStorage.setItem(PUBLIC_SERVER_CONSENT, "1");
@@ -411,10 +412,24 @@ class Workspace {
     const tab = this.active;
     if (!view) return;
     const server = settings.languageToolServer.trim();
-    if (!this.ui.grammarCheck || !server || !this.grammarEligible(tab)) {
+    if (!this.ui.grammarCheck || !this.grammarEligible(tab)) {
       if (this.grammarModule) view.dispatch({ effects: grammar.reconfigure([]) });
       this.grammar = { state: "off", count: 0, message: "" };
       return;
+    }
+    if (!server) {
+      // The local LanguageTool: this also covers a start with grammar checking on after it was removed. Nothing is
+      // downloaded without asking, so checking stays off until the toggle command offers it again.
+      if (!(localLt.info ?? (await localLt.refresh()))?.installed) {
+        this.ui.grammarCheck = false;
+        this.scheduleSession();
+        void this.applyGrammar();
+        this.showNotice("info", "Grammar checking is off: the local LanguageTool is not installed. Turn it on to download it.");
+        return;
+      }
+    } else if (localLt.server !== "stopped") {
+      // A server of the user's own now: the one Kladde ran is not needed any more.
+      void localLt.stop();
     }
     if (!(await this.confirmGrammarServer(server))) {
       this.ui.grammarCheck = false;
@@ -440,22 +455,12 @@ class Workspace {
     if (this.ui.grammarCheck) {
       this.ui.grammarCheck = false;
       this.applyViewOptions();
+      void localLt.stop();
       this.showNotice("info", "Grammar checking off.");
       this.scheduleSession();
       return;
     }
-    if (!settings.languageToolServer.trim()) {
-      const choice = await this.ask(
-        "Grammar checking needs a LanguageTool server.",
-        [
-          { id: "settings", label: "Open settings", primary: true },
-          { id: "cancel", label: "Cancel" },
-        ],
-        "Set languageToolServer in settings.json: http://localhost:8081 for a local server (nothing leaves " +
-          "your machine) or https://api.languagetool.org for the public API (your text is sent to a third " +
-          "party). Then run this command again.",
-      );
-      if (choice === "settings") runAction("settings.open");
+    if (!settings.languageToolServer.trim() && !(await localLt.refresh())?.installed && !(await this.offerLanguageTool())) {
       return;
     }
     this.ui.grammarCheck = true;
@@ -468,6 +473,77 @@ class Workspace {
         ? "Grammar checking on."
         : "Grammar checking on. It checks Markdown and plain text; set languageToolAllFiles for other files.",
     );
+  }
+
+  /**
+   * Grammar checking was asked for without a server and without the local LanguageTool: offer to download it, use
+   * the public API (after its confirmation) or give up. True when checking can go on.
+   */
+  private async offerLanguageTool(): Promise<boolean> {
+    const choice = await this.ask(
+      "Grammar checking needs LanguageTool.",
+      [
+        { id: "download", label: "Download (about 300 MB)", primary: true },
+        { id: "public", label: "Use the public API" },
+        { id: "cancel", label: "Cancel" },
+      ],
+      "Kladde can download LanguageTool and a Java runtime once (about 300 MB, 550 MB on disk) and run them on " +
+        "your computer: after the download nothing leaves your machine. The public API at api.languagetool.org is " +
+        "run by a third party and receives your text. For a server of your own, set languageToolServer on the " +
+        "settings page (Ctrl+Alt+S).",
+    );
+    if (choice === "download") return this.downloadLocalLanguageTool();
+    if (choice !== "public" || !(await this.confirmGrammarServer(PUBLIC_SERVER))) return false;
+    const error = await updateSettingsFile({ languageToolServer: PUBLIC_SERVER });
+    if (error) this.showNotice("error", error);
+    return !error;
+  }
+
+  /** Downloads and installs the local LanguageTool (progress in the status bar); true when it is installed. */
+  async downloadLocalLanguageTool(): Promise<boolean> {
+    if (localLt.busy) {
+      this.showNotice("info", "LanguageTool is already being downloaded.");
+      return false;
+    }
+    if ((await localLt.refresh())?.installed) {
+      this.showNotice("info", "The local LanguageTool is already installed.");
+      return true;
+    }
+    const result = await localLt.install();
+    if (result.ok) this.showNotice("info", "LanguageTool is installed.");
+    else if (result.cancelled) this.showNotice("info", "The download was cancelled. Nothing was installed.");
+    else this.showNotice("error", `Could not download LanguageTool: ${result.message}`);
+    return result.ok;
+  }
+
+  /** Deletes the local LanguageTool after asking; grammar checking that depended on it goes off. */
+  async removeLocalLanguageTool() {
+    const info = await localLt.refresh();
+    if (!info?.installed) {
+      this.showNotice("info", "The local LanguageTool is not installed.");
+      return;
+    }
+    const mb = Math.round(info.size / 1_000_000);
+    const choice = await this.ask(
+      "Remove the local LanguageTool?",
+      [
+        { id: "remove", label: "Remove", primary: true },
+        { id: "cancel", label: "Cancel" },
+      ],
+      `This deletes LanguageTool and its Java runtime (${mb} MB) from Kladde's data folder. You can download them again.`,
+    );
+    if (choice !== "remove") return;
+    const error = await localLt.remove();
+    if (error) {
+      this.showNotice("error", `Could not remove LanguageTool: ${error}`);
+      return;
+    }
+    if (this.ui.grammarCheck && !settings.languageToolServer.trim()) {
+      this.ui.grammarCheck = false;
+      this.applyViewOptions();
+      this.scheduleSession();
+    }
+    this.showNotice("info", "The local LanguageTool was removed.");
   }
 
   /** Picks the LanguageTool language of the shown tab (otherwise: the setting, or the front matter of Markdown). */
@@ -1280,14 +1356,14 @@ class Workspace {
 
   /**
    * The settings page changed wordWrap, spellCheck or grammarCheck: the settings are the start-up values and the session
-   * keeps the current ones, so the current state follows at once. Grammar checking only starts with a server.
+   * keeps the current ones, so the current state follows at once. Turning grammar checking on may offer to download LanguageTool.
    */
   followSetting(name: "wordWrap" | "spellCheck" | "grammarCheck") {
     const want = settings[name];
     if (this.ui[name] === want) return;
     if (name === "wordWrap") this.toggleWrap();
     else if (name === "spellCheck") this.toggleSpellCheck();
-    else if (!want || settings.languageToolServer.trim()) void this.toggleGrammarCheck();
+    else void this.toggleGrammarCheck();
   }
 
   /** Pretty-prints (or minifies) the JSON in the active tab. */

@@ -34,6 +34,7 @@ export interface GrammarOptions {
   markdown: boolean;
   /** A LanguageTool language code, or "auto". */
   language: string;
+  /** The server address; empty means the local LanguageTool that Kladde runs. */
   server: string;
   /** Preferred variants for automatic detection, e.g. "en-US,de-DE". */
   variants: string;
@@ -82,7 +83,7 @@ class Wait extends Error {
 }
 
 interface CheckError {
-  kind: "config" | "network" | "rate-limited" | "http";
+  kind: "config" | "network" | "rate-limited" | "http" | "stopped";
   status?: number;
   retryAfter?: number;
   message: string;
@@ -206,6 +207,9 @@ async function run(view: EditorView): Promise<Diagnostic[]> {
         : { state: "limited", count, message: `Waiting ${Math.ceil(result.error.ms / 1000)} s before asking the server again.` },
     );
     scheduleRetry(view, result.error.ms + 100);
+  } else if (isCheckError(result.error) && result.error.kind === "stopped") {
+    // The local server was stopped while the request waited for it (checking turned off, LanguageTool removed): no failure.
+    host.status({ state: "idle", count });
   } else {
     const error = isCheckError(result.error) ? result.error : { kind: "network" as const, message: String(result.error) };
     gate.failures++;
