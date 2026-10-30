@@ -2,6 +2,24 @@
 
 All notable changes to Kladde. Versions follow [Semantic Versioning](https://semver.org), commit messages
 [Conventional Commits](https://www.conventionalcommits.org).
+## [0.6.0](https://github.com/LukasDoubleU/Kladde/releases/tag/v0.6.0) – 2026-10-30
+
+### 🚀 Features
+
+- **grammar:** Download, run and stop a local LanguageTool ([bf302cc](https://github.com/LukasDoubleU/Kladde/commit/bf302cc0e2d6f34e8883305d0306ba71ea8f9f49))
+
+### 🐛 Bug fixes
+
+- **grammar:** Download LanguageTool 6.8 from Maven Central ([6cda403](https://github.com/LukasDoubleU/Kladde/commit/6cda403d420928fc953909fc42be5652f962048c))
+
+### 📚 Documentation
+
+- Describe the local LanguageTool ([b483e99](https://github.com/LukasDoubleU/Kladde/commit/b483e998562c7ce94ba8d1367b331d4eaff31c8f))
+
+### 🧪 Tests
+
+- **e2e:** Cover the local LanguageTool without real downloads ([076d1a6](https://github.com/LukasDoubleU/Kladde/commit/076d1a6530e747418423d1af4428aa2de6940345))
+- Cover a server that died while running, and the ignored overrides ([5ff10c4](https://github.com/LukasDoubleU/Kladde/commit/5ff10c4ba356a8a1d011abf661819a4e846fb4d9))
 ## [0.5.0](https://github.com/LukasDoubleU/Kladde/releases/tag/v0.5.0) – 2026-10-30
 
 ### 🚀 Features
