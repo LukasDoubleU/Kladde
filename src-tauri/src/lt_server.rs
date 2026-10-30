@@ -632,6 +632,18 @@ mod tests {
     }
 
     #[test]
+    fn the_test_overrides_are_ignored_without_an_isolated_profile() {
+        if crate::session::isolated_profile().is_none() {
+            std::env::set_var(COMMAND_ENV, r#"["node","fake.js"]"#);
+            std::env::set_var(IDLE_ENV, "1");
+            assert_eq!(command_override(), None);
+            assert_eq!(idle_timeout(), IDLE_TIMEOUT);
+            std::env::remove_var(COMMAND_ENV);
+            std::env::remove_var(IDLE_ENV);
+        }
+    }
+
+    #[test]
     fn bind_errors_are_recognized() {
         assert!(is_bind_error("Exception in thread \"main\" java.net.BindException: Address already in use: bind"));
         assert!(!is_bind_error("Error: Could not create the Java Virtual Machine."));

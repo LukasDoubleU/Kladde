@@ -408,3 +408,27 @@ test("a server that fails to start is reported once and the next attempt works",
     await app.kill();
   }
 });
+
+test("a server that died while running is started again by the next check", async () => {
+  const dl = await downloadServer();
+  const profile = profileWith({});
+  const app = await open(9379, profile, dl, writeFixture(profile, "doc.md", DOC), { FAKE_LT_STARTUP_MS: "0" });
+  try {
+    await installViaCommand(app);
+    await runCommand(app, "toggle grammar checking");
+    await until(async () => (await spelling(app)) === 1, "the first findings");
+    const first = lastPid(profile);
+    process.kill(first);
+    await until(() => !alive(first), "the server to die");
+    // The next check starts a new one, quietly: the editor text and the findings are untouched.
+    await app.key("Ctrl+End");
+    await app.type(" Another eror.");
+    await until(async () => (await spelling(app)) === 2, "the check after the crash", 30000);
+    assert.equal(starts(profile).length, 2);
+    assert.ok(alive(lastPid(profile)) && lastPid(profile) !== first);
+    assert.equal(await app.eval("document.querySelector('.notice span')?.textContent.startsWith('Grammar checking failed') ?? false"), false);
+    assert.match((await app.state()).text, /This are a eror\.\n Another eror\./);
+  } finally {
+    await app.kill();
+  }
+});

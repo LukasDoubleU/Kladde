@@ -58,14 +58,14 @@ Rules:
 | hot-exit | 9344, 9354–9358 |
 | integration | 9347 |
 | keys | 9350–9351, 9384–9386 |
-| languagetool-local | 9369–9370, 9374–9375, 9377–9378 |
+| languagetool-local | 9369–9370, 9374–9375, 9377–9379 |
 | large | 9345, 9391–9393, 9397–9399 (the editing tests reuse earlier ports one app at a time) |
 | preview | 9346, 9376 |
 | settings | 9352–9353 |
 | theme | 9348, 9381–9383 |
 | update | 9349, 9359–9362, 9366–9368, 9394–9396 |
 
-Free for new files: 9379–9380, 9390.
+Free for new files: 9380, 9390.
 
 ## Environment variables
 
@@ -105,7 +105,7 @@ Free for new files: 9379–9380, 9390.
   in place of Java. It covers: the offer dialog, progress and cancel, install, findings through the managed server
   ("Starting LanguageTool…" in between, no error), the process ending when Kladde is killed, idle stop and restart,
   off, removal (also while running), a configured server winning, a checksum mismatch, a server that fails to start,
-  and declining the public API. The fake does not slow the check down, so the real startup is not exercised there:
+  a server that died while running, and declining the public API. The fake does not slow the check down, so the real startup is not exercised there:
   a manual run with the real downloads (isolated temp profile, English and German text, memory and timings) is the
   check before changing the pinned versions or the Java flags. Real extraction speed: `KLADDE_TEST_ZIP=<zip> cargo
   test real_extract -- --ignored --nocapture`.
