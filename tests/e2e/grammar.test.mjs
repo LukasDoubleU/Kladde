@@ -6,19 +6,12 @@ import { createServer } from "node:http";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
+import { matchesIn, readable as readableOf } from "./fake-lt.mjs";
 import { launch, removeProfile, tempProfile, writeFixture } from "./kladde.mjs";
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const profiles = [];
 after(() => Promise.all(profiles.map(removeProfile)));
-
-const lt = (offset, length, id, issueType, category, replacements, message) => ({
-  offset,
-  length,
-  message,
-  replacements: replacements.map((value) => ({ value })),
-  rule: { id, issueType, category: { id: category } },
-});
 
 /** A LanguageTool stand-in: flags "eror" (spelling) and "This are" (grammar) in the text it is given. */
 async function fakeServer() {
@@ -30,8 +23,7 @@ async function fakeServer() {
     req.on("end", () => {
       const form = new URLSearchParams(body);
       const annotation = JSON.parse(form.get("data")).annotation;
-      // What LanguageTool would check: markup does not count as text but keeps its length.
-      const readable = annotation.map((i) => i.text ?? " ".repeat(i.markup.length)).join("");
+      const readable = readableOf(annotation);
       requests.push({
         method: req.method,
         url: req.url,
@@ -42,14 +34,7 @@ async function fakeServer() {
       });
       if (state.mode === "500") return void res.writeHead(500).end("boom");
       if (state.mode === "429") return void res.writeHead(429, { "Retry-After": "30" }).end("slow down");
-      const matches = [];
-      for (const m of readable.matchAll(/\beror\b/g)) {
-        matches.push(lt(m.index, 4, "MORFOLOGIK_RULE_EN_US", "misspelling", "TYPOS", ["error"], "Possible spelling mistake found."));
-      }
-      for (const m of readable.matchAll(/This (are)\b/g)) {
-        matches.push(lt(m.index + 5, 3, "PLURAL_VERB_AFTER_THIS", "grammar", "GRAMMAR", ["is"], "The verb 'are' is plural."));
-      }
-      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ matches }));
+      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ matches: matchesIn(readable) }));
     });
   });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
@@ -196,18 +181,25 @@ test("only Markdown and plain text by default, any file with languageToolAllFile
   }
 });
 
-test("without a server the command explains what to configure", async () => {
+test("without a server the command offers the download, the public API or giving up", async () => {
   const profile = profileWith({});
   const app = await open(9387, profile, writeFixture(profile, "a.txt", "This are a eror.\n"));
   try {
     await runCommand(app, "toggle grammar checking");
     await app.waitFor("document.querySelector('.dialog .message')", 5000);
     const { dialog } = await app.state();
-    assert.equal(dialog, "Grammar checking needs a LanguageTool server.");
+    assert.equal(dialog, "Grammar checking needs LanguageTool.");
     const detail = await app.eval("document.querySelector('.dialog .detail').textContent");
-    assert.match(detail, /languageToolServer/);
-    assert.match(detail, /localhost:8081/);
+    assert.match(detail, /300 MB/);
+    assert.match(detail, /nothing leaves your machine/);
     assert.match(detail, /third party/);
+    // A server of one's own is set on the settings page, not by editing the file.
+    assert.match(detail, /languageToolServer on the settings page \(Ctrl\+Alt\+S\)/);
+    assert.deepEqual(await app.eval("[...document.querySelectorAll('.dialog button')].map((b) => b.textContent)"), [
+      "Download (about 300 MB)",
+      "Use the public API",
+      "Cancel",
+    ]);
     await app.key("Escape");
     assert.equal(await statusText(app), null);
   } finally {
