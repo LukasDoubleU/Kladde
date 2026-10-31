@@ -57,6 +57,24 @@ pub fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+/// Test hooks: wait this many milliseconds before writing `session.json` / a backup. They widen the window
+/// between the two writes of a session save so a test can kill Kladde inside it (see `writeSession`).
+pub const SESSION_DELAY_ENV: &str = "KLADDE_SESSION_DELAY_MS";
+pub const BACKUP_DELAY_ENV: &str = "KLADDE_BACKUP_DELAY_MS";
+
+/// Honored only in an isolated profile: a normal run never waits on its own data.
+fn delay_for(isolated: bool, value: Option<String>) -> Option<Duration> {
+    let ms: u64 = value.filter(|_| isolated)?.trim().parse().ok()?;
+    (ms > 0).then(|| Duration::from_millis(ms))
+}
+
+/// Blocks the calling command thread; only ever for a test.
+fn test_delay(var: &str) {
+    if let Some(delay) = delay_for(isolated_profile().is_some(), std::env::var(var).ok()) {
+        std::thread::sleep(delay);
+    }
+}
+
 /// Only plain names may reach the file system, never paths.
 pub fn check_name(name: &str) -> Result<&str, String> {
     let valid = !name.is_empty()
@@ -87,6 +105,7 @@ pub fn load(app: &AppHandle) -> Result<Option<String>, String> {
 }
 
 pub fn save(app: &AppHandle, json: &str) -> Result<(), String> {
+    test_delay(SESSION_DELAY_ENV);
     write_atomic(&data_dir(app)?.join("session.json"), json.as_bytes())
 }
 
@@ -101,6 +120,7 @@ fn modified(path: &Path) -> Option<SystemTime> {
 /// Writes the backup of a tab. The previous backup becomes version 1 (shifting older ones) when the
 /// newest version is at least five minutes old, so a few older states survive a mistake too.
 pub fn backup_write(app: &AppHandle, id: &str, text: &str) -> Result<(), String> {
+    test_delay(BACKUP_DELAY_ENV);
     let id = check_name(id)?;
     let dir = backup_dir(app)?;
     let current = dir.join(format!("{id}.txt"));
@@ -179,5 +199,16 @@ mod tests {
         assert_eq!(devtools_port_for(true, Some("".into())), None);
         assert_eq!(devtools_port_for(true, Some("0".into())), None);
         assert_eq!(devtools_port_for(true, Some("port".into())), None);
+    }
+
+    #[test]
+    fn write_delays_need_an_isolated_profile() {
+        assert_eq!(delay_for(false, Some("500".into())), None);
+        assert_eq!(delay_for(true, Some("500".into())), Some(Duration::from_millis(500)));
+        assert_eq!(delay_for(true, Some(" 20 ".into())), Some(Duration::from_millis(20)));
+        assert_eq!(delay_for(true, Some("0".into())), None);
+        assert_eq!(delay_for(true, Some("-5".into())), None);
+        assert_eq!(delay_for(true, Some("soon".into())), None);
+        assert_eq!(delay_for(true, None), None);
     }
 }
