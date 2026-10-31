@@ -55,7 +55,7 @@ Rules:
 | compare | 9371–9373 |
 | format | 9343, 9363–9365 |
 | grammar | 9387–9389 |
-| hot-exit | 9344, 9354–9358 |
+| hot-exit | 9344, 9354–9358, 9380, 9390, 9400–9404 |
 | integration | 9347 |
 | keys | 9350–9351, 9384–9386 |
 | languagetool-local | 9369–9370, 9374–9375, 9377–9379 |
@@ -65,7 +65,7 @@ Rules:
 | theme | 9348, 9381–9383 |
 | update | 9349, 9359–9362, 9366–9368, 9394–9396 |
 
-Free for new files: 9380, 9390.
+Free for new files: 9405 and up (9380 and 9390 are taken by hot-exit now).
 
 ## Environment variables
 
@@ -80,6 +80,8 @@ Free for new files: 9380, 9390.
 | `KLADDE_LT_DOWNLOADS` | JSON `{"languagetool": {url, sha256, size}, "java": {…}}` replacing the pinned downloads of the local LanguageTool (isolated profile only); tests serve small zips |
 | `KLADDE_LT_COMMAND` | JSON array `[program, args…]` started instead of Java for the local LanguageTool; Kladde appends `--port <n>` (isolated profile only) |
 | `KLADDE_LT_IDLE_SECS` | Idle time in seconds after which the local LanguageTool stops, instead of 15 minutes (isolated profile only) |
+| `KLADDE_SESSION_DELAY_MS` | Waits this many ms before every write of `session.json` (isolated profile only); with the old write order it holds the session back after the backups, so a test can kill Kladde inside that window |
+| `KLADDE_BACKUP_DELAY_MS` | Waits this many ms before every write of a text backup (isolated profile only); the window between the session naming a tab and its backup being written |
 | `KLADDE_E2E_START_TIMEOUT` | Harness: how long to wait for the app to come up (ms, default 20000; CI uses 90000) |
 
 ## Pitfalls we hit (and how the harness handles them)
@@ -119,7 +121,12 @@ Free for new files: 9380, 9390.
   perf_200mb -- --ignored --nocapture` (generates and deletes a ~190 MB file in the temp folder).
 - **Data loss:** any change to saving, backups or the session must be verified by killing the app with unsaved
   changes and checking the restore (`hot-exit.test.mjs` does it; it also proves the typing throttle by failing
-  with the old 1 s debounce).
+  with the old 1 s debounce). The write order of a session save (session, then backups, then pruning) is pinned with
+  the two delay variables above: the tests kill Kladde while a write is held back (backups written, session slow;
+  session written, backup slow) and check the restore. They fail with the old order (backup first): the first
+  with the "fewer tabs after the restart" timeout that used to show up as a flaky CI failure. A session that names
+  missing and older backups is also written by hand and restored. In the plain crash test, "the backups exist"
+  now implies "the session lists them", which it asserts before the kill: that was the CI race.
 
 ## Known flakiness
 

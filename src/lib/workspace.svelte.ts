@@ -263,6 +263,8 @@ class Workspace {
   private sessionTimer = 0;
   private noticeTimer = 0;
   private sessionChain: Promise<void> = Promise.resolve();
+  /** The tabs `session.json` on disk lists with `hasBackup`: what a crash right now would restore backups for. */
+  private backupListed = new Set<string>();
   private restored = false;
 
   constructor() {
@@ -1595,6 +1597,13 @@ class Workspace {
     return this.sessionChain;
   }
 
+  /**
+   * Order matters: a crash between two writes must never leave a backup that the session does not name,
+   * because the restore only looks for the backups of the tabs it lists and the next save prunes the rest.
+   * So `session.json` goes first, naming every tab whose backup is about to be written, then the backups,
+   * then the pruning. A crash in between leaves a session that names a backup which is missing (the restore
+   * opens the file as it is on disk, or skips an untitled tab) or older (restored as it is).
+   */
   private async writeSession() {
     if (this.active?.kind === "text" && this.view) {
       const rt = this.runtime.get(this.active.id);
@@ -1603,65 +1612,89 @@ class Workspace {
         rt.scrollTop = this.view.scrollDOM.scrollTop;
       }
     }
-    const keep: string[] = [];
-    const tabs: SessionTab[] = [];
     // Snapshot of state and version together: edits during the awaits below must not be marked as
     // backed up when an older text was written. Compare tabs are snapshots and the settings tab
     // is only a view: nothing to restore.
     const snapshot = this.tabs.filter((tab) => tab.kind !== "compare" && tab.kind !== "settings").map((tab) => {
       const rt = this.runtime.get(tab.id);
-      return { tab, rt, state: rt?.state, version: rt?.version ?? 0 };
-    });
-    for (const { tab, rt, state, version } of snapshot) {
+      const state = rt?.state;
+      const version = rt?.version ?? 0;
       // Large tabs back up a journal of their edits (large.rs); one that is still being restored or
       // waits for a decision is kept as it is.
-      const largeBackup = tab.kind === "large" && (tab.dirty || tab.journal !== null);
-      const needsBackup = largeBackup || (tab.kind === "text" && !!state && (tab.dirty || (!tab.path && state.doc.length > 0)));
-      if (needsBackup && rt) {
-        keep.push(tab.id);
-        if (rt.backedUp !== version) {
-          if (!largeBackup) {
-            await api.backupWrite(tab.id, state!.doc.toString());
-            rt.backedUp = version;
-          } else if (tab.largeId !== null && !tab.journal) {
-            // A journal that cannot be written (disk full, …) must not stop the session from being saved;
-            // it is tried again with the next change, and the user is told.
-            try {
-              await api.largeBackup(tab.largeId, tab.id);
-              rt.backedUp = version;
-            } catch (e) {
-              this.showNotice("error", `Could not back up the unsaved changes of ${tab.title}: ${e}`);
-            }
-          }
-        }
+      const journal = tab.kind === "large" && (tab.dirty || tab.journal !== null);
+      const needsBackup = journal || (tab.kind === "text" && !!state && (tab.dirty || (!tab.path && state.doc.length > 0)));
+      const write = needsBackup && !!rt && rt.backedUp !== version && (!journal || (tab.largeId !== null && !tab.journal));
+      return { tab, rt, state, version, journal, needsBackup, write, cursor: state?.selection.main.head ?? 0, scrollTop: rt?.scrollTop ?? 0 };
+    });
+    const keep = snapshot.filter((s) => s.needsBackup && s.rt).map((s) => s.tab.id);
+    const describe = (hasBackup: (s: (typeof snapshot)[number]) => boolean) => {
+      const tabs: SessionTab[] = [];
+      for (const s of snapshot) {
+        if (!s.tab.path && !s.needsBackup) continue;
+        tabs.push({
+          id: s.tab.id,
+          kind: s.tab.kind,
+          path: s.tab.path,
+          title: s.tab.title,
+          encoding: s.tab.encoding,
+          bom: s.tab.bom,
+          eol: s.tab.eol,
+          language: s.tab.language,
+          preview: s.tab.preview,
+          grammarLanguage: this.grammarLanguages.get(s.tab.id),
+          hasBackup: hasBackup(s),
+          cursor: s.cursor,
+          scrollTop: s.scrollTop,
+        });
       }
-      if (!tab.path && !needsBackup) continue;
-      tabs.push({
-        id: tab.id,
-        kind: tab.kind,
-        path: tab.path,
-        title: tab.title,
-        encoding: tab.encoding,
-        bom: tab.bom,
-        eol: tab.eol,
-        language: tab.language,
-        preview: tab.preview,
-        grammarLanguage: this.grammarLanguages.get(tab.id),
-        hasBackup: needsBackup,
-        cursor: state?.selection.main.head ?? 0,
-        scrollTop: rt?.scrollTop ?? 0,
-      });
-    }
-    const session: Session = {
-      version: 1,
-      activeId: this.activeId,
-      wordWrap: this.ui.wordWrap,
-      spellCheck: this.ui.spellCheck,
-      grammarCheck: this.ui.grammarCheck,
-      zoom: this.ui.zoom,
-      tabs,
+      const session: Session = {
+        version: 1,
+        activeId: this.activeId,
+        wordWrap: this.ui.wordWrap,
+        spellCheck: this.ui.spellCheck,
+        grammarCheck: this.ui.grammarCheck,
+        zoom: this.ui.zoom,
+        tabs,
+      };
+      return { json: JSON.stringify(session), listed: new Set(tabs.filter((t) => t.hasBackup).map((t) => t.id)) };
     };
-    await api.sessionSave(JSON.stringify(session));
+    const put = async (written: { json: string; listed: Set<string> }) => {
+      await api.sessionSave(written.json);
+      this.backupListed = written.listed;
+    };
+
+    // Only a text backup that the session on disk does not name yet needs the session first; typing in a
+    // tab that is already listed writes the backup and one session, as before. Journals of large tabs
+    // are asked for on restore whatever the session says, so they keep their order, but the first session
+    // does not claim one that has not been written yet (the restore would report it as lost).
+    const first = snapshot.some((s) => s.write && !s.journal && !this.backupListed.has(s.tab.id));
+    const before = first ? describe((s) => s.needsBackup && !(s.journal && s.write && !this.backupListed.has(s.tab.id))) : null;
+    let listedFirst = false;
+    if (before) {
+      try {
+        await put(before);
+        listedFirst = true;
+      } catch (e) {
+        // The backups are still worth writing: the next save names them.
+        console.error(e);
+      }
+    }
+    for (const { tab, rt, state, version, journal, write } of snapshot) {
+      if (!write || !rt) continue;
+      // A backup that cannot be written (disk full, …) must not stop the session from being saved; it is
+      // tried again with the next change, and the user is told. The version only counts as backed up once
+      // it is on disk; until then the session names a backup that is missing or older, which the restore handles.
+      try {
+        if (journal) await api.largeBackup(tab.largeId!, tab.id);
+        else await api.backupWrite(tab.id, state!.doc.toString());
+        rt.backedUp = version;
+      } catch (e) {
+        this.showNotice("error", `Could not back up the unsaved changes of ${tab.title}: ${e}`);
+      }
+    }
+    // The same session again is only skipped when the first one reached the disk.
+    const after = describe((s) => s.needsBackup);
+    if (!listedFirst || after.json !== before!.json) await put(after);
     await api.backupPrune(keep);
   }
 
@@ -1712,6 +1745,7 @@ class Workspace {
       this.ui.spellCheck = session.spellCheck ?? settings.spellCheck;
       this.ui.grammarCheck = session.grammarCheck ?? settings.grammarCheck;
       this.ui.zoom = session.zoom ?? 0;
+      this.backupListed = new Set(session.tabs.filter((t) => t.hasBackup).map((t) => t.id));
       for (const saved of session.tabs) {
         try {
           await this.restoreTab(saved);
@@ -1751,10 +1785,13 @@ class Workspace {
       return;
     }
 
+    // The session is written before the backups (see writeSession), so a crash in between leaves a tab
+    // that names a backup which is not there: a file tab then opens as it is on disk (its newest edit never
+    // reached the disk), an untitled tab has nothing to show. Neither is an error.
     const backup = saved.hasBackup ? await api.backupRead(saved.id) : null;
     let disk: FileContent | null = null;
     if (saved.path && (await api.statFile(saved.path)).exists) {
-      disk = await api.readFile(saved.path, saved.hasBackup ? saved.encoding : undefined);
+      disk = await api.readFile(saved.path, backup !== null ? saved.encoding : undefined);
     }
     const text = backup ?? disk?.text;
     if (text === undefined) return;

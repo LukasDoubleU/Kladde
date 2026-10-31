@@ -189,6 +189,24 @@ Key mechanisms:
   at most 3 s), later changes do not push it back, so continuous typing is backed up. Focus loss saves immediately.
 - `writeSession()` snapshots each tab's state and version together before awaiting writes, so edits made during a
   write are not marked as backed up. Writes are serialized through `sessionChain`.
+- **Write order: the session never lags behind the backups.** The restore only looks for the backups of the tabs
+  `session.json` lists, and the pruning after a save deletes every backup it does not list, so a backup written
+  before the session that names it is lost by a crash in between (issue #15: a new tab's text was on disk, the
+  restart showed fewer tabs). `writeSession()` therefore does: (1) `session.json` naming every tab whose backup is
+  about to be written (`hasBackup: true`), (2) the backups whose text changed, (3) `session.json` again unless it
+  is the same JSON as in step 1, (4) the pruning. `Workspace.backupListed` mirrors what the session on disk lists;
+  step 1 only happens when a text tab needs a backup that it does not list yet (a tab turning dirty, a new
+  untitled tab with text). Typing in a tab that is already listed writes the backup and one session, exactly as
+  before, and a save with a new tab is still one session write, because step 3 is skipped (the snapshot is the
+  same). A backup is only marked as written (`rt.backedUp = version`) after it was, and one that fails (disk full)
+  tells the user and is retried with the next change; the session then names a backup that is missing or
+  older, which the restore copes with.
+- **Restore after a crash between the writes:** a tab the session lists with `hasBackup` whose backup file is
+  missing opens from the file on disk, not dirty, without an error (the text of the last few hundred
+  milliseconds never reached the disk, which no order of writes can change); an untitled tab with a missing
+  backup is skipped; an older backup is restored as it is (dirty). Large tabs keep their journal order (journal,
+  then session): journals are asked for on restore whatever the session says, so the first session of a save does
+  not claim a journal that is not written yet (the restore would report the changes as lost).
 - Data folder layout: `session.json` (tab list, active tab, wrap, spell check, zoom, per-tab language/encoding/eol/
   preview/cursor/scroll, `hasBackup`), `backup/<id>.txt` (current text of dirty or untitled tabs) and
   `backup/<id>.<n>.txt` (up to 5 older versions, at least 5 minutes apart), plus marker files

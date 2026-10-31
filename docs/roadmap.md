@@ -25,9 +25,6 @@ copy of the signed `kladde.exe`). The updater's minisign `.sig` must be created 
     fail); if one has the file open already, the handle cannot be taken and the save-time check applies.
   - A journal whose file has vanished is not restored (the edits need the original); the next session save
     prunes it.
-  - Text tabs have a small window that large tabs no longer have: a crash between writing a backup and
-    `session.json` leaves a session file without `hasBackup`, so the backup is not restored (large tabs ask
-    Rust for a journal regardless).
   - The undo history is lost when the tab is saved (the viewer continues on a new file) and is not part of
     the journal.
   - Search limits: a match cannot span chunks (~8 MB, 64 KB overlap inside very long lines); a regex match
