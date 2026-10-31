@@ -2,6 +2,20 @@
 
 All notable changes to Kladde. Versions follow [Semantic Versioning](https://semver.org), commit messages
 [Conventional Commits](https://www.conventionalcommits.org).
+## [0.7.0](https://github.com/LukasDoubleU/Kladde/releases/tag/v0.7.0) – 2026-10-31
+
+### 🚀 Features
+
+- **ui:** A rosewater icon without pink ([d5b2a3e](https://github.com/LukasDoubleU/Kladde/commit/d5b2a3e9965909928f52c323110c31193c54976c))
+
+### 🐛 Bug fixes
+
+- **session:** Write the session before the backups it names ([1018078](https://github.com/LukasDoubleU/Kladde/commit/10180786f67cc78874e5c6ce22a7912a5371665b))
+- **session:** Keep the current backup in place while a version is kept ([b059774](https://github.com/LukasDoubleU/Kladde/commit/b05977415cbd4bcc6ae488ab728ee4f9b1ec5d52))
+
+### 🧪 Tests
+
+- **session:** Hooks to hold back the session and backup writes ([861c186](https://github.com/LukasDoubleU/Kladde/commit/861c186d2a697f20f910f8c77d63bc9009ef6b2c))
 ## [0.6.0](https://github.com/LukasDoubleU/Kladde/releases/tag/v0.6.0) – 2026-10-30
 
 ### 🚀 Features
