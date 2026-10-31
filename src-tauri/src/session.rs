@@ -121,16 +121,24 @@ fn modified(path: &Path) -> Option<SystemTime> {
 /// newest version is at least five minutes old, so a few older states survive a mistake too.
 pub fn backup_write(app: &AppHandle, id: &str, text: &str) -> Result<(), String> {
     test_delay(BACKUP_DELAY_ENV);
-    let id = check_name(id)?;
-    let dir = backup_dir(app)?;
+    write_backup(&backup_dir(app)?, check_name(id)?, text)
+}
+
+/// The current backup stays where restore looks for it until the new one replaces it in one step: the older
+/// version is a copy (written next to it, then renamed), so a crash at any point leaves a complete
+/// `<id>.txt`.
+fn write_backup(dir: &Path, id: &str, text: &str) -> Result<(), String> {
     let current = dir.join(format!("{id}.txt"));
-    let newest = modified(&version_path(&dir, id, 1));
+    let newest = modified(&version_path(dir, id, 1));
     let due = newest.is_none_or(|t| t.elapsed().unwrap_or_default() >= BACKUP_VERSION_INTERVAL);
     if due && current.exists() {
         for n in (1..BACKUP_VERSIONS).rev() {
-            let _ = fs::rename(version_path(&dir, id, n), version_path(&dir, id, n + 1));
+            let _ = fs::rename(version_path(dir, id, n), version_path(dir, id, n + 1));
         }
-        let _ = fs::rename(&current, version_path(&dir, id, 1));
+        let copy = dir.join(format!("{id}.1.tmp"));
+        if fs::copy(&current, &copy).is_ok() {
+            let _ = fs::rename(&copy, version_path(dir, id, 1));
+        }
     }
     write_atomic(&current, text.as_bytes())
 }
@@ -158,7 +166,21 @@ pub fn backup_read_version(app: &AppHandle, id: &str, n: u32) -> Result<Option<S
 }
 
 pub fn backup_read(app: &AppHandle, id: &str) -> Result<Option<String>, String> {
-    read_optional(&backup_dir(app)?.join(format!("{}.txt", check_name(id)?)))
+    read_backup(&backup_dir(app)?, check_name(id)?)
+}
+
+/// The current backup, or else the newest older version: versions written before the current one was kept
+/// in place (a crash while they were rotated) must not be lost.
+fn read_backup(dir: &Path, id: &str) -> Result<Option<String>, String> {
+    if let Some(text) = read_optional(&dir.join(format!("{id}.txt")))? {
+        return Ok(Some(text));
+    }
+    for n in 1..=BACKUP_VERSIONS {
+        if let Some(text) = read_optional(&version_path(dir, id, n))? {
+            return Ok(Some(text));
+        }
+    }
+    Ok(None)
 }
 
 /// Deletes all backups except those of the given tabs.
@@ -199,6 +221,38 @@ mod tests {
         assert_eq!(devtools_port_for(true, Some("".into())), None);
         assert_eq!(devtools_port_for(true, Some("0".into())), None);
         assert_eq!(devtools_port_for(true, Some("port".into())), None);
+    }
+
+    fn backup_dir_for(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("kladde-backup-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn rotating_a_version_keeps_the_current_backup_in_place() {
+        let dir = backup_dir_for("rotate");
+        write_backup(&dir, "t1", "first").unwrap();
+        // No version yet, so the next write keeps "first" as version 1; the current file is copied, not moved.
+        write_backup(&dir, "t1", "second").unwrap();
+        assert_eq!(fs::read_to_string(dir.join("t1.txt")).unwrap(), "second");
+        assert_eq!(fs::read_to_string(version_path(&dir, "t1", 1)).unwrap(), "first");
+        assert!(!dir.join("t1.1.tmp").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn restore_falls_back_to_the_newest_version() {
+        let dir = backup_dir_for("fallback");
+        assert_eq!(read_backup(&dir, "t1").unwrap(), None);
+        fs::write(version_path(&dir, "t1", 2), "older").unwrap();
+        assert_eq!(read_backup(&dir, "t1").unwrap().as_deref(), Some("older"));
+        fs::write(version_path(&dir, "t1", 1), "newer").unwrap();
+        assert_eq!(read_backup(&dir, "t1").unwrap().as_deref(), Some("newer"));
+        fs::write(dir.join("t1.txt"), "current").unwrap();
+        assert_eq!(read_backup(&dir, "t1").unwrap().as_deref(), Some("current"));
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

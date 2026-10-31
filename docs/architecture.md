@@ -201,15 +201,17 @@ Key mechanisms:
   same). A backup is only marked as written (`rt.backedUp = version`) after it was, and one that fails (disk full)
   tells the user and is retried with the next change; the session then names a backup that is missing or
   older, which the restore copes with.
-- **Restore after a crash between the writes:** a tab the session lists with `hasBackup` whose backup file is
-  missing opens from the file on disk, not dirty, without an error (the text of the last few hundred
+- **Restore after a crash between the writes:** a tab the session lists with `hasBackup` that has no backup
+  file (nor an older version) opens from the file on disk, not dirty, without an error (the text of the last few hundred
   milliseconds never reached the disk, which no order of writes can change); an untitled tab with a missing
   backup is skipped; an older backup is restored as it is (dirty). Large tabs keep their journal order (journal,
   then session): journals are asked for on restore whatever the session says, so the first session of a save does
   not claim a journal that is not written yet (the restore would report the changes as lost).
 - Data folder layout: `session.json` (tab list, active tab, wrap, spell check, zoom, per-tab language/encoding/eol/
   preview/cursor/scroll, `hasBackup`), `backup/<id>.txt` (current text of dirty or untitled tabs) and
-  `backup/<id>.<n>.txt` (up to 5 older versions, at least 5 minutes apart), plus marker files
+  `backup/<id>.<n>.txt` (up to 5 older versions, at least 5 minutes apart; a new version is a copy of
+  `<id>.txt`, so the current backup never leaves its place, and restore falls back to the newest version if
+  `<id>.txt` is missing), plus marker files
   (`no-default-editor-offer`, `last-update-check`) and the downloaded local LanguageTool (`languagetool/`, `jre/`). Config folder: `settings.json`, `keybindings.json`, `theme.css`.
 - Restore reads disk + backup: a tab with a backup is dirty if it differs from disk; a vanished file stays as a
   dirty tab marked "deleted". Compare tabs are snapshots and are not restored.
