@@ -135,6 +135,8 @@ const theme = EditorView.theme({
     cursor: "pointer",
   },
   ".cm-panel.cm-search [name=close]:hover": { color: "var(--fg)" },
+  // The link under the mouse while Ctrl is held (editor-links.ts)
+  ".cm-link-hover": { textDecoration: "underline", cursor: "pointer" },
   ".cm-specialChar": { color: "var(--special-char)" },
   ".cm-foldPlaceholder": { backgroundColor: "var(--bg-alt)", border: "1px solid var(--border)", color: "var(--fg-dim)" },
 });

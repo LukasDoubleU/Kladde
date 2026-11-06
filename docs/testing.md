@@ -5,7 +5,7 @@
 | Command | What it covers | Needs |
 |---|---|---|
 | `npm run check` | svelte-check (types of all `.ts`/`.svelte`) | — |
-| `npm run test:unit` | Node's test runner on `tests/unit/*.test.mjs`: formatters, keys/presets, grammar text side, themes, settings metadata, update manifest, last-check time format | — |
+| `npm run test:unit` | Node's test runner on `tests/unit/*.test.mjs`: formatters, keys/presets, grammar text side, themes, settings metadata, update manifest, last-check time format, link finding and heading anchors | — |
 | `cd src-tauri && cargo test` | file I/O and encodings, safe saving, large viewer (index, search, piece table, editing, streaming save, journal), LanguageTool client (local socket), local LanguageTool (hash check, download, atomic install, version cleanup, routing, idle stop, start/stop/crash of a stand-in process, job object), registry code (throwaway key), updater helpers | Rust |
 | `npm run test:e2e` | the real app through the DevTools protocol: `tests/e2e/*.test.mjs` | `npx tauri build --debug --no-bundle` first |
 
@@ -37,7 +37,7 @@ files opened); acting earlier races with the restore. A start that fails is clea
 closed) and reports the app's stderr.
 
 It connects over CDP and returns helpers: `key("Ctrl+Shift+P")`, `type(text)`, `eval(expr)`, `waitFor(expr)`,
-`state()` (tabs, active, dirty, editor text, dialog, notice), `wheel`, `click`, `screenshot(path, {width,height})`,
+`state()` (tabs, active, dirty, editor text, dialog, notice), `wheel`, `click` (DOM `click()`; real mouse input goes through `app.cdp.send("Input.dispatchMouseEvent", …)`, see `links.test.mjs`), `screenshot(path, {width,height})`,
 `close()` (like closing the window → hot exit) and `kill()` (like a crash). A profile survives `kill`/`close`, so
 relaunching with the same `profile` tests restore. `tempProfile()`, `writeFixture()`, `removeProfile()` help with
 folders.
@@ -58,6 +58,7 @@ Rules:
 | hot-exit | 9344, 9354–9358, 9380, 9390, 9400–9404 |
 | integration | 9347 |
 | keys | 9350–9351, 9384–9386 |
+| links | 9405–9412 |
 | languagetool-local | 9369–9370, 9374–9375, 9377–9379 |
 | large | 9345, 9391–9393, 9397–9399 (the editing tests reuse earlier ports one app at a time) |
 | preview | 9346, 9376 |
@@ -65,7 +66,7 @@ Rules:
 | theme | 9348, 9381–9383 |
 | update | 9349, 9359–9362, 9366–9368, 9394–9396 |
 
-Free for new files: 9405 and up (9380 and 9390 are taken by hot-exit now).
+Free for new files: 9413 and up (9380 and 9390 are taken by hot-exit now).
 
 ## Environment variables
 
@@ -82,6 +83,7 @@ Free for new files: 9405 and up (9380 and 9390 are taken by hot-exit now).
 | `KLADDE_LT_IDLE_SECS` | Idle time in seconds after which the local LanguageTool stops, instead of 15 minutes (isolated profile only) |
 | `KLADDE_SESSION_DELAY_MS` | Waits this many ms before every write of `session.json` (isolated profile only); with the old write order it holds the session back after the backups, so a test can kill Kladde inside that window |
 | `KLADDE_BACKUP_DELAY_MS` | Waits this many ms before every write of a text backup (isolated profile only); the window between the session naming a tab and its backup being written |
+| `KLADDE_OPEN_URL_LOG` | File that receives every external link (http, https, mailto) one URL per line, instead of the browser starting (isolated profile only); tests assert the URL that would have been opened |
 | `KLADDE_E2E_START_TIMEOUT` | Harness: how long to wait for the app to come up (ms, default 20000; CI uses 90000) |
 
 ## Pitfalls we hit (and how the harness handles them)

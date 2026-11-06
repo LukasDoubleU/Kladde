@@ -1,6 +1,7 @@
 // Markdown to sanitized HTML for the preview pane.
 //
-// - GitHub-flavoured: tables, strikethrough, task lists, autolinks, heading anchors.
+// - GitHub-flavoured: tables, strikethrough, task lists, autolinks, heading anchors (the slug rule is in links.ts,
+//   which the editor uses to jump to the same headings).
 // - Local images resolve relative to the Markdown file and load through Tauri's asset protocol.
 // - Code blocks are highlighted with the same grammars as the editor.
 // - Mermaid fences become placeholders that the preview draws (mermaid.ts); math is rendered by KaTeX (math.ts).
@@ -12,6 +13,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import DOMPurify from "dompurify";
 import MarkdownIt, { type StateCore } from "markdown-it";
 import { allLanguages } from "./languages";
+import { createSlugger, resolvePath } from "./links";
 import { mathPlugin, renderMathFence } from "./math";
 
 const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -45,27 +47,16 @@ function highlight(code: string, lang: string): string {
   return html;
 }
 
-function slugify(text: string): string {
-  return text
-    .trim()
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s-]/gu, "")
-    .replace(/\s/g, "-");
-}
-
 /** Adds data-line to block tokens, ids to headings and checkboxes to task list items. */
 function annotate(state: StateCore) {
   const tokens = state.tokens;
-  const slugs = new Map<string, number>();
+  const slug = createSlugger();
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i];
     if (token.map && token.nesting !== -1) token.attrSet("data-line", String(token.map[0]));
 
     if (token.type === "heading_open") {
-      const base = slugify(tokens[i + 1]?.content ?? "");
-      const count = slugs.get(base) ?? 0;
-      slugs.set(base, count + 1);
-      token.attrSet("id", count ? `${base}-${count}` : base);
+      token.attrSet("id", slug(tokens[i + 1]?.content ?? ""));
     }
 
     // "- [ ] task" and "- [x] done"
@@ -101,23 +92,6 @@ md.renderer.rules.fence = (tokens, idx) => {
   const cls = lang ? ` class="language-${escapeHtml(lang)}"` : "";
   return `<pre data-line="${line ?? ""}"><code${cls}>${body}</code></pre>\n`;
 };
-
-/** Joins a relative path onto a directory, resolving "." and "..". */
-export function resolvePath(baseDir: string, relative: string): string {
-  if (/^[a-zA-Z]:[\\/]/.test(relative) || relative.startsWith("\\\\")) return relative.replace(/\//g, "\\");
-  const parts = baseDir.replace(/\//g, "\\").split("\\").filter((p, i) => p !== "" || i === 0);
-  for (const part of relative.replace(/\//g, "\\").split("\\")) {
-    if (part === "" || part === ".") continue;
-    if (part === "..") parts.length > 1 && parts.pop();
-    else parts.push(part);
-  }
-  return parts.join("\\");
-}
-
-export function dirname(path: string): string {
-  const i = Math.max(path.lastIndexOf("\\"), path.lastIndexOf("/"));
-  return i > 0 ? path.slice(0, i) : path;
-}
 
 let currentBaseDir: string | null = null;
 

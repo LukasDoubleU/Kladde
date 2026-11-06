@@ -231,6 +231,9 @@ export const api = {
   languageToolLocalStop: () => invoke<void>("languagetool_local_stop"),
   languageToolLocalRemove: () => invoke<void>("languagetool_local_remove"),
 
+  /** Test hook: true when the URL was taken by `KLADDE_OPEN_URL_LOG` instead of needing the browser (isolated profile only). */
+  openUrlHook: (url: string) => invoke<boolean>("open_url_hook", { url }),
+
   configRead: (name: string) => invoke<string | null>("config_read", { name }),
   configFile: (name: string, defaultContent: string) =>
     invoke<string>("config_file", { name, default: defaultContent }),

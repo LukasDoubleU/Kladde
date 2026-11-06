@@ -36,7 +36,7 @@
   import { integration } from "./lib/integration.svelte";
   import { keyHint } from "./lib/keyhint.svelte";
   import { languageNames } from "./lib/languages";
-  import { dirname } from "./lib/markdown";
+  import { dirname } from "./lib/links";
   import { defaultSettingsJson, loadSettings, settings, SETTINGS_FILE } from "./lib/settings.svelte";
   import { changeKeybinding, chooseKeymap, keyCapture } from "./lib/shortcut-editor.svelte";
   import { applyTheme, isLight, resolveFlavor, setUserTheme, THEME_FILE, userThemeTemplate } from "./lib/theme";
@@ -154,6 +154,8 @@
     { id: "view.zoomOut", label: "Zoom out", keys: ["Ctrl+Minus"], run: () => workspace.zoom(-1) },
     { id: "view.zoomReset", label: "Reset zoom", keys: ["Ctrl+0"], run: () => workspace.zoom(null) },
     { id: "edit.gotoLine", label: "Go to line…", keys: ["Ctrl+G"], run: () => workspace.gotoLine() },
+    // Ctrl+click on a link does the same; no default key.
+    { id: "edit.openLink", label: "Open link at cursor", run: () => workspace.openLinkAtCursor(), enabled: textTab },
     // CodeMirror's editing commands (delete line, move line, comment, …), see editor-actions.ts. Some of
     // them also work in the large file view, under the same ids and keys.
     ...editorActions(() => workspace.view, textTab).map((action) =>

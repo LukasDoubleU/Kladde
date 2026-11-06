@@ -1,7 +1,5 @@
 <script lang="ts">
-  import { openUrl } from "@tauri-apps/plugin-opener";
   import { tick } from "svelte";
-  import { resolvePath } from "../lib/markdown";
   import { renderDiagrams } from "../lib/mermaid";
   import { workspace } from "../lib/workspace.svelte";
 
@@ -66,14 +64,10 @@
     const link = (e.target as HTMLElement).closest("a");
     if (!link) return;
     e.preventDefault();
-    const href = link.getAttribute("href") ?? "";
-    if (href.startsWith("#")) {
-      pane.querySelector(`[id="${CSS.escape(decodeURIComponent(href.slice(1)))}"]`)?.scrollIntoView();
-    } else if (/^(https?:|mailto:)/i.test(href)) {
-      void openUrl(href);
-    } else if (href && baseDir) {
-      void workspace.openPath(resolvePath(baseDir, decodeURIComponent(href.split(/[?#]/)[0])));
-    }
+    void workspace.openHref(link.getAttribute("href") ?? "", {
+      baseDir,
+      anchor: (id) => pane.querySelector(`[id="${CSS.escape(id)}"]`)?.scrollIntoView(),
+    });
   }
 </script>
 

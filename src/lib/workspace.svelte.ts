@@ -8,6 +8,7 @@ import { EditorSelection, type EditorState, type StateEffect, Text } from "@code
 import { EditorView, highlightActiveLine, type ViewUpdate } from "@codemirror/view";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { api, type Eol, type FileContent } from "./api";
 import {
   activeLine,
@@ -29,7 +30,9 @@ import { frontMatterLanguage, isPublicServer, LANGUAGES, normalizeLanguage } fro
 import { formatterFor, formattableLanguages, formatWith, mapCursor, type Formatter } from "./formatters";
 import { localLanguageTool as localLt } from "./languagetool-local.svelte";
 import { allLanguages, detectLanguage, extensionOf, findLanguage, IMAGE_EXTENSIONS, isMarkdown } from "./languages";
-import { dirname, renderMarkdown, renderSvg, resolvePath, setLanguageLoadedHandler } from "./markdown";
+import { linkAtPos, linkExtension } from "./editor-links";
+import { classifyHref, dirname, headingAnchors, resolvePath } from "./links";
+import { renderMarkdown, renderSvg, setLanguageLoadedHandler } from "./markdown";
 import { settings, updateSettingsFile } from "./settings.svelte";
 
 export type TabKind = "text" | "large" | "image" | "compare" | "settings";
@@ -286,6 +289,10 @@ class Workspace {
     return [
       EditorView.updateListener.of((update) => this.onUpdate(update)),
       EditorView.domEventHandlers({ paste: (event) => this.onPaste(event) }),
+      linkExtension({
+        isMarkdown: () => isMarkdown(this.active?.language ?? null),
+        open: (href) => this.openLinkOfEditor(href),
+      }),
     ];
   }
 
@@ -1535,6 +1542,63 @@ class Workspace {
       })
       .catch((e) => this.showNotice("error", `Could not save the pasted image: ${e}`));
     return true;
+  }
+
+  // ---------------------------------------------------------------- links
+
+  /**
+   * Opens the target of a link: the one place that decides what a link in the editor or the preview does.
+   * `baseDir` is the folder of the document the link is in (null: untitled, so relative paths lead nowhere) and
+   * `anchor` brings a heading of that document into view. Unsupported targets do nothing (see `classifyHref`).
+   */
+  async openHref(href: string, from: { baseDir: string | null; anchor: (id: string) => void }) {
+    const target = classifyHref(href);
+    if (!target) return;
+    if (target.kind === "anchor") {
+      from.anchor(target.id);
+    } else if (target.kind === "external") {
+      try {
+        // A test hook can take the URL instead of the browser (isolated profile only).
+        if (!(await api.openUrlHook(target.url))) await openUrl(target.url);
+      } catch (e) {
+        this.showNotice("error", `Could not open ${target.url}: ${e instanceof Error ? e.message : e}`);
+      }
+    } else if (from.baseDir || /^[a-zA-Z]:[\\/]/.test(target.path)) {
+      await this.openPath(resolvePath(from.baseDir ?? "", target.path));
+    }
+  }
+
+  private openLinkOfEditor(href: string) {
+    const path = this.active?.path;
+    void this.openHref(href, { baseDir: path ? dirname(path) : null, anchor: (id) => this.gotoHeading(id) });
+  }
+
+  /** The "Open link at cursor" command. */
+  openLinkAtCursor() {
+    const tab = this.active;
+    const view = this.view;
+    if (!tab || tab.kind !== "text" || !view) return;
+    const link = linkAtPos(view.state, view.state.selection.main.head, isMarkdown(tab.language));
+    if (link) this.openLinkOfEditor(link.href);
+    else this.showNotice("info", "There is no link at the cursor.");
+  }
+
+  /** Moves the cursor to the heading that the preview gives this anchor id. */
+  private gotoHeading(id: string) {
+    const view = this.view;
+    if (!view) return;
+    const index = headingAnchors(view.state.doc.iterLines()).get(id);
+    if (index === undefined) {
+      this.showNotice("info", `There is no heading for #${id} in this document.`);
+      return;
+    }
+    const pos = view.state.doc.line(index + 1).from;
+    view.dispatch({
+      selection: EditorSelection.cursor(pos),
+      effects: EditorView.scrollIntoView(pos, { y: "start", yMargin: 8 }),
+      userEvent: "select",
+    });
+    view.focus();
   }
 
   // ---------------------------------------------------------------- dialogs

@@ -33,7 +33,10 @@ it, but I may decline requests that don't fit how I work, and there is no promis
   hands its files to the running window.
 - Syntax highlighting for ~145 languages, detected by extension, file name and shebang line. Grammars load
   on demand; batch files and logs have built-in highlighters too.
-- Multiple cursors, column selection (`Alt`+drag), find and replace with regex, go to line, word wrap.
+- Multiple cursors (`Ctrl`+click), column selection (`Alt`+drag), find and replace with regex, go to line, word wrap.
+- Links open with `Ctrl`+click, in every file type: `http://`, `https://` and `mailto:` URLs (underlined while `Ctrl` is
+  held), and in Markdown also `[text](target)` links and images, `<https://…>` autolinks, `#headings` and relative
+  files, which open in Kladde. **Open link at cursor** in the command palette does the same from the keyboard.
 - Line commands (duplicate, move, join, sort, comment, upper / lower case, …), all in the command palette and
   all rebindable. Keyboard shortcut presets (Notepad++, VS Code), chords such as `Ctrl+K Ctrl+C` and a shortcut
   editor in the command palette; see [Shortcuts](#shortcuts).
@@ -56,7 +59,8 @@ it, but I may decline requests that don't fit how I work, and there is no promis
 - Compare tabs are snapshots and read-only; they are not restored after a restart.
 
 **Markdown**
-- Live preview side by side or full size (`Ctrl+Shift+V`), following the editor as you scroll.
+- Live preview side by side or full size (`Ctrl+Shift+V`), following the editor as you scroll. Links work in the
+  preview and, with `Ctrl`+click, in the editor.
 - GitHub-flavoured: tables, task lists, autolinks, heading anchors, highlighted code blocks; local images
   resolve relative to the file.
 - Mermaid diagrams (```` ```mermaid ````) and math with KaTeX (`$inline$`, `$$block$$`, ```` ```math ````), in the
@@ -164,6 +168,7 @@ Kladde refreshes an existing registration silently at the next start.
 | `Alt+Shift+W` | Reveal the file in Explorer |
 | `Ctrl+F` / `Ctrl+H` / `F3` | Find, replace, find next |
 | `Ctrl+G` | Go to line |
+| `Ctrl`+click | Open the link under the mouse (elsewhere: add a cursor); **Open link at cursor** has no key by default |
 | `Ctrl+D` or `Ctrl+Shift+K` | Delete the line (or all lines of the selection) |
 | `Ctrl+Shift+D` / `Ctrl+Shift+L` | Select the next occurrence / all occurrences of the selection (`Ctrl+D` used to do this; it is "delete line" here) |
 | `Alt+Up` / `Alt+Down` | Move the line up / down |

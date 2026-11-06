@@ -152,6 +152,7 @@ Key mechanisms:
 | `lib/actions.ts`, `keys.ts`, `keymaps.ts`, `editor-actions.ts`, `shortcut-editor.svelte.ts`, `keyhint.svelte.ts` | Commands and keyboard handling (see below) |
 | `lib/languages.ts` | ~145 languages from `@codemirror/language-data` plus own Batch and Log stream parsers; detection by extension, file name, shebang, first line |
 | `lib/markdown.ts`, `math.ts`, `mermaid.ts` | Preview: markdown-it → DOMPurify; KaTeX rules; Mermaid placeholders drawn after insertion |
+| `lib/links.ts`, `lib/editor-links.ts` | Links: finding them in a line, what an href means, heading anchors and path helpers (pure, unit-tested); the editor extension for Ctrl+click and the hover hint (see "Links") |
 | `lib/format.ts`, `format-xml.ts`, `formatters.ts` | Own JSON and XML formatters; dispatch by language to lazily loaded Prettier and sql-formatter |
 | `lib/compare.ts` | Merge views for compare tabs (`@codemirror/merge`, custom diff for ignore whitespace/case) |
 | `lib/grammar.ts`, `grammar-text.ts` | LanguageTool: lint integration (lazy) and the pure text side (Markdown masking via LanguageTool's `data` format, paragraphs, request budget, offset mapping) |
@@ -266,12 +267,42 @@ Key mechanisms:
 - markdown-it (`html: true`, linkify) with own rules: `data-line` on blocks (scroll sync from the editor), heading
   ids, task-list checkboxes, highlighted fences using the editor grammars (`highlightCode` + `classHighlighter`).
 - Output is sanitized with DOMPurify; local image `src` are rewritten to the asset protocol (`convertFileSrc`).
-  Links: http(s)/mailto open externally, relative paths open in Kladde, `#anchors` scroll.
+  Links go through `workspace.openHref` like those of the editor (see "Links").
 - Mermaid: fences become placeholders; `renderDiagrams` draws them after insertion (`securityLevel: "strict"`),
   caches SVGs by source and theme, keeps the stale SVG while re-rendering, shows errors inline.
 - Math: own markdown-it rules (`$…$`, `$$…$$`, ```` ```math ````) rendered by KaTeX once its chunk is loaded;
   `$5 and $10` stays text. A re-render is triggered when a lazy dependency finishes loading.
 - SVG files get an image preview; pasting an image into a saved Markdown file writes it to `pasteImageFolder`.
+
+### Links
+
+- One function decides what a link does: `workspace.openHref(href, { baseDir, anchor })`, used by the preview (a click
+  on an `<a>`) and by the editor. `classifyHref` (`links.ts`) maps the href to a browser URL (http, https, mailto;
+  opened with the opener plugin's `openUrl`), a heading of the same document (`#id`; the preview scrolls, the editor
+  moves the cursor), a file (relative to the folder of the file, `?query`/`#fragment` dropped, `%XX` decoded, opened in
+  Kladde as text; nothing for an untitled file) or nothing. Everything else is rejected: other schemes (`file:`,
+  `javascript:`, custom ones), network (UNC) paths, paths with a colon. Nothing is ever executed.
+- Heading ids come from one slug rule (`createSlugger` in `links.ts`, used by `markdown.ts` for the preview's ids and
+  by `headingAnchors` for the editor, which numbers repeated titles the same way). `headingAnchors` scans the lines
+  of the document, only on a click on an `#anchor`.
+- Finding links (`linkAt`): bare `http(s)://` and `mailto:` URLs in every file type, with trailing punctuation and
+  unbalanced `)`, `]`, `}` cut off; in Markdown also `[text](target)` and `![alt](target)` (balanced parentheses,
+  `<…>` targets with spaces, titles, nesting such as badges: the text opens the outer link, an inner target its own).
+  Only the line under the pointer or cursor is searched, and only around it (±10 000 characters) on very long lines.
+  `[a](b)` inside Markdown code (span, fence, indented block) is not a link; a URL there still is.
+- `editor-links.ts` is a `ViewPlugin` in `editorExtras`. Its `mousedown` handler runs before CodeMirror's own (plugin
+  handlers come first), so a Ctrl+click on a link opens it and returns `true`: CodeMirror then neither adds a cursor
+  (`clickAddsSelectionRange`, Ctrl on Windows) nor moves the selection. Anywhere else the event falls through and
+  multi-cursor works as before; plain clicks and double-clicks are never touched. Hover: `mousemove` with Ctrl held (and
+  a Ctrl key press over a still mouse) finds the link at the position and shows it as one mark decoration
+  (`cm-link-hover`: underline, pointer), held by the plugin so it never outlives a tab switch. Releasing Ctrl, leaving
+  the editor, the window losing focus and edits remove it. Without Ctrl the handlers only remember the mouse
+  position; there is no per-keystroke work and no document-wide decoration pass. The pointer must really be over
+  the link's characters (checked with `coordsAtPos`), not just at the nearest position.
+- "Open link at cursor" (`edit.openLink`, no default key) does the same for the main cursor; it says so when there
+  is no link. The large file view and compare tabs have no link handling.
+- Test hook: with an isolated profile, `KLADDE_OPEN_URL_LOG=<file>` makes the `open_url_hook` command append every
+  external URL to the file and report it handled, so the browser is not started ([testing.md](testing.md)).
 
 ### Compare tabs
 

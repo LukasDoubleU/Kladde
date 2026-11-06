@@ -30,6 +30,26 @@ fn frontend_log(message: String) {
     eprintln!("[frontend] {message}");
 }
 
+/// Test hook: a file that receives every external link (one URL per line) instead of the browser. Honored only
+/// with an isolated profile, so a stray variable can never swallow the links of a real installation.
+const OPEN_URL_LOG_ENV: &str = "KLADDE_OPEN_URL_LOG";
+
+fn open_url_log_for(isolated: bool, value: Option<std::ffi::OsString>) -> Option<PathBuf> {
+    value.filter(|v| isolated && !v.is_empty()).map(PathBuf::from)
+}
+
+/// Returns true when the URL went into the test log: the page then does not open the browser.
+#[tauri::command]
+fn open_url_hook(url: String) -> Result<bool, String> {
+    let Some(log) = open_url_log_for(session::isolated_profile().is_some(), std::env::var_os(OPEN_URL_LOG_ENV)) else {
+        return Ok(false);
+    };
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new().create(true).append(true).open(log).map_err(|e| e.to_string())?;
+    writeln!(file, "{url}").map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
 #[tauri::command]
 fn initial_paths() -> Vec<String> {
     let cwd = std::env::current_dir().unwrap_or_default();
@@ -539,6 +559,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             frontend_log,
+            open_url_hook,
             show_window,
             initial_paths,
             read_file,
@@ -591,6 +612,15 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_open_url_log_needs_an_isolated_profile() {
+        let log = Some(std::ffi::OsString::from("urls.txt"));
+        assert_eq!(open_url_log_for(false, log.clone()), None);
+        assert_eq!(open_url_log_for(true, log.clone()), Some(PathBuf::from("urls.txt")));
+        assert_eq!(open_url_log_for(true, Some(std::ffi::OsString::new())), None);
+        assert_eq!(open_url_log_for(true, None), None);
+    }
 
     #[test]
     fn background_instances_keep_rendering_and_open_devtools_only_on_request() {
