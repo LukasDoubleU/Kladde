@@ -2,6 +2,11 @@
 
 All notable changes to Kladde. Versions follow [Semantic Versioning](https://semver.org), commit messages
 [Conventional Commits](https://www.conventionalcommits.org).
+## [0.8.0](https://github.com/LukasDoubleU/Kladde/releases/tag/v0.8.0) – 2026-11-06
+
+### 🚀 Features
+
+- **editor:** Open links with Ctrl+click ([5f73253](https://github.com/LukasDoubleU/Kladde/commit/5f73253cc9b89a4075810e668ce87ffbe93d9b9e))
 ## [0.7.0](https://github.com/LukasDoubleU/Kladde/releases/tag/v0.7.0) – 2026-10-31
 
 ### 🚀 Features
