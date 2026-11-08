@@ -2,7 +2,7 @@
 //   npx tauri build --debug --no-bundle && npm run test:e2e
 // Set KLADDE_SHOTS=<folder> to also save a screenshot of every flavor.
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { launch, removeProfile, tempProfile, writeFixture } from "./kladde.mjs";
@@ -192,10 +192,9 @@ test("settings.json switches flavor and accent; theme.css overrides on top", asy
     await app.type("custom theme");
     await app.key("Enter");
     await app.waitFor(activeTab("theme.css"));
-    // The editor only renders the visible lines, so read the top and the bottom of the file.
-    let template = (await app.state()).text;
+    // The editor only renders the visible lines, so the template is read from the file the command created.
+    const template = readFileSync(join(profile, "data", "theme.css"), "utf8");
     await app.key("Ctrl+End");
-    template += (await app.state()).text;
     for (const name of ["--ctp-base", "--bg", "--accent-fg", "--diff-add-mark", "--tok-keyword", "--tok-warn"]) {
       assert.ok(template.includes(name), `the template lists ${name}`);
     }
