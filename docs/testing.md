@@ -152,7 +152,7 @@ Free for new files: 9448 and up (9380 and 9390 are taken by hot-exit now).
   cleaner really was off (`data-removed` is 0, the addresses are in the CSS and the attributes, the computed style
   holds one) and ends with a **control**: the same material in a frame *without* the meta policy (only the page's
   policy applies, which allows https images) must reach a set of listeners, so a passing run cannot be a test that is
-  unable to see a leak. The frame-navigation test points the frame at `about:blank` and at the app's own origin with
+  unable to see a leak. It also counts the nodes the page's and the frame's `Document` make during a second render (F5): none by the page's. A nested `<iframe>` is the one element it tolerates: WebView2 opens a connection before any policy or guard can act (architecture.md, "Known gap"), so the test asserts the guard's cancellation instead of silence for it. The frame-navigation test points the frame at `about:blank` and at the app's own origin with
   `location.assign` (the policies do not refuse these; only the Rust guard stands in the way) and adds a `<meta>`
   refresh, then expects the same document object and the guard's stderr lines. The theme test changes the flavor and a
   variable the way the app does (`kladde-theme`) and compares the frame's copies of the variables and what is painted.

@@ -366,7 +366,8 @@ nothing is read or loaded at startup.
   opener plugin) that only starts files of the types the viewer shows, so the page needs no opener scope for paths.
 - **Engine:** docx-preview 0.4.1 (exact version) on JSZip, both loaded with the viewer on first use (a ~170 kB chunk,
   ~49 kB gzip, next to the viewer's own ~10 kB). It was chosen over mammoth in the spike (decisions.md). The viewer calls
-  `parseAsync` and `renderDocument`, which return **detached nodes** built element by element (no HTML parsing),
+  `parseAsync` and `renderDocument`, which return **detached nodes made by the frame's document** (the option `h`, see
+  "Untrusted documents"), built element by element (no HTML parsing),
   `renderAltChunks: false` (raw HTML inside a file is never shown), `useBase64URL: true` (images and fonts become `data:`
   URLs, which the CSP allows; `blob:` is not needed and not in the CSP).
 - **Tracked changes and comments are shown, not hidden** (`renderChanges: true`, `renderComments: true`): the engine's
@@ -399,9 +400,19 @@ nothing is read or loaded at startup.
     `default-src 'self'`) are the layers behind that. The test points the frame at `about:blank` and at the app's own
     origin (neither is refused by the policies) and adds a `<meta>` refresh: the frame must stay the same document, and
     the guard logs the cancellations.
-  - **The cleaner stays as the second layer** (`cleanDocumentNodes`, `css-scan.ts`; it also keeps the DOM small): the
-    engine builds its DOM element by element, and before the nodes are moved into the frame (nothing has been fetched
-    yet) every `<style>` is parsed into a constructable `CSSStyleSheet` (`@import` ignored), its rules are walked
+  - **The nodes are born in the frame.** The engine's default `h` creates every element with the page's global `document`,
+    and an element can start loading the moment an attribute is set (`<img src>`, SVG `<image href>`, media), even
+    detached, under the *page's* policy, which allows https images. The engine reads `options.h`, so the viewer passes
+    `makeH(frameDocument)` (`documents.ts`, a mirror of the default: text, `#fragment`, `#comment`, `ns`, `className`,
+    `style` as text or object, other keys as properties, children through the same function; already made nodes pass
+    through, recognized by `nodeType` because a frame's nodes are not instances of the page's `Node`). The frame has to
+    be loaded before a render. Nothing else in the engine's render path makes nodes with the page's document: its other
+    `document.` uses are tab stops (`experimental`, off), a text node in `renderElements` (text cannot load anything),
+    and the XML parsing of the file's parts (`DOMParser`, `application/xml`, which loads nothing). The e2e test counts
+    the nodes the page's and the frame's `Document` make during a render: none by the page's. The cleaner (below) works
+    on frame nodes, so it tests `nodeType` and not `instanceof Element`.
+  - **The cleaner stays as the second layer** (`cleanDocumentNodes`, `css-scan.ts`; it also keeps the DOM small): before
+    the nodes are attached to the frame's tree every `<style>` is parsed into a constructable `CSSStyleSheet` (`@import` ignored), its rules are walked
     (CSSOM), `@import` and `@property` rules are dropped and every declaration whose value refers to something other
     than a `data:` address is removed (a tokenizer, not a regular expression, so CSS escapes such as `u\72l(` and
     comments cannot hide an address); the same for `style` attributes and every attribute of every element (the engine
@@ -420,7 +431,15 @@ nothing is read or loaded at startup.
     live frame (`img`, `srcset`, `picture`, three `link`s, nested frames, `object`, `embed`, `video`/`audio` with a poster,
     SVG `image`/`use`/`fill`, `input type=image`, `table background`, a `style` attribute and element, `a ping`, a form
     submission and a `<meta>` refresh). A control frame without a policy of its own gets the same material and does
-    fetch it, so the listeners can see a leak.
+    fetch it, so the listeners can see a leak. The test was also run once with `img-src https: http:` added to the
+    frame's policy, and fails with the listeners it names (checked by hand, not kept).
+  - **Known gap: a nested frame opens a connection.** Found by that test: WebView2 opens a TCP connection when a frame
+    starts to navigate, before any policy check (the frame's, and the page's own, were both tried, also `frame-src
+    'none'`) and before the frame guard cancels the navigation. No HTTP request is sent (a plain HTTP listener saw only the
+    connection), but for `https:` the connection starts a TLS handshake that names the host. Nothing a document can do
+    makes the engine emit a frame (`renderAltChunks: false`), and the cleaner removes every `iframe`, `frame`, `object`
+    and `embed`, so this is a fallback that is weaker than for images; the test lists it as tolerated and asserts that the
+    guard cancelled the navigation.
 - **Layout and zoom:** pages have the document's own size (A4 is 794 px). They are shown at their size, or shrunk to the
   width of the window (fit to width, never enlarged); Kladde's zoom (keys, `Ctrl`+wheel, the same `ui.zoom` as the font
   size) scales them on top, by the same proportion as the font size. Done with the CSS `zoom` of the host element inside
