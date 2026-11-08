@@ -62,6 +62,9 @@ fn open_url_hook(url: String) -> Result<bool, String> {
 fn open_external(url: String) {
     std::thread::spawn(move || match log_open_url(&url) {
         Ok(true) => {}
+        // An isolated profile does not register the opener plugin because the browser or the mail program would
+        // pop up on the screen during a test: without a log the link is dropped, like the page's own openUrl fails.
+        Ok(false) if session::isolated_profile().is_some() => eprintln!("[navigation] not opening {url} in an isolated profile"),
         Ok(false) => {
             if let Err(e) = tauri_plugin_opener::open_url(&url, None::<&str>) {
                 eprintln!("[navigation] could not open {url}: {e}");
@@ -474,13 +477,14 @@ fn create_main_window(app: &AppHandle) -> tauri::Result<()> {
         .find(|w| w.label == "main")
         .cloned()
         .expect("tauri.conf.json defines the main window");
-    // Only a `tauri dev` build also trusts the Vite dev server.
+    // Only a `tauri dev` build also trusts the Vite dev server (and may reload).
     let dev_url = if cfg!(dev) { app.config().build.dev_url.clone() } else { None };
-    let new_window_dev_url = dev_url.clone();
+    let guard = std::sync::Arc::new(navigation::Guard::new(dev_url));
+    let new_window_guard = guard.clone();
     let mut window = tauri::WebviewWindowBuilder::from_config(app, &config)?
         // The page is Kladde's own origin and nothing else, whatever the Markdown preview or a bug tries
         // (navigation.rs). Called for every top-level navigation, also those of a script or a form.
-        .on_navigation(move |url| match navigation::classify_navigation(url, dev_url.as_ref()) {
+        .on_navigation(move |url| match guard.navigation(url) {
             navigation::Navigation::Allow => true,
             other => {
                 handle_blocked(other);
@@ -489,7 +493,7 @@ fn create_main_window(app: &AppHandle) -> tauri::Result<()> {
         })
         // target=_blank, window.open, middle click: never a window of ours, only the system for web links.
         .on_new_window(move |url, _features| {
-            handle_blocked(navigation::classify_new_window(&url, new_window_dev_url.as_ref()));
+            handle_blocked(new_window_guard.new_window(&url));
             tauri::webview::NewWindowResponse::Deny
         });
     let isolated = session::isolated_profile();
@@ -506,11 +510,55 @@ fn create_main_window(app: &AppHandle) -> tauri::Result<()> {
             .additional_browser_args(&background_browser_args(session::devtools_port()));
     }
     let window = window.build()?;
+    cancel_unparseable_navigations(&window);
     if isolated.is_some() {
         show_in_background(&window)?;
     }
     Ok(())
 }
+
+/// Tauri's `on_navigation` is only asked about URLs the `url` crate can parse and allows all others, but WebView2
+/// still navigates to some of them (`http://xn--a.invalid/`, an invalid IDNA label, replaces the window with an
+/// error page, or with the attacker's page when the name resolves). So a second `NavigationStarting` handler,
+/// registered after Tauri's and therefore run after it, cancels what does not parse. It never allows anything:
+/// the decision for every other URL stays with the guard in `navigation.rs`.
+#[cfg(windows)]
+fn cancel_unparseable_navigations(window: &tauri::WebviewWindow) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2NavigationStartingEventArgs;
+    use webview2_com::NavigationStartingEventHandler;
+    let result = window.with_webview(|webview| {
+        // SAFETY: COM calls on the webview of our own window, on the UI thread that `with_webview` runs on.
+        unsafe {
+            let Ok(core) = webview.controller().CoreWebView2() else {
+                eprintln!("[navigation] no WebView2 to guard");
+                return;
+            };
+            let handler = NavigationStartingEventHandler::create(Box::new(
+                |_, args: Option<ICoreWebView2NavigationStartingEventArgs>| {
+                    let Some(args) = args else { return Ok(()) };
+                    let mut uri = windows::core::PWSTR::null();
+                    args.Uri(&mut uri)?;
+                    let raw = webview2_com::take_pwstr(uri);
+                    if navigation::cancels_unparseable(&raw) {
+                        eprintln!("[navigation] cancelled {raw}: not a valid URL");
+                        args.SetCancel(true)?;
+                    }
+                    Ok(())
+                },
+            ));
+            let mut token = 0i64;
+            if let Err(e) = core.add_NavigationStarting(&handler, &mut token) {
+                eprintln!("[navigation] could not register the guard: {e}");
+            }
+        }
+    });
+    if let Err(e) = result {
+        eprintln!("[navigation] could not register the guard: {e}");
+    }
+}
+
+#[cfg(not(windows))]
+fn cancel_unparseable_navigations(_window: &tauri::WebviewWindow) {}
 
 /// Shows a test instance's still hidden window off screen, without activating it and without a taskbar
 /// button. Done with Win32 directly: tao moves a window that is to be created outside every monitor back

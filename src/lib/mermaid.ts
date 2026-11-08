@@ -5,6 +5,8 @@
 // after every edit, so finished SVGs are cached by diagram source and theme, and a diagram that is being
 // re-rendered keeps showing its previous SVG instead of flickering.
 
+import { stripActive } from "./markdown";
+
 type Mermaid = typeof import("mermaid").default;
 
 type Result = { svg: string } | { error: string };
@@ -106,8 +108,9 @@ const sources = new WeakMap<HTMLElement, string>();
 function show(el: HTMLElement, result: Result, index: number) {
   if ("svg" in result) {
     el.className = "mermaid-block";
-    // Mermaid sanitizes its own output in "strict" mode.
-    el.innerHTML = result.svg;
+    // Mermaid's "strict" mode only runs DOMPurify with its default settings, which keep forms and buttons in a
+    // label (and a diagram's init directive could change that): they are removed here too (markdown.ts).
+    el.replaceChildren(stripActive(result.svg));
     lastSvg[index] = result.svg;
   } else {
     el.className = "mermaid-block mermaid-failed";
@@ -135,7 +138,7 @@ export async function renderDiagrams(root: HTMLElement): Promise<void> {
       sources.set(el, source);
       if (lastSvg[index]) {
         el.className = "mermaid-block mermaid-stale";
-        el.innerHTML = lastSvg[index];
+        el.replaceChildren(stripActive(lastSvg[index]));
       }
       const result = await cached(source, vars, signature);
       if (el.isConnected) show(el, result, index);

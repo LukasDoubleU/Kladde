@@ -342,3 +342,145 @@ test("the asset protocol refuses an HTML file named .pdf or .txt, and only serve
     watch.close();
   });
 });
+
+const GIF = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
+
+/** A real left click (DevTools input events, like a user's) at a point of the page. */
+async function realClick(app, { x, y }) {
+  const send = (type) => app.cdp.send("Input.dispatchMouseEvent", { type, x, y, button: type === "mouseMoved" ? "none" : "left", clickCount: 1 });
+  await send("mouseMoved");
+  await send("mousePressed");
+  await send("mouseReleased");
+  await sleep(300);
+}
+
+const center = (app, selector) =>
+  app.eval(`(() => { const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+
+test("an image map in Markdown is dropped by the sanitizer, and clicking its picture cannot navigate or reload Kladde", async () => {
+  const md = writeFixture(
+    profile,
+    "map.md",
+    [
+      "# Map",
+      "",
+      `<img id="m1" src="${GIF}" width="300" height="100" usemap="#m"><map name="m">`,
+      `<area shape="rect" coords="0,0,100,100" href="">`,
+      `<area shape="rect" coords="100,0,200,100" href="other.md">`,
+      `<area shape="rect" coords="200,0,300,100" href="http://xn--a.invalid/">`,
+      "</map>",
+      "",
+      "After.",
+    ].join("\n"),
+  );
+  await session({ port: 9441, files: [md], active: "map.md" }, async (app, urls) => {
+    await app.waitFor("!!document.querySelector('.markdown #m1')");
+    assert.equal(await app.eval("document.querySelectorAll('.markdown map, .markdown area, .markdown [usemap]').length"), 0);
+    // Unsaved typing is what a reload would cost.
+    await app.eval("document.querySelector('.cm-content').focus()");
+    await app.type("UNSAVED-WORDS ");
+    await app.waitFor("document.querySelector('.tab.active')?.classList.contains('dirty')");
+    const before = await app.state();
+    await app.eval(`window.__marker = "same page"`);
+    for (const dx of [-100, 0, 100]) {
+      const { x, y } = await center(app, ".markdown #m1");
+      await realClick(app, { x: x + dx, y });
+    }
+    assert.equal(await app.eval("window.__marker"), "same page");
+    assert.deepEqual(await app.state(), before, "tabs, text and the unsaved edit are as before");
+    assert.deepEqual(urls(), []);
+  });
+});
+
+test("an <area> that gets into the page anyway cannot reload Kladde or load an unparseable address: the guard cancels it", async () => {
+  const md = writeFixture(profile, "area.md", "# Area\n\nText.\n");
+  await session({ port: 9442, files: [md], active: "area.md" }, async (app, urls) => {
+    await app.waitFor("!!document.querySelector('.markdown h1')");
+    await app.eval("document.querySelector('.cm-content').focus()");
+    await app.type("UNSAVED-WORDS ");
+    await app.waitFor("document.querySelector('.tab.active')?.classList.contains('dirty')");
+    const before = await app.state();
+    await app.eval(`window.__marker = "same page"`);
+    // An image map outside of the preview, so not even its click handler is in the way. Tauri answers every path of
+    // its origin with index.html, so each of these used to start the app again (or leave it for an error page).
+    for (const href of ["", "/", "other.md", "?x", "http://tauri.localhost/index.html", "http://xn--a.invalid/", "http://xn--a.example.com/x"]) {
+      await app.eval(`(() => {
+        document.getElementById("injected-map")?.remove();
+        const host = document.createElement("div");
+        host.id = "injected-map";
+        host.innerHTML = '<img id="injected-img" src="${GIF}" width="200" height="200" usemap="#injected" style="position:fixed;left:40px;top:40px;z-index:99999"><map name="injected"><area shape="rect" coords="0,0,200,200" href=' + ${JSON.stringify(JSON.stringify(href))} + '></map>';
+        document.body.append(host);
+      })()`);
+      await app.waitFor("document.getElementById('injected-img')?.complete");
+      await realClick(app, await center(app, "#injected-img"));
+      await sleep(200);
+      assert.equal(await app.eval("window.__marker"), "same page", `area href=${JSON.stringify(href)}`);
+    }
+    // The same from a script or devtools, which is what Tauri's callback lets through for an address it cannot parse.
+    for (const target of ["http://xn--a.invalid/", "/", "index.html", "?x", "http://tauri.localhost/other.md", "tauri://localhost/"]) {
+      await app.eval(`location.assign(${JSON.stringify(target)})`);
+      await sleep(200);
+      assert.equal(await app.eval("window.__marker"), "same page", `location.assign(${JSON.stringify(target)})`);
+    }
+    await app.eval("location.reload()");
+    await app.cdp.send("Page.reload").catch(() => {});
+    await app.cdp.send("Page.navigate", { url: "http://xn--a.invalid/" }).catch(() => {});
+    await sleep(500);
+    assert.equal(await app.eval("window.__marker"), "same page", "no reload");
+    assert.match(await app.eval("location.href"), /^(http:\/\/tauri\.localhost|tauri:\/\/localhost)\/$/);
+    assert.deepEqual(await app.state(), before, "tabs, text and the unsaved edit are as before");
+    assert.deepEqual(urls(), [], "none of it went to the system");
+  });
+});
+
+test("a Mermaid diagram cannot carry a form either: the SVG is stripped like the Markdown", async () => {
+  const md = writeFixture(
+    profile,
+    "mermaid-form.md",
+    [
+      "# Diagram",
+      "",
+      "```mermaid",
+      "flowchart LR",
+      `  A["<form action='https://example.invalid/m' method='post'><input name='q' value='v'><button type='submit'>Go</button></form>"] --> B[Plain]`,
+      "```",
+    ].join("\n"),
+  );
+  await session({ port: 9443, files: [md], active: "mermaid-form.md" }, async (app, urls) => {
+    await app.waitFor("!!document.querySelector('.markdown .mermaid-block svg')", 20000);
+    const found = await app.eval(`({
+      controls: document.querySelectorAll('.markdown form, .markdown input, .markdown button, .markdown [formaction]').length,
+      text: document.querySelector('.markdown .mermaid-block svg').textContent.includes('Plain'),
+    })`);
+    assert.equal(found.controls, 0);
+    assert.ok(found.text, "the diagram itself is drawn");
+    assert.deepEqual(urls(), []);
+  });
+});
+
+test("Copy in the own menu takes the selection from the editor, not from the lines CodeMirror happened to render", async () => {
+  const lines = Array.from({ length: 3000 }, (_, i) => `line number ${i}`);
+  const text = lines.join("\n") + "\n";
+  const doc = writeFixture(profile, "long.txt", text);
+  await session({ port: 9444, files: [doc], active: "long.txt" }, async (app) => {
+    await app.waitFor("!!document.querySelector('.cm-gutterElement')");
+    await app.eval("document.querySelector('.cm-content').focus()");
+    await app.key("Ctrl+A");
+    await app.eval(`(() => {
+      window.__copied = null;
+      Object.defineProperty(navigator, "clipboard", { value: { writeText: (t) => ((window.__copied = t), Promise.resolve()) }, configurable: true });
+    })()`);
+    // The gutter has no native menu (it is no text field); the selection is the editor's, 3000 lines of it.
+    assert.equal(await contextmenu(app, ".cm-gutterElement"), false);
+    await app.waitFor("!!document.querySelector('.menu')");
+    assert.deepEqual(await app.eval("[...document.querySelectorAll('.menu button')].map((b) => b.textContent)"), ["Copy"]);
+    await app.eval("document.querySelector('.menu button').click()");
+    await app.waitFor("window.__copied !== null");
+    assert.equal(await app.eval("window.__copied"), text);
+    // Nothing selected: no menu at all.
+    await app.eval("document.querySelector('.cm-content').focus()");
+    await app.key("Ctrl+Home");
+    assert.equal(await contextmenu(app, ".cm-gutterElement"), false);
+    assert.equal(await app.eval("!!document.querySelector('.menu')"), false);
+  });
+});

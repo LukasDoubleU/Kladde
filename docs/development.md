@@ -67,8 +67,8 @@
 - WebView2 handles browser accelerators (F5 reload, Ctrl+P print, Ctrl+F find bar, F7 caret browsing, Ctrl+wheel
   zoom) unless the page calls `preventDefault`; `App.svelte` swallows them and maps zoom to the editor font size.
 - Tauri file drag and drop disables HTML5 drag and drop in the page (tabs are reordered with pointer events).
-- A link, form or script in the preview must never navigate the window: `navigation.rs` cancels everything but the own
-  origin, the CSP has `form-action 'none'`, and WebView2's native context menu (Refresh, Back) is only left on editable
+- A link, form or script in the preview must never navigate the window: `navigation.rs` cancels everything but the first load of
+  the own origin (and unparseable URIs, in a raw WebView2 handler: Tauri allows those), the CSP has `form-action 'none'`, and WebView2's native context menu (Refresh, Back) is only left on editable
   text (`lib/native-menu.ts`). New UI that needs a context menu uses `ContextMenu.svelte`; the asset protocol scope lists
   image extensions only, so a new image type needs a glob in `tauri.conf.json` (and `IMAGE_EXTENSIONS`).
 - The mouse back/forward buttons would navigate the WebView's history; they are captured (`button` 3/4).

@@ -361,7 +361,8 @@
   }
 
   // WebView2's menu outside of text fields has Refresh and Back (lib/native-menu.ts): never shown there.
-  // Selected text, in the preview or the large file view, gets a menu of our own with Copy.
+  // Selected text in the preview (and in the read-only parts of a compare view) gets a menu of our own with Copy.
+  // The large file view draws its own selection, which the page does not know: no menu there (Ctrl+C works).
   let copyMenu: { x: number; y: number; items: MenuItem[] } | null = $state(null);
 
   function onContextMenu(e: MouseEvent) {

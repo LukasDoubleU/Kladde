@@ -9,7 +9,16 @@
 //! A cancelled navigation's request may still reach the server (WebView2 reports `NavigationStarting` after
 //! the request was prepared and a form post is already on its way), so this is the second line of defense: the
 //! CSP (`form-action 'none'`) and the sanitizer keep such requests from being made at all.
+//!
+//! Two gaps the plain origin check would leave, both closed here:
+//! - The own origin is allowed once. Kladde never navigates itself, but a link to `/`, `index.html` or any other
+//!   path of the origin (an image map, a bug) would reload the app, because Tauri answers every unknown path with
+//!   `index.html`, and the edits since the last backup would be gone. Only a `tauri dev` build reloads (Vite does).
+//! - Tauri hands the callback only URLs the `url` crate can parse and *allows* the others, which WebView2 still
+//!   navigates to (`http://xn--a.invalid/` is one: an invalid IDNA label). `cancels_unparseable` is the check for
+//!   the raw string; `lib.rs` registers it as a second `NavigationStarting` handler, so such a target fails closed.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Url;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -59,6 +68,39 @@ pub fn classify_navigation(url: &Url, dev_url: Option<&Url>) -> Navigation {
         "mailto" => Navigation::External(url.to_string()),
         _ => Navigation::Block,
     }
+}
+
+/// The state of the navigation guard of one window: the origins it trusts and whether its page was loaded.
+pub struct Guard {
+    dev_url: Option<Url>,
+    loaded: AtomicBool,
+}
+
+impl Guard {
+    /// `dev_url`: the Vite dev server of a `tauri dev` build, which may also reload (hot module replacement
+    /// falls back to a full reload); `None` in every other build, where the own page is loaded exactly once.
+    pub fn new(dev_url: Option<Url>) -> Self {
+        Self { dev_url, loaded: AtomicBool::new(false) }
+    }
+
+    /// Decides a navigation of the page itself.
+    pub fn navigation(&self, url: &Url) -> Navigation {
+        match classify_navigation(url, self.dev_url.as_ref()) {
+            Navigation::Allow if self.dev_url.is_none() && self.loaded.swap(true, Ordering::SeqCst) => Navigation::Block,
+            decision => decision,
+        }
+    }
+
+    /// Decides a request for a new window.
+    pub fn new_window(&self, url: &Url) -> Navigation {
+        classify_new_window(url, self.dev_url.as_ref())
+    }
+}
+
+/// Whether the raw URI of a navigation has to be cancelled because the `url` crate rejects it. Tauri allows such
+/// a navigation without asking `classify_navigation`, so nothing may be assumed about where it leads.
+pub fn cancels_unparseable(raw: &str) -> bool {
+    raw.parse::<Url>().is_err()
 }
 
 /// Decides a request for a new window (`target=_blank`, `window.open`, middle click). Kladde never opens
@@ -144,6 +186,46 @@ mod tests {
             "ws://localhost:1420/",
         ] {
             assert_eq!(classify_navigation(&url(blocked), None), Navigation::Block, "{blocked}");
+        }
+    }
+
+    #[test]
+    fn the_own_page_is_loaded_once_and_a_reload_is_cancelled() {
+        let guard = Guard::new(None);
+        assert_eq!(guard.navigation(&url("https://example.com/")), external("https://example.com/"));
+        assert_eq!(guard.navigation(&url("http://tauri.localhost/")), Navigation::Allow, "the first load");
+        // Whatever path: Tauri answers unknown ones with index.html, which would start the app again.
+        for again in ["http://tauri.localhost/", "http://tauri.localhost/index.html", "http://tauri.localhost/other.md", "http://tauri.localhost/?x", "tauri://localhost/"] {
+            assert_eq!(guard.navigation(&url(again)), Navigation::Block, "{again}");
+        }
+        // Other targets are decided as before.
+        assert_eq!(guard.navigation(&url("mailto:me@example.com")), external("mailto:me@example.com"));
+        assert_eq!(guard.navigation(&url("file:///C:/a.html")), Navigation::Block);
+    }
+
+    #[test]
+    fn a_lookalike_does_not_use_up_the_first_load() {
+        let guard = Guard::new(None);
+        assert_eq!(guard.navigation(&url("http://tauri.localhost.evil.example/")), external("http://tauri.localhost.evil.example/"));
+        assert_eq!(guard.navigation(&url("http://tauri.localhost/")), Navigation::Allow);
+    }
+
+    #[test]
+    fn a_dev_build_may_reload() {
+        let guard = Guard::new(Some(url("http://localhost:1420")));
+        for _ in 0..3 {
+            assert_eq!(guard.navigation(&url("http://localhost:1420/")), Navigation::Allow);
+        }
+        assert_eq!(guard.navigation(&url("http://localhost:3000/")), external("http://localhost:3000/"));
+    }
+
+    #[test]
+    fn a_uri_the_url_crate_rejects_is_cancelled() {
+        for raw in ["http://xn--a.invalid/", "http://xn--a.example.com/x", "http://exa mple.com/", "http://[::1/", "http://a:99999/", ""] {
+            assert!(cancels_unparseable(raw), "{raw:?}");
+        }
+        for raw in ["http://tauri.localhost/", "https://example.com/a?b#c", "mailto:me@example.com", "foo-app:open", "about:blank"] {
+            assert!(!cancels_unparseable(raw), "{raw:?}");
         }
     }
 

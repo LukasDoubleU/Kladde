@@ -60,7 +60,7 @@ Rules:
 | integration | 9347 |
 | keys | 9350–9351, 9384–9386 |
 | links | 9405–9412 |
-| navigation | 9420–9426 |
+| navigation | 9420–9426, 9441–9444 |
 | languagetool-local | 9369–9370, 9374–9375, 9377–9379 |
 | large | 9345, 9391–9393, 9397–9399 (the editing tests reuse earlier ports one app at a time) |
 | preview | 9346, 9376 |
@@ -68,7 +68,7 @@ Rules:
 | theme | 9348, 9381–9383 |
 | update | 9349, 9359–9362, 9366–9368, 9394–9396 |
 
-Free for new files: 9427 and up (9380 and 9390 are taken by hot-exit now).
+Free for new files: 9445 and up (9380 and 9390 are taken by hot-exit now).
 
 ## Environment variables
 
@@ -121,7 +121,9 @@ Free for new files: 9427 and up (9380 and 9390 are taken by hot-exit now).
 - **Navigation and the asset protocol** (`navigation.test.mjs`): navigations are started from the page
   (`location.assign`, `window.open` with a user gesture through `Runtime.evaluate`) and through `Page.navigate`.
   `KLADDE_OPEN_URL_LOG` records the web and mail links the guard hands to the system; everything else must stay out
-  of it. A `window.__marker` set in the page proves it was not replaced; the tab state, with an unsaved edit, that
+  of it. Clicks that must not navigate are real mouse events (`Input.dispatchMouseEvent`, also on an `<area>`
+  injected into the page to get past the sanitizer); addresses `Url::parse` rejects (`http://xn--a.invalid/`) are
+  tried too, because Tauri lets them through. A `window.__marker` set in the page proves it was not replaced; the tab state, with an unsaved edit, that
   nothing was lost. What the asset protocol answers is read from `Network.responseReceived` on a *second* DevTools
   connection (the page's CSP stops a `fetch` of the test, and an `<img>` only tells image from no image). The
   context menu is tested with synthetic `contextmenu` events: they never open WebView2's native menu, which must not

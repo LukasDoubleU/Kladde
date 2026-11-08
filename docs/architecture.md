@@ -390,9 +390,13 @@ Key mechanisms:
 
 - A Markdown file is untrusted input: with `html: true` it can contain a `<form action="https://…">`, and clicking its
   button would replace the whole window with that page (unsaved edits are only as safe as the last backup). Three
-  layers keep that from happening, each sufficient for the form case: the sanitizer drops the elements, the CSP's
-  `form-action 'none'` (a directive that does not fall back to `default-src`) refuses the submission, and the
-  navigation guard cancels any navigation to another origin.
+  layers keep that from happening, each sufficient for the form case: the sanitizer drops the elements (forms and
+  their controls, and `map`/`area`: an image map's `<area href>` navigates past the click handler, which only knows
+  `<a>`; with `href=""` or `/` it even reloaded Kladde), the CSP's `form-action 'none'` (a directive that does not
+  fall back to `default-src`) refuses the submission, and the navigation guard cancels any navigation but the
+  first load of Kladde's own page. Mermaid's SVG does not pass our sanitizer (Mermaid runs DOMPurify with its own
+  defaults, which keep a form in a label, and a diagram's init directive may change them), so `stripActive`
+  (`markdown.ts`) removes the same elements from it before it is inserted; `<style>` has to stay there.
 - CSP in `tauri.conf.json`: scripts `'self'`, styles `'self' 'unsafe-inline'` (CodeMirror injects styles;
   `dangerousDisableAssetCspModification: ["style-src"]` keeps Tauri from adding hashes that would disable
   `unsafe-inline`), images from `asset:`/https/data. HTTP requests to arbitrary servers are therefore done in Rust
@@ -410,23 +414,35 @@ Key mechanisms:
 - **Navigation guard** (`navigation.rs`, wired in `create_main_window`): the main webview may only be at Kladde's own
   origin: `http://tauri.localhost` (what Tauri serves on Windows), `tauri://localhost` on other platforms, and the Vite
   dev server (`devUrl`) only in a `tauri dev` build (`cfg!(dev)`; a `--debug` build is not one). `on_navigation` cancels
-  everything else. `http`, `https` and `mailto` targets are handed to the system with the opener crate's `open_url`
+  everything else, and the own origin is allowed **once** (`navigation::Guard`): Kladde never navigates itself, and
+  Tauri answers every unknown path of its origin with `index.html`, so `href=""`, `/` or `other.md` would start the
+  app again and lose the edits since the last backup. Only a dev build may reload (Vite does). Tauri also *allows* every
+  URI the `url` crate cannot parse, without asking the callback, and WebView2 still navigates to some of them
+  (`http://xn--a.invalid/`, an invalid IDNA label: error page, or the attacker's page when the name resolves). So
+  `create_main_window` registers a second raw `NavigationStarting` handler (WebView2 COM, `webview2-com`, registered
+  after Tauri's so it runs after it) that cancels whatever `Url::parse` rejects (`cancels_unparseable`); it only ever
+  cancels, the decision for everything else stays in `navigation.rs`. `http`, `https` and `mailto` targets are handed to the system with the opener crate's `open_url`
   (the same rules as `workspace.openHref`: nothing else is ever opened; the hosts of Tauri's own protocols,
   `tauri.localhost`, `asset.localhost` and `ipc.localhost`, never); `file:`, `javascript:`, `data:`, `blob:`, `asset:`,
   `about:` and unknown schemes are dropped. `on_new_window` (`target=_blank`, `window.open`, a middle click) always
   answers *Deny*, with the same hand-over for web links. It is done in Rust and not by an event to the page: it needs no
   frontend that may itself be the confused party, works before the page has loaded, and the rules are plain unit
   tests (`classify_navigation`, `classify_new_window`). An isolated profile does not register the opener plugin: the
-  URL goes into `KLADDE_OPEN_URL_LOG` instead, like for links the page opens. A reload is a navigation to the own
-  origin and is allowed (F5 is swallowed and the native menu is gone, see below).
+  URL goes into `KLADDE_OPEN_URL_LOG` instead, like for links the page opens, and is dropped (stderr only) when the
+  variable is not set, so a test can never open the real browser or mail program. A reload is a navigation to the
+  own origin and is cancelled like any other later one (F5 is swallowed and the native menu is gone, see below).
 - A cancelled navigation's request may still reach the server (WebView2 reports `NavigationStarting` after the request
   was prepared; a form post is already on its way), so the guard is the last line, the sanitizer and the CSP the first.
 - **Context menu**: WebView2's native menu depends on the target. On text you can type into it is Cut/Copy/Paste and
   spelling; anywhere else it is the page menu with Back, Forward, Refresh, Save as, Print and "Open link in new window",
   which would reload Kladde or navigate it. `App.svelte` therefore prevents `contextmenu` everywhere except on editable
   text (`keepsNativeMenu` in `native-menu.ts`: contenteditable such as CodeMirror, and enabled, writable text inputs and
-  textareas). Selected text elsewhere (preview, large file view, compare view) gets a small menu of our own with Copy
-  (the existing `ContextMenu`); Ctrl+C works as before. The tab bar keeps its own menu. Not verified, because tests
+  textareas). Selected text elsewhere (preview, read-only parts of the compare view) gets a small menu of our own with
+  Copy (the existing `ContextMenu`); Ctrl+C works as before. In CodeMirror (the gutter, a read-only editor) the text
+  comes from the editor's selection (`selectedText` in `native-menu.ts`), not from the page's, which only covers the
+  rendered lines: "select all" in a long file would otherwise copy a screenful. The Copy puts plain text on the
+  clipboard (the native one also had HTML). The large file view draws its own selection and has `user-select: none`,
+  so it gets no menu (Ctrl+C works; it never had Copy in the native menu either). The tab bar keeps its own menu. Not verified, because tests
   cannot open native menus: that the native menu of an editable field has no navigation entries (it has none in the
   WebView2 versions we know).
 - Capabilities (`capabilities/default.json`) grant window show/focus/title/destroy/theme, dialogs, opener.

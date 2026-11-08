@@ -61,7 +61,8 @@
   });
 
   function onClick(e: MouseEvent) {
-    const link = (e.target as HTMLElement).closest("a");
+    // `area`: an image map is not in the sanitized Markdown, but a link of any kind must go through openHref.
+    const link = (e.target as HTMLElement).closest("a, area");
     if (!link) return;
     e.preventDefault();
     void workspace.openHref(link.getAttribute("href") ?? "", {

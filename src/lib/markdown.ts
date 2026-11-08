@@ -113,14 +113,35 @@ DOMPurify.addHook("afterSanitizeAttributes", (node) => {
 /**
  * What the sanitizer removes on top of DOMPurify's defaults. The preview is a document, not an application:
  * a <form> (or a button with formaction) navigates the whole window to its action when it is clicked, and the
- * CSP's form-action 'none' and the navigation guard in Rust are only the second and third line. <style> stays
- * out too. The rest is already outside DOMPurify's lists and is named so that a change of defaults cannot let it in.
+ * CSP's form-action 'none' and the navigation guard in Rust are only the second and third line. The rest is
+ * already outside DOMPurify's lists and is named so that a change of defaults cannot let it in.
  */
-export const FORBID_TAGS = [
-  "style", "form", "input", "button", "select", "option", "optgroup", "datalist", "textarea", "fieldset",
+export const ACTIVE_TAGS = [
+  "form", "input", "button", "select", "option", "optgroup", "datalist", "textarea", "fieldset",
   "meta", "link", "base", "iframe", "frame", "frameset", "object", "embed", "portal",
+  // An image map's <area href> navigates the window like a link, past the click handler of the preview
+  // (`closest("a")`): with href="" or "/" it even reloads Kladde.
+  "map", "area",
 ];
-export const FORBID_ATTR = ["formaction", "formmethod", "formtarget", "formenctype", "form"];
+/** `<style>` is forbidden in Markdown, but a Mermaid diagram carries its own inside the SVG. */
+export const FORBID_TAGS = ["style", ...ACTIVE_TAGS];
+export const FORBID_ATTR = ["formaction", "formmethod", "formtarget", "formenctype", "form", "usemap"];
+
+/**
+ * Removes the elements of `ACTIVE_TAGS` and the attributes of `FORBID_ATTR` from markup that was not sanitized by
+ * us (Mermaid's SVG, which only passes Mermaid's own DOMPurify call with its default settings). Returns the
+ * parsed nodes, ready to be inserted; nothing was in the document yet while it was parsed.
+ */
+export function stripActive(markup: string): DocumentFragment {
+  const template = document.createElement("template");
+  template.innerHTML = markup;
+  const { content } = template;
+  for (const el of content.querySelectorAll(ACTIVE_TAGS.join(","))) el.remove();
+  for (const el of content.querySelectorAll(FORBID_ATTR.map((a) => `[${a}]`).join(","))) {
+    for (const a of FORBID_ATTR) el.removeAttribute(a);
+  }
+  return content;
+}
 
 /** Renders Markdown to sanitized HTML. `baseDir` resolves relative image paths. */
 export function renderMarkdown(source: string, baseDir: string | null): string {

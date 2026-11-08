@@ -6,6 +6,8 @@
 // the window. So the native menu stays only where the user types; everywhere else the page shows its own minimal menu
 // (Copy, when there is a selection) or nothing.
 
+import { EditorView } from "@codemirror/view";
+
 const TEXT_INPUT = [
   "input:not([type])",
   ...["text", "search", "number", "password", "email", "url", "tel"].map((t) => `input[type="${t}"]`),
@@ -20,11 +22,24 @@ export function keepsNativeMenu(target: EventTarget | null): boolean {
   return target.isContentEditable || target.closest(TEXT_INPUT) !== null;
 }
 
-/** The selected text of the page or of the field under the pointer (a read-only field keeps it in the field). */
+/**
+ * The selected text under the pointer. In CodeMirror the page's selection only covers the rendered lines, so a
+ * "select all" would copy a screenful: there the text comes from the editor's own selection. A read-only field
+ * keeps its selection in the field, everything else (the preview) in the page.
+ */
 export function selectedText(target: EventTarget | null): string {
   if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
     const { selectionStart: from, selectionEnd: to } = target;
     if (from !== null && to !== null && from !== to) return target.value.slice(from, to);
+  }
+  const editor = target instanceof Element ? target.closest<HTMLElement>(".cm-editor") : null;
+  if (editor) {
+    const state = EditorView.findFromDOM(editor)?.state;
+    if (!state) return "";
+    return state.selection.ranges
+      .filter((r) => !r.empty)
+      .map((r) => state.sliceDoc(r.from, r.to))
+      .join(state.lineBreak);
   }
   return window.getSelection()?.toString() ?? "";
 }

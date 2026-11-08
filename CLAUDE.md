@@ -25,7 +25,7 @@ anything employer-related out of code, commits, issues, release notes and docs.
 - `src-tauri/src/`: `files.rs` (encodings, `write_safely`), `large.rs` (large file viewer: index, search, editing,
   streaming save, journal), `pieces.rs` (piece table), `session.rs` (session, backups, config, isolated profile),
   `integration.rs` (Windows registration), `update.rs` (updater), `languagetool.rs` (HTTP client),
-  `lt_install.rs` / `lt_server.rs` (download and run the local LanguageTool), `navigation.rs` (what the main webview may navigate to), `lib.rs` (commands, plugins).
+  `lt_install.rs` / `lt_server.rs` (download and run the local LanguageTool), `navigation.rs` (what the main webview may navigate to: its own page once, nothing else), `lib.rs` (commands, plugins).
   `src-tauri/windows/installer-hooks.nsh` unregisters on uninstall.
 - `src/App.svelte`: layout, command list, window events. `src/lib/workspace.svelte.ts`: tabs, files, session,
   preview, compare, formatting. `src/lib/editor.ts`: CodeMirror setup. Keys: `actions.ts`, `keys.ts`, `keymaps.ts`,
