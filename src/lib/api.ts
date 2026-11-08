@@ -250,6 +250,9 @@ export const api = {
   /** Test hook: true when the URL was taken by `KLADDE_OPEN_URL_LOG` instead of needing the browser (isolated profile only). */
   openUrlHook: (url: string) => invoke<boolean>("open_url_hook", { url }),
 
+  /** Test hook: true when the document viewer is to skip its cleaning (`KLADDE_DOCUMENT_NO_CLEAN=1`, isolated profile only). */
+  documentNoClean: () => invoke<boolean>("document_no_clean"),
+
   configRead: (name: string) => invoke<string | null>("config_read", { name }),
   configFile: (name: string, defaultContent: string) =>
     invoke<string>("config_file", { name, default: defaultContent }),

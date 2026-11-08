@@ -103,6 +103,18 @@ pub fn cancels_unparseable(raw: &str) -> bool {
     raw.parse::<Url>().is_err()
 }
 
+/// The address of a `srcdoc` frame: the only document a frame of Kladde ever shows.
+pub const SRCDOC: &str = "about:srcdoc";
+
+/// Whether a navigation of a frame inside the page (not the page itself) has to be cancelled. Kladde has one kind
+/// of frame, the `srcdoc` frame of the document viewer, which never navigates once it shows its content: it
+/// holds a document from someone else, and the page's own checks (`on_navigation` above) only see the top-level
+/// frame, so a `<meta http-equiv=refresh>` or a link inside it would otherwise go wherever it likes. Everything
+/// but the `srcdoc` document is cancelled, whatever it is.
+pub fn cancels_frame_navigation(raw: &str) -> bool {
+    raw != SRCDOC
+}
+
 /// Decides a request for a new window (`target=_blank`, `window.open`, middle click). Kladde never opens
 /// one, not even for its own page.
 pub fn classify_new_window(url: &Url, dev_url: Option<&Url>) -> Navigation {
@@ -226,6 +238,31 @@ mod tests {
         }
         for raw in ["http://tauri.localhost/", "https://example.com/a?b#c", "mailto:me@example.com", "foo-app:open", "about:blank"] {
             assert!(!cancels_unparseable(raw), "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn a_frame_may_only_show_its_srcdoc() {
+        assert!(!cancels_frame_navigation("about:srcdoc"));
+        for raw in [
+            "about:blank",
+            "about:srcdoc#x",
+            "about:srcdoc?x",
+            "ABOUT:SRCDOC",
+            "https://example.com/",
+            "http://127.0.0.1:8080/",
+            "http://tauri.localhost/",
+            "tauri://localhost/",
+            "http://asset.localhost/C:/a.html",
+            "file:///C:/a.html",
+            "data:text/html,<h1>x</h1>",
+            "blob:http://tauri.localhost/1234",
+            "javascript:alert(1)",
+            "foo-app:open",
+            "http://xn--a.invalid/",
+            "",
+        ] {
+            assert!(cancels_frame_navigation(raw), "{raw:?}");
         }
     }
 

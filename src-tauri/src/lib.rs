@@ -56,6 +56,21 @@ fn open_url_hook(url: String) -> Result<bool, String> {
     log_open(&url)
 }
 
+/// Test hook: with `1`, the document viewer skips its cleaning of the rendered document, so a test can prove that
+/// the frame it renders into keeps the network out by itself. Honored only with an isolated profile: a stray
+/// variable must never switch off the cleaning of a real installation.
+const DOCUMENT_NO_CLEAN_ENV: &str = "KLADDE_DOCUMENT_NO_CLEAN";
+
+fn no_clean_for(isolated: bool, value: Option<std::ffi::OsString>) -> bool {
+    isolated && value.is_some_and(|v| v == "1")
+}
+
+/// For the page: whether the document viewer is to skip its cleaning (test hook, isolated profile only).
+#[tauri::command]
+fn document_no_clean() -> bool {
+    no_clean_for(session::isolated_profile().is_some(), std::env::var_os(DOCUMENT_NO_CLEAN_ENV))
+}
+
 /// Hands a link of a cancelled navigation to the system, from a thread of its own: the webview's navigation
 /// callback must return quickly. The opener plugin's function works without the plugin being registered (an
 /// isolated profile does not register it). Failures only go to stderr: the page has no part in this.
@@ -540,6 +555,7 @@ fn create_main_window(app: &AppHandle) -> tauri::Result<()> {
     }
     let window = window.build()?;
     cancel_unparseable_navigations(&window);
+    cancel_frame_navigations(&window);
     if isolated.is_some() {
         show_in_background(&window)?;
     }
@@ -588,6 +604,49 @@ fn cancel_unparseable_navigations(window: &tauri::WebviewWindow) {
 
 #[cfg(not(windows))]
 fn cancel_unparseable_navigations(_window: &tauri::WebviewWindow) {}
+
+/// Tauri's `on_navigation` only sees the top-level frame. The document viewer shows a document from someone else
+/// in a sandboxed `srcdoc` frame that must never navigate (a `<meta http-equiv=refresh>`, a link, a script's
+/// `location`); WebView2 reports such navigations in `FrameNavigationStarting`, and everything but `about:srcdoc`
+/// is cancelled there (`navigation::cancels_frame_navigation`). Like the handler above it never allows anything
+/// the page's CSP and the sandbox refuse.
+#[cfg(windows)]
+fn cancel_frame_navigations(window: &tauri::WebviewWindow) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2NavigationStartingEventArgs;
+    use webview2_com::NavigationStartingEventHandler;
+    let result = window.with_webview(|webview| {
+        // SAFETY: COM calls on the webview of our own window, on the UI thread that `with_webview` runs on.
+        unsafe {
+            let Ok(core) = webview.controller().CoreWebView2() else {
+                eprintln!("[navigation] no WebView2 to guard frames of");
+                return;
+            };
+            let handler = NavigationStartingEventHandler::create(Box::new(
+                |_, args: Option<ICoreWebView2NavigationStartingEventArgs>| {
+                    let Some(args) = args else { return Ok(()) };
+                    let mut uri = windows::core::PWSTR::null();
+                    args.Uri(&mut uri)?;
+                    let raw = webview2_com::take_pwstr(uri);
+                    if navigation::cancels_frame_navigation(&raw) {
+                        eprintln!("[navigation] cancelled frame navigation to {raw}");
+                        args.SetCancel(true)?;
+                    }
+                    Ok(())
+                },
+            ));
+            let mut token = 0i64;
+            if let Err(e) = core.add_FrameNavigationStarting(&handler, &mut token) {
+                eprintln!("[navigation] could not register the frame guard: {e}");
+            }
+        }
+    });
+    if let Err(e) = result {
+        eprintln!("[navigation] could not register the frame guard: {e}");
+    }
+}
+
+#[cfg(not(windows))]
+fn cancel_frame_navigations(_window: &tauri::WebviewWindow) {}
 
 /// Shows a test instance's still hidden window off screen, without activating it and without a taskbar
 /// button. Done with Win32 directly: tao moves a window that is to be created outside every monitor back
@@ -682,6 +741,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             frontend_log,
             open_url_hook,
+            document_no_clean,
             open_in_default_app,
             read_document,
             show_window,
@@ -736,6 +796,17 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_document_cleaning_is_only_switched_off_in_an_isolated_profile() {
+        let one = Some(std::ffi::OsString::from("1"));
+        assert!(!no_clean_for(false, one.clone()));
+        assert!(no_clean_for(true, one));
+        for other in ["", "0", "true", "yes", "1 "] {
+            assert!(!no_clean_for(true, Some(std::ffi::OsString::from(other))), "{other:?}");
+        }
+        assert!(!no_clean_for(true, None));
+    }
 
     #[test]
     fn the_open_url_log_needs_an_isolated_profile() {
