@@ -6,7 +6,7 @@
 |---|---|---|
 | `npm run check` | svelte-check (types of all `.ts`/`.svelte`) | — |
 | `npm run test:unit` | Node's test runner on `tests/unit/*.test.mjs`: formatters, keys/presets, grammar text side, themes, settings metadata, update manifest, last-check time format, link finding and heading anchors | — |
-| `cd src-tauri && cargo test` | file I/O and encodings, safe saving, large viewer (index, search, piece table, editing, streaming save, journal), LanguageTool client (local socket), local LanguageTool (hash check, download, atomic install, version cleanup, routing, idle stop, start/stop/crash of a stand-in process, job object), registry code (throwaway key), updater helpers | Rust |
+| `cd src-tauri && cargo test` | file I/O and encodings (binary and lossy flags), safe saving, large viewer (index, search, piece table, editing, streaming save, journal), LanguageTool client (local socket), local LanguageTool (hash check, download, atomic install, version cleanup, routing, idle stop, start/stop/crash of a stand-in process, job object), registry code (throwaway key), updater helpers | Rust |
 | `npm run test:e2e` | the real app through the DevTools protocol: `tests/e2e/*.test.mjs` | `npx tauri build --debug --no-bundle` first |
 
 Run all four before merging anything. For e2e prefer `node --test --test-concurrency=1 "tests/e2e/*.test.mjs"`:
@@ -55,6 +55,7 @@ Rules:
 | compare | 9371–9373 |
 | format | 9343, 9363–9365 |
 | grammar | 9387–9389 |
+| binary-save | 9413–9419 (one app at a time; 9413 is used twice) |
 | hot-exit | 9344, 9354–9358, 9380, 9390, 9400–9404 |
 | integration | 9347 |
 | keys | 9350–9351, 9384–9386 |
@@ -66,7 +67,7 @@ Rules:
 | theme | 9348, 9381–9383 |
 | update | 9349, 9359–9362, 9366–9368, 9394–9396 |
 
-Free for new files: 9413 and up (9380 and 9390 are taken by hot-exit now).
+Free for new files: 9420 and up (9380 and 9390 are taken by hot-exit now).
 
 ## Environment variables
 
@@ -121,6 +122,11 @@ Free for new files: 9413 and up (9380 and 9390 are taken by hot-exit now).
   `type()`/`key()` and check `.large .line .text`; a kill is only safe once the journal in `data/backup`
   (`*.large.json`, `addedLen`) has caught up with the edits. Real-size measurements: `cargo test --release
   perf_200mb -- --ignored --nocapture` (generates and deletes a ~190 MB file in the temp folder).
+- **Files that are not text:** `binary-save.test.mjs` compares SHA-256 (and mtime, to prove nothing was written)
+  of generated files before and after Ctrl+S: a binary blob with lone CR bytes, a .docx-like stored zip (`zip.mjs`),
+  a text file with mixed line endings, the same in the large viewer (threshold lowered), the read-only banner, "Edit
+  anyway", the confirmation dialog (Cancel, then Save anyway), and a crash with an edited and an unedited binary tab.
+  The zip is named `.zip`, not `.docx`, so the test does not depend on how Kladde routes Office files.
 - **Data loss:** any change to saving, backups or the session must be verified by killing the app with unsaved
   changes and checking the restore (`hot-exit.test.mjs` does it; it also proves the typing throttle by failing
   with the old 1 s debounce). The write order of a session save (session, then backups, then pruning) is pinned with

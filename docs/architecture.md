@@ -35,7 +35,11 @@ Key mechanisms:
 - **Text model at the boundary:** the editor always works with `\n`. `files::read` normalizes CRLF/CR and reports
   the original `eol`, `encoding`, `bom`, `binary` (NUL bytes) and `lossy` (invalid sequences); `files::write`
   converts back. UTF-16 is encoded by hand (encoding_rs only decodes it). Unmappable characters in a legacy
-  encoding are an error, never silently replaced.
+  encoding are an error, never silently replaced. This round trip is not the identity for files that are not text:
+  CR bytes not followed by LF become LF, invalid sequences become U+FFFD. `binary` (a NUL byte anywhere in the file,
+  except in UTF-16) and `lossy` are how the page learns to protect such files (see "Files that are not text").
+  The large viewer reports both for the first megabyte it reads anyway (`files::sniff_flags`, a streaming
+  decode so a character cut by the end of the sample is not counted).
 - **Crash-safe saving (`write_safely`):** write a temporary `.<name>.kladde-save` next to the file, `fsync`, then
   `ReplaceFileW`, which keeps attributes, ACLs and creation time (a hidden file stays hidden). Symlinks are resolved
   first. If no temp file can be created, it falls back to writing in place. Session files and backups use it too.
@@ -176,6 +180,24 @@ Key mechanisms:
   View-wide options (wrap, indentation, gutters, spelling) are reapplied after a swap (`applyViewOptions`).
 - Dirty tracking compares the document with the saved `Text` (`rt.saved`), plus `metaDirty` for encoding or
   line-ending changes that need saving although the text is unchanged.
+- **Saving writes only what changed.** `save()` of a tab whose text equals `rt.saved` and without `metaDirty`
+  writes nothing and succeeds (`unchanged`), so Ctrl+S on an untouched file keeps its bytes: mixed line endings,
+  a .docx, anything the editor cannot round-trip. Exceptions: the file is gone from the disk (checked with
+  `stat`; saving recreates it; large tabs likewise), and Save As, which always writes (`writeText(tab, true)`).
+  Callers: Save, Save all and the close prompt only reach `save` for dirty tabs; a failed or cancelled save keeps the tab open and dirty.
+- **Files that are not text:** a tab with `binary` or `lossy` is read-only (`workspace.isReadOnly`: flags and not
+  `tab.unlocked`) in text tabs (the `readOnly` compartment, `EditorState.readOnly`: CodeMirror's commands, typing,
+  paste, drop and the search panel's replace refuse; `format` and the image paste check it themselves) and in the large
+  view (`editable()`). `App.svelte` shows the banner with **Edit anyway** (`workspace.editAnyway`), which sets
+  `unlocked`. The first write of such a tab (Save, Save as, or a dirty large tab) asks once through `ask`
+  (`confirmNonTextWrite`, remembered in `rt.bytesConfirmed`; Cancel is the default button and keeps the tab dirty).
+  Changing encoding or line ending of a read-only tab is refused. A reload (external change, F5) keeps `unlocked`
+  while the file stays binary or lossy. On restore, a tab with edits (dirty after the backup was applied, or a large
+  journal) comes back unlocked so the user can save them, an unedited one read-only; a vanished file keeps its
+  `binary`/`lossy` from the session (optional fields).
+- `workspace.openPath(path, { asText: true })` opens a file in a text tab although its type would route it elsewhere
+  (images today; a viewer for other types, offering "Open as text", later). It ignores a viewer tab that already
+  shows the path (a text or large tab of the path is activated instead), and size still picks the large viewer.
 - A reload is applied as the minimal change (`minimalChange`), as an undoable edit, so the cursor stays and
   following a log is cheap.
 - Opening a file into an untouched empty "new N" tab replaces it (Notepad++ behaviour). Images open in an image tab;
@@ -209,7 +231,7 @@ Key mechanisms:
   then session): journals are asked for on restore whatever the session says, so the first session of a save does
   not claim a journal that is not written yet (the restore would report the changes as lost).
 - Data folder layout: `session.json` (tab list, active tab, wrap, spell check, zoom, per-tab language/encoding/eol/
-  preview/cursor/scroll, `hasBackup`), `backup/<id>.txt` (current text of dirty or untitled tabs) and
+  preview/cursor/scroll, `hasBackup`, optional `binary`/`lossy` for a file that is gone), `backup/<id>.txt` (current text of dirty or untitled tabs) and
   `backup/<id>.<n>.txt` (up to 5 older versions, at least 5 minutes apart; a new version is a copy of
   `<id>.txt`, so the current backup never leaves its place, and restore falls back to the newest version if
   `<id>.txt` is missing), plus marker files

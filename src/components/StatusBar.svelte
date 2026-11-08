@@ -36,13 +36,15 @@
       </span>
     {/if}
     <span class="dim">{workspace.cursor.lines.toLocaleString()} lines</span>
-    {#if tab.binary}<span class="warn" title="The file contains NUL bytes">binary</span>{/if}
+    {#if tab.binary}<span class="warn" title="The file contains NUL bytes">binary</span>{:else if tab.lossy}<span class="warn" title="Some bytes are not valid in this encoding">invalid bytes</span>{/if}
+    {#if workspace.isReadOnly(tab)}<span class="warn" title="Not a text file: Edit anyway lifts this">read-only</span>{/if}
   {:else if tab?.kind === "large"}
     <span>Ln {workspace.cursor.line.toLocaleString()}, Col {workspace.cursor.col}</span>
     <span>
       {workspace.largeStatus.lines.toLocaleString()} lines{workspace.largeStatus.done ? "" : " (indexing…)"}
     </span>
     <span class="dim">{formatSize(workspace.largeStatus.size || tab.size)}</span>
+    {#if workspace.isReadOnly(tab)}<span class="warn" title="Not a text file: Edit anyway lifts this">read-only</span>{/if}
     <span class="dim" title="Edited in place: only the changes are kept in memory">
       {tab.journal === "restoring" ? "Restoring unsaved changes…" : workspace.largeStatus.done ? "Large file" : "Large file: editable once indexed"}
     </span>

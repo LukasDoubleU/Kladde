@@ -81,6 +81,11 @@ it, but I may decline requests that don't fit how I work, and there is no promis
   never overwrites the current tab. Backups of tabs you saved or closed are deleted.
 - Encodings: detects UTF-8, UTF-16 (BOM) and legacy code pages; reopen or save with another encoding;
   keeps CRLF, LF or CR line endings.
+- Files that are not text (a .docx, a zip, most PDFs: NUL bytes, or bytes that are not valid in the encoding)
+  open read-only with a banner, because the editor shows decoded text and saving it again cannot give back the
+  original bytes. **Edit anyway** makes the tab editable; the first save then asks once. The same holds in the
+  large file view. A tab without changes is never written: `Ctrl+S` on an unchanged file does nothing (unless
+  the file was deleted, then it is written again), so mixed line endings stay as they are until you edit.
 - Large files: anything above 32 MB opens in the large file view, which indexes lines in the background and
   only reads what is on screen. Multi-GB logs open instantly, UTF-8, UTF-16 and legacy code pages alike.
   Search runs in the background (Esc cancels it) with Aa (match case; Unicode-aware when off) and .*

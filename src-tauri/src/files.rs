@@ -9,8 +9,9 @@ use std::fs;
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 
-/// How many bytes are inspected to guess encoding, line endings and binary-ness.
-const SNIFF_LEN: usize = 1 << 20;
+/// How many bytes are inspected to guess encoding and line endings (and, for the large file viewer, whether
+/// the file is text at all).
+pub const SNIFF_LEN: usize = 1 << 20;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -21,7 +22,7 @@ pub struct FileContent {
     pub eol: String,
     pub mtime: u64,
     pub size: u64,
-    /// The file contains NUL bytes and is probably not text.
+    /// The file contains NUL bytes (outside UTF-16) and is probably not text.
     pub binary: bool,
     /// Decoding hit malformed sequences that were replaced with U+FFFD.
     pub lossy: bool,
@@ -129,7 +130,9 @@ pub fn read(path: &Path, forced_encoding: Option<&str>) -> Result<FileContent, S
 
     let body = &bytes[bom_len..];
     let is_utf16 = encoding == UTF_16LE || encoding == UTF_16BE;
-    let binary = !is_utf16 && memchr::memchr(0, &body[..body.len().min(SNIFF_LEN)]).is_some();
+    // The whole file, not just the sniffed start: the text is in memory anyway, and a NUL byte anywhere means
+    // that saving the decoded text could change bytes.
+    let binary = !is_utf16 && memchr::memchr(0, body).is_some();
     let (decoded, lossy) = encoding.decode_without_bom_handling(body);
 
     let eol = detect_eol(&decoded);
@@ -149,6 +152,21 @@ pub fn read(path: &Path, forced_encoding: Option<&str>) -> Result<FileContent, S
         binary,
         lossy,
     })
+}
+
+/// Whether the start of a file (`body`, after the BOM) is not text: `(binary, lossy)` like `FileContent`.
+/// `complete` says that `body` is the whole file; otherwise a multi-byte sequence cut off at its end is
+/// not counted as malformed. Used by the large file viewer, which only reads the start.
+pub fn sniff_flags(body: &[u8], encoding: &'static Encoding, complete: bool) -> (bool, bool) {
+    let is_utf16 = encoding == UTF_16LE || encoding == UTF_16BE;
+    let binary = !is_utf16 && memchr::memchr(0, body).is_some();
+    let mut decoder = encoding.new_decoder_without_bom_handling();
+    let Some(capacity) = decoder.max_utf8_buffer_length_without_replacement(body.len()) else {
+        return (binary, false);
+    };
+    let mut out = String::with_capacity(capacity);
+    let (result, _) = decoder.decode_to_string_without_replacement(body, &mut out, complete);
+    (binary, matches!(result, encoding_rs::DecoderResult::Malformed(..)))
 }
 
 /// Encodes `text` (with `\n` line breaks) with the given line ending, without a BOM.
@@ -353,5 +371,36 @@ mod tests {
     fn binary_is_flagged() {
         let path = temp_file("bin.dat", b"ab\x00cd");
         assert!(read(&path, None).unwrap().binary);
+    }
+
+    #[test]
+    fn a_nul_byte_after_the_sniffed_start_still_flags_binary() {
+        let mut bytes = vec![b'a'; SNIFF_LEN + 100];
+        bytes[SNIFF_LEN + 50] = 0;
+        let path = temp_file("late-nul.dat", &bytes);
+        assert!(read(&path, None).unwrap().binary);
+    }
+
+    #[test]
+    fn sniff_flags_tell_binary_and_lossy_apart() {
+        assert_eq!(sniff_flags(b"plain text\n", UTF_8, true), (false, false));
+        assert_eq!(sniff_flags(b"ab\x00cd", UTF_8, true), (true, false));
+        // Invalid UTF-8 without any NUL: lossy, not binary.
+        assert_eq!(sniff_flags(b"caf\xE9\xFF", UTF_8, true), (false, true));
+        // A sequence cut at the end of a partial read is not malformed; in a complete file it is.
+        let cut = &"é".as_bytes()[..1];
+        assert_eq!(sniff_flags(cut, UTF_8, false), (false, false));
+        assert_eq!(sniff_flags(cut, UTF_8, true), (false, true));
+        // NUL is part of UTF-16 text.
+        assert_eq!(sniff_flags(b"a\x00b\x00", UTF_16LE, true), (false, false));
+    }
+
+    #[test]
+    fn lossy_is_flagged() {
+        let path = temp_file("lossy.txt", b"caf\xE9 \xC3(");
+        // Forced to UTF-8: the invalid bytes are replaced when decoding.
+        let content = read(&path, Some("UTF-8")).unwrap();
+        assert!(content.lossy);
+        assert!(!content.binary);
     }
 }

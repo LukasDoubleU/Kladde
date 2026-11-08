@@ -507,6 +507,13 @@
     </div>
   {/if}
 
+  {#if tab && workspace.isReadOnly(tab)}
+    <div class="banner readonly">
+      <span>This file is not text. Kladde opened it read-only, so saving cannot change its bytes.</span>
+      <button onclick={() => workspace.editAnyway(tab)}>Edit anyway</button>
+    </div>
+  {/if}
+
   <div class="content" bind:this={content}>
     <div
       class="editor"

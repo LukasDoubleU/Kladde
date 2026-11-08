@@ -36,6 +36,10 @@ export interface LargeOpened {
   /** Line ending of new lines: the one the file uses most. */
   eol: "CRLF" | "LF";
   mtime: number;
+  /** The start of the file has NUL bytes: probably not text. */
+  binary: boolean;
+  /** The start of the file is not valid in its encoding. */
+  lossy: boolean;
 }
 
 export interface LargeLine {

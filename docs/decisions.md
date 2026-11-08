@@ -18,7 +18,12 @@ What Kladde should be, and choices the owner made on purpose. Keep them unless t
   single tab with unsaved changes does ask (Save / Don't save / Cancel).
 - Unsaved text is backed up while typing (throttled), files are saved crash-safely, older backups are kept and can
   be restored into a new tab (never overwriting the current one).
-- Files on disk are only written when the user saves.
+- Files on disk are only written when the user saves, and saving a tab without changes writes nothing (like
+  Notepad++): re-encoding unchanged text is not the identity (line breaks are normalized), so it would damage
+  files that are not really text. A deleted file is the exception: saving recreates it.
+- Binary and lossily decoded files (NUL byte, or invalid sequences in the encoding) open read-only with a banner
+  and "Edit anyway"; the first save after that asks once. Protecting the bytes beats convenience: a .docx opened
+  by mistake must survive `Ctrl+S`.
 
 ## Look and feel
 

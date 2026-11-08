@@ -4,7 +4,7 @@
 // One CodeMirror view is shared by all text tabs. Inactive tabs keep their
 // EditorState (including undo history) in `runtime`, outside Svelte's reactivity.
 
-import { EditorSelection, type EditorState, type StateEffect, Text } from "@codemirror/state";
+import { EditorSelection, EditorState, type StateEffect, Text } from "@codemirror/state";
 import { EditorView, highlightActiveLine, type ViewUpdate } from "@codemirror/view";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
@@ -50,8 +50,15 @@ export interface Tab {
   language: string | null;
   mtime: number;
   size: number;
+  /** NUL bytes in the file: probably not text. */
   binary: boolean;
+  /** Bytes that are not valid in the encoding were replaced when decoding. */
   lossy: boolean;
+  /**
+   * The user chose "Edit anyway" for a binary or lossy file (or the tab came back from a backup with edits).
+   * Such a tab is read-only until then, see `isReadOnly`.
+   */
+  unlocked: boolean;
   preview: PreviewMode;
   largeId: number | null;
   /** The file changed or vanished on disk while the tab has unsaved changes. */
@@ -72,6 +79,10 @@ interface Runtime {
   version: number;
   /** The version last written as a backup; -1 if never. */
   backedUp: number;
+  /** The user agreed that saving may change the bytes of a binary or lossy file (asked once per tab). */
+  bytesConfirmed?: boolean;
+  /** The dialog asking for that, while it is open. */
+  confirming?: Promise<boolean>;
   /** Large tabs: the last file state seen on disk, and the one the user chose to ignore. */
   diskSeen?: string;
   diskIgnored?: string;
@@ -118,6 +129,9 @@ interface SessionTab {
   bom: boolean;
   eol: Eol;
   language: string | null;
+  /** What the file on disk was when the tab was saved: kept for a file that is gone when the session is restored. */
+  binary?: boolean;
+  lossy?: boolean;
   preview: PreviewMode;
   /** A LanguageTool language chosen for this tab; absent means the setting (or the front matter). */
   grammarLanguage?: string;
@@ -319,6 +333,57 @@ class Workspace {
 
   textOf(tab: Tab): string {
     return this.stateOf(tab)?.doc.toString() ?? "";
+  }
+
+  // ---------------------------------------------------------------- files that are not text
+
+  /**
+   * Binary or lossily decoded files open read-only. The editor shows decoded text, and saving encodes it
+   * again, which cannot give back the original bytes (line breaks are normalized, invalid sequences were
+   * replaced), so editing and saving them could silently corrupt a .docx or a .pdf. "Edit anyway" lifts it.
+   */
+  isReadOnly(tab: Tab): boolean {
+    return (tab.kind === "text" || tab.kind === "large") && (tab.binary || tab.lossy) && !tab.unlocked;
+  }
+
+  /** Brings the CodeMirror state of a text tab in line with `isReadOnly`. */
+  private applyReadOnly(tab: Tab) {
+    if (tab.kind !== "text") return;
+    this.reconfigure(tab, readOnly.reconfigure(EditorState.readOnly.of(this.isReadOnly(tab))));
+  }
+
+  /** The "Edit anyway" button: makes a read-only binary or lossy tab editable. */
+  editAnyway(tab: Tab) {
+    if (!this.isReadOnly(tab)) return;
+    tab.unlocked = true;
+    this.applyReadOnly(tab);
+    if (tab.kind === "text" && tab.id === this.activeId) requestAnimationFrame(() => !this.picker && !this.dialog && this.view?.focus());
+  }
+
+  /**
+   * The first write of a binary or lossy tab asks whether that is really wanted, once per tab: the bytes of
+   * such a file may change when the text is saved. Cancel leaves the tab as it is (dirty).
+   */
+  private confirmNonTextWrite(tab: Tab): Promise<boolean> {
+    const rt = this.runtime.get(tab.id);
+    if (!(tab.binary || tab.lossy) || !rt || rt.bytesConfirmed) return Promise.resolve(true);
+    // A second save while the dialog is open waits for the same answer (a second dialog would replace the first).
+    rt.confirming ??= (async () => {
+      if (tab.id !== this.activeId) this.activate(tab.id);
+      const choice = await this.ask(
+        `Saving ${tab.title} may change bytes that are not text.`,
+        [
+          { id: "save", label: "Save anyway" },
+          { id: "cancel", label: "Cancel", primary: true },
+        ],
+        "Kladde shows this file as text. When it is saved, bytes that are not text, such as line breaks inside " +
+          "binary data, can change, and the file may stop working. Keep a copy of the original if it matters.",
+      );
+      rt.confirming = undefined;
+      if (choice === "save") rt.bytesConfirmed = true;
+      return choice === "save";
+    })();
+    return rt.confirming;
   }
 
   private onUpdate(update: ViewUpdate) {
@@ -700,6 +765,7 @@ class Workspace {
       size: 0,
       binary: false,
       lossy: false,
+      unlocked: false,
       preview: "off",
       largeId: null,
       external: null,
@@ -738,8 +804,18 @@ class Workspace {
     });
   }
 
-  async openPath(path: string) {
-    const existing = this.tabs.find((t) => t.path && samePath(t.path, path));
+  /**
+   * Opens a file in a tab, or activates the tab that already has it. Which kind of tab depends on the file
+   * (an image tab for images, the large file viewer above `largeFileThresholdMB`, otherwise a text tab).
+   *
+   * `asText` forces the text route for a file whose type would normally send it somewhere else (today only
+   * images; a viewer for another type would do the same), so a viewer can offer "Open as text". It opens a text
+   * tab even when a viewer tab already shows the path; only a text or large tab of that path counts as "already
+   * open". Size still decides between the editor and the large file viewer, and binary files still open read-only.
+   */
+  async openPath(path: string, options: { asText?: boolean } = {}) {
+    const asText = options.asText === true;
+    const existing = this.tabs.find((t) => t.path && samePath(t.path, path) && (!asText || t.kind === "text" || t.kind === "large"));
     if (existing) {
       this.activate(existing.id);
       return;
@@ -749,14 +825,14 @@ class Workspace {
       if (!stat.exists) throw new Error("The file does not exist.");
       if (!stat.isFile) throw new Error("This is a folder, not a file.");
       const ext = extensionOf(path);
-      if (IMAGE_EXTENSIONS.has(ext)) {
+      if (!asText && IMAGE_EXTENSIONS.has(ext)) {
         this.addTab(this.textTab({ kind: "image", path, title: basename(path), mtime: stat.mtime, size: stat.size }));
       } else if (stat.size > settings.largeFileThresholdMB * 1024 * 1024) {
         await this.openLarge(path);
       } else {
         const content = await api.readFile(path);
         const tab = this.createText(path, content);
-        const state = this.newState(content.text);
+        const state = this.newState(content.text, this.isReadOnly(tab));
         this.addTab(tab, { state, saved: state.doc, metaDirty: false, scrollTop: 0, version: 0, backedUp: -1 });
         void this.loadLanguage(tab);
         if (content.lossy) this.showNotice("info", `${tab.title}: some bytes are not valid ${content.encoding}.`);
@@ -778,6 +854,8 @@ class Workspace {
       eol: opened.eol,
       mtime: opened.mtime,
       size: opened.size,
+      binary: opened.binary,
+      lossy: opened.lossy,
       largeId: opened.id,
     });
     this.addTab(tab);
@@ -796,6 +874,10 @@ class Workspace {
         eol: opened.eol,
         mtime: opened.mtime,
         size: opened.size,
+        binary: opened.binary,
+        lossy: opened.lossy,
+        // "Edit anyway" holds while the file stays binary or lossy; a file that became text needs no unlocking.
+        unlocked: tab.unlocked && (opened.binary || opened.lossy),
         external: null,
         dirty: false,
         journal: null,
@@ -868,7 +950,7 @@ class Workspace {
       const index = this.tabs.indexOf(tab);
       if (index < 0) return;
       const next = this.createText(tab.path, content, tab.id);
-      const state = this.newState(content.text);
+      const state = this.newState(content.text, this.isReadOnly(next));
       this.runtime.set(next.id, { state, saved: state.doc, metaDirty: false, scrollTop: 0, version: 0, backedUp: -1 });
       this.tabs.splice(index, 1, next);
       if (tab.largeId !== null) void api.largeClose(tab.largeId);
@@ -904,6 +986,8 @@ class Workspace {
       }
       tab.journal = null;
       tab.dirty = result.dirty;
+      // Restored edits must stay editable (and saveable); a journal that is gone leaves the tab as freshly opened.
+      tab.unlocked = result.dirty;
       tab.revision++;
       // The journal on disk is this state already.
       const rt = this.runtime.get(tab.id);
@@ -1026,14 +1110,39 @@ class Workspace {
 
   // ---------------------------------------------------------------- saving
 
+  /**
+   * Saves a tab to its file (Save, Save all, the close prompt). A tab with nothing to save writes nothing and
+   * succeeds: the text equals the saved text and neither encoding, BOM nor line ending changed. Writing it
+   * anyway would re-encode the text, which is not the identity for files that are not really text (the
+   * editor normalizes line breaks), and it would touch the file for no reason. The one exception is a file
+   * that is gone from the disk: saving writes it again.
+   */
   async save(tab: Tab | undefined = this.active): Promise<boolean> {
     if (tab?.kind === "large") return this.saveLarge(tab);
     if (!tab || tab.kind !== "text") return false;
     if (!tab.path) return this.saveAs(tab);
+    return this.writeText(tab, false);
+  }
+
+  /** The text of a tab is what was last loaded or saved, and so are its encoding, BOM and line ending. */
+  private unchanged(tab: Tab): boolean {
+    const rt = this.runtime.get(tab.id);
     const state = this.stateOf(tab);
-    if (!state) return false;
-    const doc = state.doc;
+    return !!rt && !!state && !rt.metaDirty && this.isSaved(rt, state.doc);
+  }
+
+  /** Writes a text tab to `tab.path`; `force` (Save As) writes even if nothing changed. */
+  private async writeText(tab: Tab, force: boolean): Promise<boolean> {
+    if (!tab.path) return false;
     try {
+      if (!force && this.unchanged(tab)) {
+        // Edits made while the disk was asked are not lost: the tab is not unchanged any more and gets written.
+        if ((await api.statFile(tab.path)).exists && this.unchanged(tab)) return true;
+      }
+      if (!(await this.confirmNonTextWrite(tab))) return false;
+      const state = this.stateOf(tab);
+      if (!state) return false;
+      const doc = state.doc;
       const mtime = await api.writeFile(tab.path, doc.toString(), tab.encoding, tab.bom, tab.eol);
       const rt = this.runtime.get(tab.id)!;
       rt.saved = doc;
@@ -1060,9 +1169,13 @@ class Workspace {
       this.showNotice("info", `First decide what happens to the unsaved changes of ${tab.title} from the last session.`);
       return false;
     }
-    if (!tab.dirty && !path) return true;
-    if (tab.size > 256 * 1024 * 1024) this.showNotice("info", `Saving ${tab.title}…`);
     try {
+      if (!tab.dirty && !path) {
+        // Nothing to write, unless the file was deleted meanwhile: then saving puts it back.
+        if ((await api.statFile(tab.path)).exists) return true;
+      }
+      if (tab.dirty && !(await this.confirmNonTextWrite(tab))) return false;
+      if (tab.size > 256 * 1024 * 1024) this.showNotice("info", `Saving ${tab.title}…`);
       const opened = await api.largeSave(tab.largeId, path ?? null, tab.id);
       if (!this.tabs.includes(tab)) return true;
       Object.assign(tab, {
@@ -1087,6 +1200,8 @@ class Workspace {
 
   async saveAs(tab: Tab | undefined = this.active): Promise<boolean> {
     if (!tab || (tab.kind !== "text" && tab.kind !== "large")) return false;
+    // A text tab is written from its decoded text, even when unchanged: ask before the file dialog.
+    if (tab.kind === "text" && !(await this.confirmNonTextWrite(tab))) return false;
     const defaultPath = tab.path ?? `${tab.title}.txt`;
     const path = await saveDialog({ defaultPath });
     if (!path) return false;
@@ -1102,7 +1217,7 @@ class Workspace {
     tab.title = basename(path);
     const detected = detectLanguage(path, this.textOf(tab).slice(0, 300).split("\n")[0])?.name ?? null;
     if (detected && detected !== tab.language) this.setLanguage(tab, detected);
-    return this.save(tab);
+    return this.writeText(tab, true);
   }
 
   async saveAll() {
@@ -1145,9 +1260,12 @@ class Workspace {
         size: content.size,
         binary: content.binary,
         lossy: content.lossy,
+        // "Edit anyway" holds while the file stays binary or lossy; a file that became text needs no unlocking.
+        unlocked: tab.unlocked && (content.binary || content.lossy),
         dirty: false,
         external: null,
       });
+      this.applyReadOnly(tab);
       this.renderPreview();
     } catch (e) {
       this.showNotice("error", `Could not reload ${tab.title}: ${e}`);
@@ -1167,15 +1285,23 @@ class Workspace {
 
   /** Changes the encoding the file is saved with. */
   convertEncoding(tab: Tab, encoding: string) {
+    if (this.refuseWhileReadOnly(tab)) return;
     tab.bom = encoding === "UTF-8 BOM" || encoding.startsWith("UTF-16");
     tab.encoding = encoding === "UTF-8 BOM" ? "UTF-8" : encoding;
     this.markMetaDirty(tab);
   }
 
   setEol(tab: Tab, eol: Eol) {
-    if (tab.eol === eol) return;
+    if (tab.eol === eol || this.refuseWhileReadOnly(tab)) return;
     tab.eol = eol;
     this.markMetaDirty(tab);
+  }
+
+  /** Changing how a read-only tab is saved would be an edit: it says so and returns true. */
+  private refuseWhileReadOnly(tab: Tab): boolean {
+    if (!this.isReadOnly(tab)) return false;
+    this.showNotice("info", `${tab.title} is read-only because it is not text. Choose Edit anyway first.`);
+    return true;
   }
 
   private markMetaDirty(tab: Tab) {
@@ -1388,6 +1514,10 @@ class Workspace {
     const tab = this.active;
     const view = this.view;
     if (!tab || tab.kind !== "text" || !view) return;
+    if (view.state.readOnly) {
+      this.showNotice("info", "This tab is read-only. Choose Edit anyway first to format it.");
+      return;
+    }
     const formatter: Formatter | null = mode === "auto" ? formatterFor(tab.language) : { kind: "json" };
     if (!formatter) {
       this.showNotice(
@@ -1434,7 +1564,7 @@ class Workspace {
       this.showNotice("error", `Cannot format ${what}: ${result.error}`);
       return;
     }
-    if (view !== this.view || view.state.doc !== doc || this.active?.id !== tab.id) {
+    if (view !== this.view || view.state.doc !== doc || this.active?.id !== tab.id || view.state.readOnly) {
       this.showNotice("info", "The text changed while formatting, so nothing was applied. Run it again.");
       return;
     }
@@ -1523,6 +1653,8 @@ class Workspace {
     const file = item?.getAsFile();
     if (!file) return false;
     event.preventDefault();
+    // Nothing is inserted into a read-only tab (the link would only be dropped on the floor).
+    if (this.view?.state.readOnly) return true;
     if (!tab.path) {
       this.showNotice("info", "Save the Markdown file first, so pasted images have a folder to go to.");
       return true;
@@ -1704,6 +1836,8 @@ class Workspace {
           bom: s.tab.bom,
           eol: s.tab.eol,
           language: s.tab.language,
+          binary: s.tab.binary || undefined,
+          lossy: s.tab.lossy || undefined,
           preview: s.tab.preview,
           grammarLanguage: this.grammarLanguages.get(s.tab.id),
           hasBackup: hasBackup(s),
@@ -1835,6 +1969,8 @@ class Workspace {
         // Asked for every large tab, not only those marked `hasBackup`: a crash right after the journal
         // was written can leave an older session file, and a journal must never be pruned unseen.
         tab.dirty = saved.hasBackup;
+        // Edits that come back from the journal stay editable (see restoreLargeJournal); an unedited tab is read-only again.
+        tab.unlocked = saved.hasBackup;
         tab.journal = "restoring";
         void this.restoreLargeJournal(tab);
       }
@@ -1861,7 +1997,7 @@ class Workspace {
     if (text === undefined) return;
 
     const tab = disk ? this.createText(saved.path!, disk, saved.id) : this.textTab({ id: saved.id, title: saved.title });
-    if (saved.path && !disk) tab.path = saved.path;
+    if (saved.path && !disk) Object.assign(tab, { path: saved.path, binary: saved.binary ?? false, lossy: saved.lossy ?? false });
     tab.language = saved.language;
     tab.preview = saved.preview;
     if (saved.grammarLanguage) this.grammarLanguages.set(tab.id, saved.grammarLanguage);
@@ -1883,7 +2019,11 @@ class Workspace {
       tab.dirty = true;
       rt.metaDirty = true;
     }
+    // A binary or lossy file comes back read-only, unless it has edits: those are only worth restoring if the
+    // user can still save them.
+    tab.unlocked = tab.dirty;
     this.runtime.set(tab.id, rt);
+    this.applyReadOnly(tab);
     this.tabs.push(tab);
     void this.loadLanguage(tab);
   }

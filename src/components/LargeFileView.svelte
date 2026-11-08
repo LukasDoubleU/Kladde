@@ -272,8 +272,9 @@
   }
 
   function editable(): boolean {
-    const why =
-      tab.journal === "restoring"
+    const why = workspace.isReadOnly(tab)
+      ? "This file is not text, so it is read-only. Choose Edit anyway in the bar above to edit it."
+      : tab.journal === "restoring"
         ? "Your unsaved changes from the last session are still being restored."
         : tab.journal === "conflict"
           ? "First decide what happens to your unsaved changes from the last session (see the bar above)."

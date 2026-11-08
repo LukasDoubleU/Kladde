@@ -59,7 +59,8 @@ Run check, unit, cargo and e2e tests before merging anything.
   `write_safely` (large files: `LargeFile::write_to`, which streams the piece table into a temporary file and never
   writes the original in place; their unsaved edits live in a journal that is only valid for an unchanged original).
   Any change to saving, backups or the session must be verified by killing the app with unsaved changes and
-  checking the restore (`tests/e2e/hot-exit.test.mjs`, for large files `tests/e2e/large.test.mjs`).
+  checking the restore (`tests/e2e/hot-exit.test.mjs`, for large files `tests/e2e/large.test.mjs`). Saving a tab
+  without changes writes nothing, and binary or lossily decoded files open read-only (`tests/e2e/binary-save.test.mjs`).
 - **Lightweight.** Big dependencies are dynamic imports at the point of use (grammars, `@codemirror/merge`,
   `@codemirror/lint`, Prettier, sql-formatter, Mermaid, KaTeX, `grammar.ts`). Never import them statically.
   Nothing slow at startup.

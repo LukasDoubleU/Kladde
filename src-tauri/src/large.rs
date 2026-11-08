@@ -29,7 +29,7 @@
 //!
 //! Lines: a file that ends with a line break has an empty last line, like in the editor.
 
-use crate::files::{detect_eol, encode_text, guess_encoding, mtime_ms, replace_file, sniff_bom, write_safely};
+use crate::files::{detect_eol, encode_text, guess_encoding, mtime_ms, replace_file, sniff_bom, sniff_flags, write_safely, SNIFF_LEN};
 use crate::pieces::{EditKind, PieceTable, Replace, Source};
 use base64::Engine;
 use encoding_rs::{Encoding, UTF_16BE, UTF_16LE, UTF_8};
@@ -133,6 +133,10 @@ pub struct LargeOpened {
     pub bom: bool,
     pub eol: String,
     pub mtime: u64,
+    /// The start of the file has NUL bytes (outside UTF-16): probably not text. The page opens it read-only.
+    pub binary: bool,
+    /// The start of the file is not valid in its encoding.
+    pub lossy: bool,
 }
 
 #[derive(Serialize)]
@@ -1219,6 +1223,16 @@ impl LargeFile {
 }
 
 /// What `LargeFiles::register` needs to know about a file that was just opened.
+/// Whether the start of a file is binary or lossy (see `files::sniff_flags`). The viewer never reads the whole
+/// file, so it judges by the first megabyte, like the encoding. An unreadable file counts as text here: the
+/// viewer's own reads report the error.
+fn sniff_start(file: &File, size: u64, encoding: &'static Encoding, bom_len: u64) -> (bool, bool) {
+    let mut head = vec![0u8; size.min(SNIFF_LEN as u64) as usize];
+    let n = read_at(file, &mut head, 0).unwrap_or(0);
+    let body = &head[(bom_len as usize).min(n)..n];
+    sniff_flags(body, encoding, n as u64 == size)
+}
+
 struct Opening {
     path: PathBuf,
     file: File,
@@ -1283,11 +1297,12 @@ impl LargeFiles {
             journal: Mutex::new(JournalState { generation: new_generation(id), written: 0 }),
         });
         *large.fingerprint.lock().unwrap() = large.fingerprint_now(size);
+        let (binary, lossy) = sniff_start(&large.file, size, encoding, bom_len);
         self.open.lock().unwrap().insert(id, large.clone());
         if !indexed {
             std::thread::spawn(move || large.index_worker());
         }
-        LargeOpened { id, size, encoding: encoding.name().to_string(), bom: bom_len > 0, eol: eol.to_string(), mtime }
+        LargeOpened { id, size, encoding: encoding.name().to_string(), bom: bom_len > 0, eol: eol.to_string(), mtime, binary, lossy }
     }
 
     pub fn get(&self, id: u32) -> Result<Arc<LargeFile>, String> {
@@ -1413,6 +1428,32 @@ mod tests {
         let result = file.search(&req).unwrap();
         assert!(!result.cancelled);
         result.found.map(|m| (m.line, m.col, m.len))
+    }
+
+    #[test]
+    fn opening_reports_binary_and_lossy_files() {
+        let files = LargeFiles::default();
+        let write = |name: &str, bytes: &[u8]| {
+            let path = temp(name);
+            std::fs::write(&path, bytes).unwrap();
+            path
+        };
+        let text = files.open(&write("flags-text.log", b"plain\r\ntext\r\n")).unwrap();
+        assert!(!text.binary && !text.lossy);
+        // A zip-like start: NUL bytes and a lone CR.
+        let binary = files.open(&write("flags-binary.dat", b"PK\x03\x04\x00\x00\r\x00data")).unwrap();
+        assert!(binary.binary);
+        // Invalid UTF-8 without NUL bytes.
+        let lossy = files.open(&write("flags-lossy.txt", b"caf\xE9 \xFF\xFE broken\n")).unwrap();
+        assert!(!lossy.binary);
+        // UTF-16 is full of NUL bytes and still text.
+        let utf16 = files.open(&write("flags-utf16.txt", &utf16("hello\nworld", true, true))).unwrap();
+        assert!(!utf16.binary && !utf16.lossy);
+        // A multi-byte character cut by the end of the sniffed start is no damage.
+        let mut long = "a".repeat(SNIFF_LEN - 1).into_bytes();
+        long.extend("é and more\n".as_bytes());
+        let cut = files.open(&write("flags-cut.txt", &long)).unwrap();
+        assert!(!cut.binary && !cut.lossy);
     }
 
     #[test]
