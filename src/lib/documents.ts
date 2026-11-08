@@ -107,3 +107,119 @@ export function fitScale(available: number, natural: number): number {
   if (!(natural > 0) || !(available > 0)) return 1;
   return Math.min(1, available / natural);
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// The frame a document is shown in. A document is untrusted, so it never shares Kladde's page: it is rendered into
+// a `srcdoc` iframe whose document carries a CSP of its own. The page's CSP allows https images (the Markdown
+// preview shows remote ones); this one allows nothing but `data:` images and fonts. A srcdoc frame also inherits
+// the page's policy, so both apply and the stricter wins for every request.
+
+/**
+ * The frame's policy. Everything is denied by default (scripts, frames, objects, media, `<link>`, fetch and the
+ * ping of a link all fall under `default-src`), images and fonts may be `data:` (the engine inlines both), and
+ * styles may be inline (the engine builds `<style>` elements and `style` attributes). `base-uri` and `form-action`
+ * do not fall back to `default-src`, so they are named.
+ */
+export const FRAME_CSP = "default-src 'none'; img-src data:; font-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'";
+
+/**
+ * What the frame may do besides showing the document: only keep the page's origin, which the page needs to drive
+ * it (listeners on its window and document, its selection, its scroll position). No scripts (the CSP says so too),
+ * no top navigation, no forms, no popups, no downloads, no pointer lock. Frame navigation is not covered by
+ * sandbox flags; the Rust navigation guard cancels it (`FrameNavigationStarting`).
+ */
+export const FRAME_SANDBOX = "allow-same-origin";
+
+/** The app's theme variables the frame needs: they do not inherit into an iframe, so the page copies their values. */
+export const FRAME_VARIABLES = ["--bg-alt", "--fg-dim", "--paper", "--paper-text", "--paper-insert", "--paper-delete"] as const;
+
+/** The element of the frame's document that holds the rendered document (and is zoomed). */
+export const FRAME_HOST_ID = "host";
+
+// The frame's own chrome: the desk, the scrollbars of the app, and the host that is zoomed and centered. Before the
+// document's styles (which cannot reach these: they style `.docx` classes) and without the paper overrides, which
+// have to come after them.
+const FRAME_CSS = `
+html { background: var(--bg-alt); overflow-anchor: none; }
+body { margin: 0; }
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--fg-dim) 45%, transparent); border: 3px solid transparent; background-clip: content-box; border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background-color: var(--fg-dim); }
+::-webkit-scrollbar-corner { background: transparent; }
+.stage { display: flex; justify-content: center; width: max-content; min-width: 100%; }
+#${FRAME_HOST_ID} {
+  width: max-content;
+  /* What a document without fonts of its own gets, not the UI font. */
+  font-family: Calibri, Carlito, "Segoe UI", Arial, sans-serif;
+  font-size: 11pt;
+  line-height: normal;
+  color: var(--paper-text);
+  text-align: left;
+  cursor: auto;
+  user-select: text;
+}`;
+
+/** The document the frame starts with: the policy first, before anything that could load something, then an empty host. */
+export function frameSrcdoc(): string {
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${FRAME_CSP}"><style>${FRAME_CSS}</style></head><body><div class="stage"><div id="${FRAME_HOST_ID}"></div></div></body></html>`;
+}
+
+/** The part of a keyboard event the page's shortcut handling reads, for a copy it can dispatch on its own element. */
+export function keyboardInit(e: KeyboardEvent): KeyboardEventInit {
+  return {
+    key: e.key,
+    code: e.code,
+    location: e.location,
+    repeat: e.repeat,
+    ctrlKey: e.ctrlKey,
+    shiftKey: e.shiftKey,
+    altKey: e.altKey,
+    metaKey: e.metaKey,
+    // AltGr reports Ctrl+Alt and types a character: `comboFromEvent` asks for it.
+    modifierAltGraph: e.getModifierState?.("AltGraph") ?? false,
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+  };
+}
+
+/** A wheel event of the frame as the same event at the same place of the page (`frame`: the iframe's box). */
+export function wheelInit(e: WheelEvent, frame: { left: number; top: number }): WheelEventInit {
+  return {
+    deltaX: e.deltaX,
+    deltaY: e.deltaY,
+    deltaZ: e.deltaZ,
+    deltaMode: e.deltaMode,
+    clientX: e.clientX + frame.left,
+    clientY: e.clientY + frame.top,
+    ctrlKey: e.ctrlKey,
+    shiftKey: e.shiftKey,
+    altKey: e.altKey,
+    metaKey: e.metaKey,
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+  };
+}
+
+/** A mouse event of the frame as the same event at the same place of the page. */
+export function mouseInit(e: MouseEvent, frame: { left: number; top: number }): MouseEventInit {
+  return {
+    button: e.button,
+    buttons: e.buttons,
+    clientX: e.clientX + frame.left,
+    clientY: e.clientY + frame.top,
+    ctrlKey: e.ctrlKey,
+    shiftKey: e.shiftKey,
+    altKey: e.altKey,
+    metaKey: e.metaKey,
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+  };
+}
+
+/** Ctrl+A (no other modifier): in the viewer it selects the document, not everything the frame has. */
+export function isSelectAll(e: { key: string; ctrlKey: boolean; shiftKey: boolean; altKey: boolean }): boolean {
+  return e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "a";
+}

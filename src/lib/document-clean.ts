@@ -1,8 +1,9 @@
 // Makes the rendered DOM of a document safe to attach: nothing in it may make the WebView request another resource.
 // A document is untrusted text, and the viewer's renderer builds CSS and style attributes from it (font names are
-// pasted into rules, VML shapes copy their `style` unchanged). The CSP lets images in from any https address, so
-// this is what keeps a document from phoning home; it runs on nodes that are not attached yet, so nothing has
-// been fetched when it starts. The CSS is judged through the browser's own parser (CSSOM) and `css-scan.ts`.
+// pasted into rules, VML shapes copy their `style` unchanged). This is the second layer: the first is the policy of
+// the frame the document is shown in (`FRAME_CSP`, nothing but `data:` images and fonts), which holds whatever this
+// misses. It still runs, on nodes that are not attached yet, so nothing has been fetched when it starts, and it keeps
+// the DOM small. The CSS is judged through the browser's own parser (CSSOM) and `css-scan.ts`.
 import { isDataUrl, referencesRemote, splitDeclarations } from "./css-scan";
 
 export interface CleanStats {
@@ -36,7 +37,11 @@ function cleanDeclarations(style: CSSStyleDeclaration, stats: CleanStats) {
   }
 }
 
-/** Whether a rule's selector (or the prelude of `@scope`) can reach the shadow host: `:host`, `:host()`, `:host-context()`. */
+/**
+ * Whether a rule's selector (or the prelude of `@scope`) names a shadow host: `:host`, `:host()`, `:host-context()`.
+ * The viewer used to render into a shadow root, where such a rule restyled Kladde's own element. The frame has no
+ * host, so the rules are inert now; they are still dropped, because nothing of a document needs them.
+ */
 function targetsHost(rule: CSSRule): boolean {
   if (rule.constructor.name === "CSSScopeRule") return true;
   return rule instanceof CSSStyleRule && /:host/i.test(rule.selectorText);
@@ -54,8 +59,7 @@ function cleanRules(rules: CSSRuleList, stats: CleanStats) {
       drop();
       continue;
     }
-    // The document's own CSS must not restyle the element it lives in (position, containment, size): the host is
-    // Kladde's.
+    // See `targetsHost`.
     if (targetsHost(rule)) {
       drop();
       continue;

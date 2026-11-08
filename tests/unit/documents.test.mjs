@@ -8,10 +8,19 @@ import {
   containerOf,
   documentFormat,
   fitScale,
+  FRAME_CSP,
+  FRAME_HOST_ID,
+  FRAME_SANDBOX,
+  FRAME_VARIABLES,
+  frameSrcdoc,
   isDocumentPath,
+  isSelectAll,
+  keyboardInit,
+  mouseInit,
   pageCountOf,
   problemFor,
   tooLargeProblem,
+  wheelInit,
   zoomFactor,
 } from "../../src/lib/documents.ts";
 
@@ -149,4 +158,82 @@ test("a declaration block is split at the semicolons outside strings and parenth
     { name: "--x", value: "a\\;b" },
     { name: "color", value: "red" },
   ]);
+});
+
+// ------------------------------------------------------------------------------------------------ the frame
+
+/** A CSP as a map of directive to sources. */
+function directives(policy) {
+  return Object.fromEntries(policy.split(";").map((d) => d.trim()).filter(Boolean).map((d) => { const [name, ...sources] = d.split(/\s+/); return [name, sources]; }));
+}
+
+test("the frame's policy denies everything but data: images and fonts and inline styles", () => {
+  const csp = directives(FRAME_CSP);
+  assert.deepEqual(csp["default-src"], ["'none'"]);
+  assert.deepEqual(csp["img-src"], ["data:"]);
+  assert.deepEqual(csp["font-src"], ["data:"]);
+  assert.deepEqual(csp["style-src"], ["'unsafe-inline'"]);
+  // Not covered by default-src, so named.
+  assert.deepEqual(csp["base-uri"], ["'none'"]);
+  assert.deepEqual(csp["form-action"], ["'none'"]);
+  // No script, no connection, no frame, no other address of any kind.
+  for (const name of ["script-src", "connect-src", "frame-src", "object-src", "media-src"]) assert.equal(csp[name], undefined, `${name} falls back to 'none'`);
+  assert.doesNotMatch(FRAME_CSP, /https?:|\*|'self'|blob:|'unsafe-eval'/);
+});
+
+test("the frame's document starts with its policy, before anything that could load something", () => {
+  const html = frameSrcdoc();
+  const policy = html.indexOf('http-equiv="Content-Security-Policy"');
+  assert.ok(policy > 0);
+  assert.ok(html.includes(`content="${FRAME_CSP}"`));
+  for (const later of ["<style", "<body", "<link", "<img", "<script", "<iframe", "<div"]) assert.ok(html.indexOf(later) === -1 || html.indexOf(later) > policy, later);
+  // Nothing in it can fetch anything or run: no scripts, links, frames, images, imports or addresses.
+  assert.doesNotMatch(html, /<script|<link|<iframe|<img|@import|url\(|https?:/i);
+  assert.ok(html.includes(`id="${FRAME_HOST_ID}"`));
+  // The attribute value is quoted by double quotes: the policy must not contain one.
+  assert.ok(!FRAME_CSP.includes('"'));
+});
+
+test("the sandbox keeps only the origin, and the theme variables are the ones the frame's CSS reads", () => {
+  assert.equal(FRAME_SANDBOX, "allow-same-origin");
+  const css = frameSrcdoc();
+  for (const name of FRAME_VARIABLES) assert.match(name, /^--[a-z-]+$/);
+  // Every variable the frame's own CSS reads is passed in (the overrides are checked in the e2e test).
+  for (const used of css.matchAll(/var\((--[a-z-]+)\)/g)) assert.ok(FRAME_VARIABLES.includes(used[1]), used[1]);
+});
+
+const keydown = (init) => ({ key: "a", code: "KeyA", location: 0, repeat: false, ctrlKey: false, shiftKey: false, altKey: false, metaKey: false, getModifierState: () => false, ...init });
+
+test("a key of the frame is copied with everything the shortcut handling reads", () => {
+  const init = keyboardInit(keydown({ key: "P", code: "KeyP", ctrlKey: true, shiftKey: true, repeat: true }));
+  assert.deepEqual(
+    { key: init.key, code: init.code, ctrl: init.ctrlKey, shift: init.shiftKey, alt: init.altKey, meta: init.metaKey, repeat: init.repeat },
+    { key: "P", code: "KeyP", ctrl: true, shift: true, alt: false, meta: false, repeat: true },
+  );
+  // Cancelable (the page's answer decides the original's fate), bubbling to the window's listeners.
+  assert.equal(init.cancelable, true);
+  assert.equal(init.bubbles, true);
+  // AltGr (Ctrl+Alt that types a character) must stay recognizable.
+  assert.equal(keyboardInit(keydown({ ctrlKey: true, altKey: true, getModifierState: (m) => m === "AltGraph" })).modifierAltGraph, true);
+  assert.equal(keyboardInit(keydown({ ctrlKey: true, altKey: true })).modifierAltGraph, false);
+  // An event without getModifierState (a stand-in) is not AltGr.
+  assert.equal(keyboardInit({ ...keydown({}), getModifierState: undefined }).modifierAltGraph, false);
+});
+
+test("wheel and mouse events of the frame land where the pointer is in the window", () => {
+  const box = { left: 0, top: 36 };
+  const wheel = wheelInit({ deltaX: 0, deltaY: -120, deltaZ: 0, deltaMode: 0, clientX: 500, clientY: 300, ctrlKey: true, shiftKey: false, altKey: false, metaKey: false }, box);
+  assert.deepEqual([wheel.clientX, wheel.clientY, wheel.deltaY, wheel.ctrlKey, wheel.cancelable], [500, 336, -120, true, true]);
+  const mouse = mouseInit({ button: 3, buttons: 8, clientX: 10, clientY: 20, ctrlKey: false, shiftKey: false, altKey: false, metaKey: false }, { left: 5, top: 36 });
+  assert.deepEqual([mouse.button, mouse.buttons, mouse.clientX, mouse.clientY, mouse.cancelable], [3, 8, 15, 56, true]);
+});
+
+test("only Ctrl+A on its own selects the document", () => {
+  const key = (init) => isSelectAll({ key: "a", ctrlKey: true, shiftKey: false, altKey: false, ...init });
+  assert.equal(key({}), true);
+  assert.equal(key({ key: "A" }), true);
+  assert.equal(key({ ctrlKey: false }), false);
+  assert.equal(key({ shiftKey: true }), false);
+  assert.equal(key({ altKey: true }), false);
+  assert.equal(key({ key: "b" }), false);
 });
