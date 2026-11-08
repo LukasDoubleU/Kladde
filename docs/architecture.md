@@ -19,9 +19,9 @@ How Kladde is built and why. For product decisions see [decisions.md](decisions.
 
 | Module | Responsibility |
 |---|---|
-| `lib.rs` | Tauri commands, plugins, startup (single instance, `--unregister-integration` CLI flag) |
+| `lib.rs` | Tauri commands, plugins, startup (single instance, `--unregister-integration` CLI flag); `read_document` (raw bytes as a binary IPC response) and `open_in_default_app` for the document viewer |
 | `navigation.rs` | What the main webview may navigate to (own origin; web and mail links go to the system; the rest is cancelled) and what a new-window request does: pure URL classification, unit-tested (see "Security and Tauri configuration") |
-| `files.rs` | Reading with encoding detection (BOM → UTF-8 validity → chardetng), BOM and line-ending handling, writing with `write_safely` |
+| `files.rs` | Reading with encoding detection (BOM → UTF-8 validity → chardetng), BOM and line-ending handling, writing with `write_safely`; `read_limited` (a document's bytes, refused above 50 MB, errors that say *too large* / *busy* / *gone*) |
 | `large.rs` | The large file viewer backend: index, search, editing, streaming save, hot-exit journal |
 | `pieces.rs` | The piece table behind large-file editing (pure data structure, no I/O, no encodings) |
 | `session.rs` | Data/config folders, session JSON, backups and backup versions, config files, the isolated profile |
@@ -171,12 +171,17 @@ Key mechanisms:
 | `lib/large-edit.ts` | Pure helpers of the large file view (caret movement over one line's text, words, spans for selection/caret, the editor commands it supports); unit-tested |
 | `lib/settings-schema.ts`, `lib/settings.svelte.ts` | The `Settings` type, its defaults and the metadata of every setting (plain TypeScript, so unit tests can load it); the reactive store, `loadSettings` (only accepts keys whose type matches the default) and `updateSettingsFile` |
 | `components/SettingsPage.svelte`, `lib/config-files.ts` | The settings page (a tab, loaded on first use); reading and writing the JSON files of the config folder, shared with the shortcut editor |
+| `components/DocumentView.svelte` | The viewer of document tabs (loaded on first use, kept alive while hidden): reads, renders with docx-preview, cleans, shows in a shadow root; focus, scroll, zoom, links, selection, errors (see "Document tabs") |
+| `lib/documents.ts`, `lib/css-scan.ts`, `lib/document-clean.ts` | The document viewer's logic: extensions, container signatures, error texts, zoom and fit (pure, unit-tested); the CSS tokenizer that finds addresses in declaration values (pure, unit-tested); the cleaning of rendered nodes (DOM, tested in the app) |
 | `lib/api.ts` | Typed wrappers of all Tauri commands |
 
 ### Tabs and the editor
 
-- Tab kinds: `text`, `large` (the document lives in Rust), `image`, `compare`, `settings`. Tab metadata lives in Svelte `$state` (`workspace.tabs`); editor
-  state does not.
+- Tab kinds: `text`, `large` (the document lives in Rust), `image`, `document` (a read-only view of a file by path, see
+  "Document tabs"), `compare`, `settings`. Tab metadata lives in Svelte `$state` (`workspace.tabs`); editor
+  state does not. The kind names are part of the session file (`session.json` stores `kind` per tab, a public format):
+  never rename one, and give a new kind a restore path in `restoreTab` (an older Kladde that reads a session with an
+  unknown kind opens the file as text).
 - **One shared `EditorView`** for all text tabs. Inactive tabs keep their `EditorState` (with undo history) in the
   non-reactive `runtime` map; `activate()` swaps states with `view.setState` and restores the scroll position.
   View-wide options (wrap, indentation, gutters, spelling) are reapplied after a swap (`applyViewOptions`).
@@ -208,8 +213,9 @@ Key mechanisms:
   shows the path (a text or large tab of the path is activated instead), and size still picks the large viewer.
 - A reload is applied as the minimal change (`minimalChange`), as an undoable edit, so the cursor stays and
   following a log is cheap.
-- Opening a file into an untouched empty "new N" tab replaces it (Notepad++ behaviour). Images open in an image tab;
-  files above `largeFileThresholdMB` (32) in the large viewer; "Open in editor…" loads large files up to 256 MB.
+- Opening a file into an untouched empty "new N" tab replaces it (Notepad++ behaviour). Images open in an image tab and
+  `.docx` files in a document tab (both by extension, before the size check); `openPath(path, { asText: true })`
+  skips that routing and opens the file as text; files above `largeFileThresholdMB` (32) in the large viewer; "Open in editor…" loads large files up to 256 MB.
 - Tab history (`Alt+Left`/`Alt+Right`, mouse back/forward) is a browser-like stack of activated tabs, not
   persisted.
 
@@ -343,6 +349,71 @@ Key mechanisms:
   so it keeps its scroll position) through `compare.ts`. Ignore whitespace/case use a custom diff function passed to
   `@codemirror/merge`. Not part of the session.
 
+### Document tabs
+
+Kind `document` is a generic read-only view of a file by path (like `image`, but with a viewer of its own): Word
+documents (`.docx`) now, and a later PDF viewer would add its extension to `lib/documents.ts` and its engine to
+`DocumentView.svelte`. The tab holds only metadata (path, size, mtime); the session stores it by path like an image
+tab, plus the scroll position, and restores it without rendering: a restored tab renders on its first visit, so
+nothing is read or loaded at startup.
+
+- **Routing:** `openPath` sends `.docx` to a document tab before the large file check (the viewer has its own limit).
+  The file is read by `read_document` (`files::read_limited`): the raw bytes as a binary IPC response (an
+  `ArrayBuffer`, no JSON number array), refused above 50 MB. Above the limit, or when the file is encrypted (the OLE
+  compound signature `D0 CF 11 E0`: Word's rights-managed and password-protected files, also old `.doc`), not a ZIP,
+  or damaged, the tab shows a message with **Open in default app** and **Open as text** (also the command
+  `document.openAsText`, "Open as text"). Opening in the default app is a Rust command (`open_in_default_app`, the
+  opener plugin) that only starts files of the types the viewer shows, so the page needs no opener scope for paths.
+- **Engine:** docx-preview 0.4.1 (exact version) on JSZip, both loaded with the viewer on first use (a ~170 kB chunk,
+  ~49 kB gzip, next to the viewer's own ~10 kB). It was chosen over mammoth in the spike (decisions.md). The viewer calls
+  `parseAsync` and `renderDocument`, which return **detached nodes** built element by element (no HTML parsing),
+  `renderAltChunks: false` (raw HTML inside a file is never shown), `useBase64URL: true` (images and fonts become `data:`
+  URLs, which the CSP allows; `blob:` is not needed and not in the CSP).
+- **Tracked changes and comments are shown, not hidden** (`renderChanges: true`, `renderComments: true`): the engine's
+  default would show insertions as plain text and drop deletions and comments, a text that is not what the file says.
+  Insertions are underlined and deletions struck through, both in marker colors (`--paper-insert`, `--paper-delete`),
+  and a comment is a marker with its text on hover. Nothing is accepted or rejected; the view is "all markup".
+- **Untrusted documents.** The CSP lets images in from any https address, so the cleaning is what keeps a document
+  from phoning home. The renderer pastes document text into generated CSS (font names) and copies VML shapes' `style`
+  unchanged, so `cleanDocumentNodes` runs on the detached nodes (nothing has been fetched yet) before they are attached:
+  every `<style>` is parsed by the browser into a constructable `CSSStyleSheet` (not attached, `@import` ignored), its
+  rules are walked (CSSOM), `@import` and `@property` rules are dropped and every declaration whose value refers to
+  something other than a `data:` address is removed (`css-scan.ts`: a tokenizer, not a regular expression, so CSS
+  escapes such as `u\72l(` and comments cannot hide an address; it also rejects strings in `image-set()`); the same
+  for `style` attributes; `<img>` and SVG `<image>` without a `data:` source are dropped, as are scripts, frames,
+  objects, links, forms and media elements, event handler attributes and every address attribute that is not a link's
+  `href`. The check that matters is tested: a document with an external image, a style injected through a font name and
+  a VML background must make no connection (a TCP listener counts, and the page's requests are logged through CDP).
+- **Shadow root and containment.** The pages are rendered into a shadow root, so the document's CSS cannot reach
+  Kladde's UI and its element ids are no window properties. The host has `contain: paint`: a shape that is positioned
+  `fixed` (seen in the spike, it covered the tab bar) is then contained in the viewer and can neither draw over nor take
+  clicks from the app. White pages (`--paper`) on the themed background: forcing Catppuccin colors onto a document
+  breaks it. A document without fonts of its own gets Calibri/Carlito/Segoe UI, not the UI font.
+- **Layout and zoom:** pages have the document's own size (A4 is 794 px). They are shown at their size, or shrunk to the
+  width of the window (fit to width, never enlarged); Kladde's zoom (keys, `Ctrl`+wheel, the same `ui.zoom` as the font
+  size) scales them on top, by the same proportion as the font size. Done with the CSS `zoom` of the host; the scroll
+  position scales with it (`overflow-anchor: none`, set by hand).
+- **Focus and keys:** the viewer takes the focus (its pane, `tabindex=0`) when its tab becomes active, after a palette or
+  dialog closed (`workspace.registerDocument`, `refocusDocument`) and after an error is shown, so PageDown and the arrows
+  scroll without a click. Kladde's shortcuts are handled by the window's capture listener and work as everywhere.
+  `Ctrl+A` selects the document only; `Ctrl+C` is the native copy. Links are found with `event.composedPath()` (a click
+  in a shadow root is retargeted to its host) and go through `workspace.openHref` (http, https, mailto; `#bookmarks`
+  scroll). The app blocks WebView2's context menu unless the target is text it knows (`onContextMenu` in `App.svelte`: a
+  shadow host is none of them); the viewer shows its own menu with *Copy*, and only while text is selected.
+- **Scroll position** is kept in the tab's runtime entry (`setDocumentScroll`), so it survives tab switches (the viewer is
+  kept alive while hidden, so a document is not rendered again on every visit; a hidden tab has no layout, hence the
+  explicit save and restore), reloads and the session.
+- **Reloading:** `checkExternalChanges` notices a new mtime (the active tab every two seconds while the window has
+  the focus, every tab when it gets the focus) and bumps `tab.revision`; F5 does too. The viewer waits 300 ms, reads again and
+  swaps the new nodes in at once, so the old rendering stays until the new one is complete. A file that is being saved
+  (Word writes in steps or replaces the file: a sharing violation, a missing file, a truncated ZIP) is read again after
+  0.3, 0.6, 1.2 and 2.4 s with the old rendering still shown; only then an error appears. On the first read only a
+  sharing violation is retried.
+- **Status bar:** "Word document (read-only)", the page count (`section.docx` count, `workspace.documentPages`) and the
+  size.
+- Not part of it: finding text in a document, printing, `.doc`, `.docm`, `.dotx`, `.odt`, registering Kladde as a `.docx`
+  handler.
+
 ### Theming
 
 - `src/themes.css` holds the four Catppuccin flavors (official palette), the 14 accents and the role variables built
@@ -380,8 +451,13 @@ Key mechanisms:
 
 - The main bundle (~720 kB, ~245 kB gzip) contains CodeMirror, markdown-it, DOMPurify and the UI. Everything big
   is a **dynamic import** that loads on first use: the settings page, language grammars, `@codemirror/merge`, `@codemirror/lint` and
-  grammar checking, Prettier and its plugins, sql-formatter, Mermaid (many chunks, up to ~1.5 MB for elk), KaTeX.
-  Never import these statically.
+  grammar checking, Prettier and its plugins, sql-formatter, Mermaid (many chunks, up to ~1.5 MB for elk), KaTeX, the
+  document viewer with docx-preview and JSZip (~180 kB, ~54 kB gzip together). Never import these statically.
+- Measured with the document viewer added (`npm run build`): the JavaScript loaded at startup (the entry chunk and the
+  chunks it imports) went from 736.96 kB to 741.09 kB (+4.1 kB, +0.6 %: the tab kind, routing and status bar code; Rollup
+  also moved shared modules into a chunk named `dist-*`, which the entry imports), its gzip size stays at ~250 kB, the CSS
+  grew by 0.08 kB. `docx-preview-*.js` (171 kB) and `DocumentView-*.js` (9.5 kB) are only fetched when a document tab is
+  first shown.
 - Fonts (JetBrains Mono, Inter) are bundled via Fontsource; an installed copy is preferred. KaTeX ships woff2 only
   (a Vite plugin strips woff/ttf).
 - Release artifacts (v0.1.0): installer ~5 MB, portable exe ~8 MB (assets are embedded and compressed).
@@ -445,6 +521,8 @@ Key mechanisms:
   so it gets no menu (Ctrl+C works; it never had Copy in the native menu either). The tab bar keeps its own menu. Not verified, because tests
   cannot open native menus: that the native menu of an editable field has no navigation entries (it has none in the
   WebView2 versions we know).
+- Documents are untrusted content under a CSP that allows https images: see "Document tabs" for how the viewer keeps
+  them from fetching anything. The CSP needed no change (`img-src` and `font-src` already allow `data:`; no `blob:`).
 - Capabilities (`capabilities/default.json`) grant window show/focus/title/destroy/theme, dialogs, opener.
 - Tauri's `dragDropEnabled: true` delivers file drops but disables HTML5 drag and drop in the page: tab reordering
   uses pointer events instead.

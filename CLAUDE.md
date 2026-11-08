@@ -34,7 +34,9 @@ anything employer-related out of code, commits, issues, release notes and docs.
   Preview: `markdown.ts`, `math.ts`, `mermaid.ts`. Formatting: `format.ts`, `format-xml.ts`, `formatters.ts`. Grammar:
   `grammar.ts`, `grammar-text.ts`. Theme: `theme.ts`, `src/themes.css`, `src/app.css`. Others: `languages.ts`, `compare.ts`,
   `linehighlight.ts`, `api.ts`, `integration.svelte.ts`, `updates.svelte.ts`. Large file view:
-  `components/LargeFileView.svelte`, `lib/large-edit.ts` (pure helpers, unit-tested).
+  `components/LargeFileView.svelte`, `lib/large-edit.ts` (pure helpers, unit-tested). Read-only document viewer (Word
+  files, tab kind `document`): `components/DocumentView.svelte`, `lib/documents.ts`, `lib/css-scan.ts`,
+  `lib/document-clean.ts`.
 - `tests/unit/`, `tests/e2e/` (harness `kladde.mjs`), `scripts/` (commit check, version, update manifest),
   `.github/workflows/` (`ci.yml`, `release.yml`), `cliff.toml` (changelog/versions), `docs/`.
 
@@ -62,7 +64,7 @@ Run check, unit, cargo and e2e tests before merging anything.
   checking the restore (`tests/e2e/hot-exit.test.mjs`, for large files `tests/e2e/large.test.mjs`). Saving a tab
   without changes writes nothing, and binary or lossily decoded files open read-only (`tests/e2e/binary-save.test.mjs`).
 - **Lightweight.** Big dependencies are dynamic imports at the point of use (grammars, `@codemirror/merge`,
-  `@codemirror/lint`, Prettier, sql-formatter, Mermaid, KaTeX, `grammar.ts`). Never import them statically.
+  `@codemirror/lint`, Prettier, sql-formatter, Mermaid, KaTeX, `grammar.ts`, the document viewer with docx-preview). Never import them statically.
   Nothing slow at startup.
 - **CodeMirror objects never go into Svelte `$state`.** All text tabs share one `EditorView`; inactive tabs keep
   their `EditorState` in a plain map.

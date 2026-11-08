@@ -55,6 +55,25 @@ The default preset contains deliberate choices; presets (Notepad++, VS Code) and
   changes in compare tabs; `Ctrl+Shift+P`/`F1` open the command palette, which lists every command with its keys;
   the owner also wants `Ctrl+Shift+A` (IntelliJ's "Find Action") and `Ctrl+3` (Eclipse's "Quick Access") for it.
 
+## Documents
+
+- **Word documents (`.docx`) open in a read-only viewer** (issue #22), as white pages on the themed background; editing,
+  printing and searching inside are out of scope, as are `.doc`, `.docm`, `.dotx` and `.odt`. The tab kind is generic
+  (`document`), so a PDF viewer can reuse it.
+- **docx-preview over mammoth.** The spike compared both: mammoth turns a document into semantic HTML (fine for text,
+  but headers, footers, page breaks, colors, shading and layout are gone), docx-preview keeps them and renders in
+  ~0.1 s for a 50-page, 4.6 MB file. It costs ~180 kB (~54 kB gzip) loaded on first use, no startup cost and no CSP
+  change. Its output is not re-colored with the theme (forcing Catppuccin colors onto it breaks documents): the pages
+  are white (`--paper`), only the surroundings follow the theme.
+- **No remote content, ever.** A document cannot load anything from the network (linked images, styles, fonts, VML
+  backgrounds): the viewer removes every address that is not `data:` before attaching anything. This follows the
+  privacy rule (nothing leaves the machine unless the user turns it on) and a document is a file from someone else.
+- **Tracked changes and comments are shown**, as markup (insertions underlined, deletions struck through, comments as a
+  marker with the text on hover), because the alternative (insertions as plain text, deletions and comments dropped) shows a
+  text that is not what the file says.
+- **Limits:** 50 MB; above it, encrypted or rights-managed files and damaged ones get a message with **Open in default
+  app** and **Open as text** instead of a spinner or a crash.
+
 ## Privacy and the outside world
 
 - Nothing leaves the machine unless the user turns it on. Grammar checking is off until toggled. Turning it on

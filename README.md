@@ -104,6 +104,15 @@ it, but I may decline requests that don't fit how I work, and there is no promis
 - External changes: unmodified tabs reload when the file changes on disk, and the active tab follows a
   growing log live; otherwise a banner asks.
 - Image viewer for PNG, JPEG, GIF, WebP and more.
+- Word documents (`.docx`) open in a read-only viewer: white pages on the themed background, with headers and
+  footers, colors, tables, images and page breaks. The viewer loads on first use (nothing at startup), fits the
+  pages to the window width and zooms with the zoom keys and `Ctrl`+wheel; `Ctrl+A` and `Ctrl+C` work on the
+  document, links open like everywhere else. Tracked changes show as such (insertions underlined, deletions struck
+  through) and comments as a marker with the text on hover. The file is followed while another program saves it,
+  and the place in it survives tab switches, reloads and restarts. Nothing in a document can load anything from
+  the network, and files above 50 MB, encrypted or damaged ones show a message with **Open in default app** and
+  **Open as text** (also a command in the command palette). Searching inside a document, printing and editing
+  are not part of it.
 - Windows integration: Kladde offers itself as a default editor (once, on first start), appears in "Open
   with" and has an optional "Edit with Kladde" Explorer context menu entry. Per user, no admin rights.
 
@@ -351,6 +360,7 @@ blocks), Mermaid diagrams, compare view, status bar, dialogs, picker and large f
 | `--line-number`, `--active-line-number` | gutter |
 | `--search-match`, `--search-match-border`, `--search-match-selected` | find matches |
 | `--diff-del-bg`, `--diff-del-text`, `--diff-del-mark`, `--diff-add-bg`, `--diff-add-text`, `--diff-add-mark` | compare view: changed lines, changed words, markers |
+| `--paper`, `--paper-text`, `--paper-insert`, `--paper-delete` | Word viewer: the page and its default text color (white and black in every theme), tracked insertions and deletions |
 | `--tok-keyword`, `--tok-string`, `--tok-escape`, `--tok-number`, `--tok-comment`, `--tok-function`, `--tok-type`, `--tok-property`, `--tok-variable`, `--tok-operator`, `--tok-punctuation`, `--tok-meta`, `--tok-heading`, `--tok-link`, `--tok-invalid`, `--tok-inserted`, `--tok-deleted`, `--tok-date`, `--tok-warn` | syntax highlighting in the editor and in code blocks of the preview |
 
 Colors can be written in any CSS syntax. Fonts are not part of the theme: use `fontFamily` and `uiFontFamily`
@@ -389,7 +399,7 @@ interface; [markdown-it](https://github.com/markdown-it/markdown-it) and
 [DOMPurify](https://github.com/cure53/DOMPurify) for the preview, with
 [Mermaid](https://mermaid.js.org) and [KaTeX](https://katex.org) loaded on demand, and
 [Prettier](https://prettier.io) and [sql-formatter](https://github.com/sql-formatter-org/sql-formatter) for
-formatting. All open text tabs share one editor
+formatting, and [docx-preview](https://github.com/VolodymyrBaydalka/docxjs) for Word documents. All open text tabs share one editor
 view and keep their own state, including undo history, so switching tabs is instant.
 
 ## Roadmap
@@ -401,4 +411,6 @@ code signing and more formatters (TOML); see also [docs/roadmap.md](docs/roadmap
 
 [MIT](LICENSE). Kladde bundles JetBrains Mono and Inter under the
 [SIL Open Font License](https://openfontlicense.org); the color palette is
-[Catppuccin](https://github.com/catppuccin/catppuccin) (MIT).
+[Catppuccin](https://github.com/catppuccin/catppuccin) (MIT). The Word viewer uses
+[docx-preview](https://github.com/VolodymyrBaydalka/docxjs) (Apache-2.0) and [JSZip](https://stuk.github.io/jszip/)
+(used under its MIT license).

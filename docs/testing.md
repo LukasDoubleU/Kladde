@@ -5,8 +5,8 @@
 | Command | What it covers | Needs |
 |---|---|---|
 | `npm run check` | svelte-check (types of all `.ts`/`.svelte`) | — |
-| `npm run test:unit` | Node's test runner on `tests/unit/*.test.mjs`: formatters, keys/presets, grammar text side, themes, settings metadata, update manifest, last-check time format, link finding and heading anchors, the CSP and the asset scope in `tauri.conf.json` | — |
-| `cd src-tauri && cargo test` | file I/O and encodings (binary and lossy flags), safe saving, large viewer (index, search, piece table, editing, streaming save, journal), LanguageTool client (local socket), local LanguageTool (hash check, download, atomic install, version cleanup, routing, idle stop, start/stop/crash of a stand-in process, job object), registry code (throwaway key), updater helpers, the URL classification of the navigation guard | Rust |
+| `npm run test:unit` | Node's test runner on `tests/unit/*.test.mjs`: formatters, keys/presets, grammar text side, themes, settings metadata, update manifest, last-check time format, link finding and heading anchors, the CSP and the asset scope in `tauri.conf.json`, the document viewer's pure parts (container signatures, zoom and fit, the CSS scan for addresses in declarations, escapes included) | — |
+| `cd src-tauri && cargo test` | file I/O and encodings (binary and lossy flags), safe saving, large viewer (index, search, piece table, editing, streaming save, journal), LanguageTool client (local socket), local LanguageTool (hash check, download, atomic install, version cleanup, routing, idle stop, start/stop/crash of a stand-in process, job object), registry code (throwaway key), updater helpers, the URL classification of the navigation guard, the size limit of the document reader | Rust |
 | `npm run test:e2e` | the real app through the DevTools protocol: `tests/e2e/*.test.mjs` | `npx tauri build --debug --no-bundle` first |
 
 Run all four before merging anything. For e2e prefer `node --test --test-concurrency=1 "tests/e2e/*.test.mjs"`:
@@ -54,6 +54,7 @@ Rules:
 | smoke | 9340 |
 | compare | 9371–9373 |
 | format | 9343, 9363–9365 |
+| document | 9427–9439 |
 | grammar | 9387–9389 |
 | binary-save | 9413–9419 (one app at a time; every port is reused once or twice) |
 | hot-exit | 9344, 9354–9358, 9380, 9390, 9400–9404 |
@@ -85,7 +86,7 @@ Free for new files: 9445 and up (9380 and 9390 are taken by hot-exit now).
 | `KLADDE_LT_IDLE_SECS` | Idle time in seconds after which the local LanguageTool stops, instead of 15 minutes (isolated profile only) |
 | `KLADDE_SESSION_DELAY_MS` | Waits this many ms before every write of `session.json` (isolated profile only); with the old write order it holds the session back after the backups, so a test can kill Kladde inside that window |
 | `KLADDE_BACKUP_DELAY_MS` | Waits this many ms before every write of a text backup (isolated profile only); the window between the session naming a tab and its backup being written |
-| `KLADDE_OPEN_URL_LOG` | File that receives every external link (http, https, mailto) one URL per line, instead of the browser starting (isolated profile only); tests assert the URL that would have been opened |
+| `KLADDE_OPEN_URL_LOG` | File that receives every external link (http, https, mailto) one URL per line, instead of the browser starting (isolated profile only); tests assert the URL that would have been opened. "Open in default app" of the document viewer logs the file's path here instead of starting Word |
 | `KLADDE_E2E_START_TIMEOUT` | Harness: how long to wait for the app to come up (ms, default 20000; CI uses 90000) |
 
 ## Pitfalls we hit (and how the harness handles them)
@@ -128,6 +129,16 @@ Free for new files: 9445 and up (9380 and 9390 are taken by hot-exit now).
   connection (the page's CSP stops a `fetch` of the test, and an `<img>` only tells image from no image). The
   context menu is tested with synthetic `contextmenu` events: they never open WebView2's native menu, which must not
   appear on the desktop; a real right click through `Input.dispatchMouseEvent` might.
+- **Documents (`document.test.mjs`):** the Word files are generated at test time with the `docx` package
+  (devDependency; `docx-fixtures.mjs`: deflated zips with a fixed test author, never a file saved by Word, nothing
+  committed as a binary) and post-edited with JSZip where a test needs hostile XML (a style injected through a font
+  name, a VML shape that is `position: fixed`, an external image). The no-network test starts a TCP listener on a
+  local port and puts its address (https and http) into the document: any connection is a leak; the page's own
+  requests are logged through a second DevTools connection. The test fails when the cleaning in
+  `lib/document-clean.ts` is removed (checked by hand: two connections). The half-written-file test writes the first
+  half of a document over the file and fails when the viewer shows an error instead of reading again. Focus is never
+  set by the tests: they click a tab and press PageDown. `Ctrl+O` is not pressed (it opens a native dialog); the other
+  shortcuts go through the same window listener. A 51 MB file of zeros is written for the size limit.
 - **Large files:** lower `largeFileThresholdMB` in the isolated profile's `settings.json` instead of generating
   huge fixtures; delete generated files. Editing tests focus `.large .input` (the hidden textarea), type with
   `type()`/`key()` and check `.large .line .text`; a kill is only safe once the journal in `data/backup`

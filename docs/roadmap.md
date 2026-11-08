@@ -12,6 +12,8 @@ copy of the signed `kladde.exe`). The updater's minisign `.sig` must be created 
 
 ## Smaller follow-ups (no issues yet)
 
+- **Document viewer (#22):** finding text inside a document (the viewer has no search), printing and `.doc`/`.odt` are not
+  there; a PDF viewer could reuse the `document` tab kind (`lib/documents.ts`, `DocumentView.svelte`).
 - **Large files (editing, #5):** the viewer is a real editor now (piece table, journal, streaming save; see
   [architecture.md](architecture.md)). Known gaps:
   - Editing needs the line index to be complete (seconds for multi-GB files); typing before that shows a notice.
