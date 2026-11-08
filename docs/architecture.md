@@ -171,8 +171,8 @@ Key mechanisms:
 | `lib/large-edit.ts` | Pure helpers of the large file view (caret movement over one line's text, words, spans for selection/caret, the editor commands it supports); unit-tested |
 | `lib/settings-schema.ts`, `lib/settings.svelte.ts` | The `Settings` type, its defaults and the metadata of every setting (plain TypeScript, so unit tests can load it); the reactive store, `loadSettings` (only accepts keys whose type matches the default) and `updateSettingsFile` |
 | `components/SettingsPage.svelte`, `lib/config-files.ts` | The settings page (a tab, loaded on first use); reading and writing the JSON files of the config folder, shared with the shortcut editor |
-| `components/DocumentView.svelte` | The viewer of document tabs (loaded on first use, kept alive while hidden): reads, renders with docx-preview, cleans, shows in a shadow root; focus, scroll, zoom, links, selection, errors (see "Document tabs") |
-| `lib/documents.ts`, `lib/css-scan.ts`, `lib/document-clean.ts` | The document viewer's logic: extensions, container signatures, error texts, zoom and fit (pure, unit-tested); the CSS tokenizer that finds addresses in declaration values (pure, unit-tested); the cleaning of rendered nodes (DOM, tested in the app) |
+| `components/DocumentView.svelte` | The viewer of document tabs (loaded on first use, kept alive while hidden): reads, renders with docx-preview, cleans, shows in a sandboxed `srcdoc` frame with a CSP of its own; the bridges for keys, wheel, theme, focus, scroll, zoom, links, selection, errors (see "Document tabs") |
+| `lib/documents.ts`, `lib/css-scan.ts`, `lib/document-clean.ts` | The document viewer's logic: extensions, container signatures, error texts, zoom and fit, the frame's policy, sandbox, starting document and event copies (pure, unit-tested); the CSS tokenizer that finds addresses in declaration values (pure, unit-tested); the cleaning of rendered nodes (DOM, tested in the app) |
 | `lib/api.ts` | Typed wrappers of all Tauri commands |
 
 ### Tabs and the editor
@@ -373,51 +373,99 @@ nothing is read or loaded at startup.
   default would show insertions as plain text and drop deletions and comments, a text that is not what the file says.
   Insertions are underlined and deletions struck through, both in marker colors (`--paper-insert`, `--paper-delete`),
   and a comment is a marker with its text on hover. Nothing is accepted or rejected; the view is "all markup".
-- **Untrusted documents.** The CSP lets images in from any https address, so the cleaning is what keeps a document
-  from phoning home. The renderer pastes document text into generated CSS (font names) and copies VML shapes' `style`
-  unchanged, so `cleanDocumentNodes` runs on the detached nodes (nothing has been fetched yet) before they are attached:
-  every `<style>` is parsed by the browser into a constructable `CSSStyleSheet` (not attached, `@import` ignored), its
-  rules are walked (CSSOM), `@import` and `@property` rules are dropped and every declaration whose value refers to
-  something other than a `data:` address is removed (`css-scan.ts`: a tokenizer, not a regular expression, so CSS
-  escapes such as `u\72l(` and comments cannot hide an address); the same for `style` attributes. What counts as an
-  address: `url()` and `src()` with anything but `data:`; every string in `image-set()`; and every function that could
-  bring one in there after parsing (`var()`, `env()`, `attr()`, anything unknown). A custom property (`--x`) is
-  judged as if each of its strings were an address, because `var()` pastes it into other declarations later
-  (`--k: "https://…"` with `image-set(var(--k))` fetched the address once). Rules for the host (`:host`, `:host()`,
-  `:host-context()`, `@scope`) are dropped, so the document cannot restyle the element it lives in. The same scan runs
-  on **every attribute** of every element, not only `style`: the engine copies a VML shape's colors unchanged into SVG
-  `fill` and `stroke`, and `url(https://…)` there is fetched. `<img>` without a `data:` source is dropped; an SVG
-  `<image>` without one becomes an empty `<g>` (the engine measures the first child of a VML shape's `<svg>` a frame
-  later and would fail on a shape without one: an "Unexpected error" notice for a linked picture). Scripts, frames,
-  objects, links, forms and media elements, event handler attributes and every address attribute that is not a link's
-  `href` go too. This is a deny-list on the browser's parsed output, and it is the only barrier: the page's CSP allows
-  https images, and a shadow root cannot have a CSP of its own (see decisions.md for the iframe alternative). The check
-  that matters is tested, with a listener per way in: an external image, a style injected through a font name, a VML
-  background, `image-set(var())` through a font name and through a VML style, `fillcolor` and `stroke` colors, a
-  linked VML picture and a `:host` rule must make no connection (TCP listeners count, and the page's requests are
-  logged through CDP; the computed styles are checked too, since that is what the browser fetches).
-- **Shadow root and containment.** The pages are rendered into a shadow root, so the document's CSS cannot reach
-  Kladde's UI and its element ids are no window properties. The **stage** around the host has `contain: paint`: a shape
-  that is positioned `fixed` (seen in the spike, it covered the tab bar) is then contained in the viewer and can neither
-  draw over nor take clicks from the app. The containment sits on an element of the light DOM that the document cannot
-  style: on the host itself it could be turned off from inside (a `:host` rule with `!important`, injected through a
-  font name), and the cleaner's removal of `:host` rules is a second layer, not the only one. White pages (`--paper`) on the themed background: forcing Catppuccin colors onto a document
-  breaks it. A document without fonts of its own gets Calibri/Carlito/Segoe UI, not the UI font.
+- **Untrusted documents: the frame is the barrier.** A document is rendered into a `srcdoc` iframe whose own document
+  carries `<meta http-equiv="Content-Security-Policy">` as the first thing in it (`FRAME_CSP` in `documents.ts`:
+  `default-src 'none'; img-src data:; font-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'`).
+  Scripts, frames, objects, media, `<link>`, `fetch`, the ping of a link, `@import` and `@font-face` fall under
+  `default-src 'none'`; images and fonts may only be `data:` (the engine inlines both); inline styles are what the
+  engine writes. A `srcdoc` frame also inherits the page's policy, so both apply and the stricter one wins for every
+  request. "A document cannot make a network request" therefore holds by construction, whatever CSS, SVG or HTML a
+  future engine version or a crafted file produces: it no longer depends on knowing every way to name an address. The
+  page's own CSP still allows https images (the Markdown preview shows remote ones), which is why the document is not
+  attached to the page: a shadow root cannot have a policy of its own.
+  - **Sandbox:** `sandbox="allow-same-origin"` (`FRAME_SANDBOX`, set before `srcdoc`, which a test pins). The frame keeps
+    the page's origin, which the page needs to drive it (listeners on its window and document, its selection and scroll
+    position, all through plain JavaScript on `contentWindow`). Nothing else is granted: no scripts (the policy says so
+    too), no top navigation, no forms, no popups, no downloads, no modals, no pointer lock. `allow-same-origin` without
+    `allow-scripts` is safe here because nothing in the frame can run: the combination is only dangerous when the framed
+    document can remove its own sandbox. The listeners the page registers on the frame's window and document fire as
+    on any page (click, keydown, wheel, contextmenu, scroll, selection).
+  - **The frame never navigates.** Sandbox flags do not stop a frame from navigating itself (`<meta http-equiv=refresh>`,
+    a link's default action, `location`), and `on_navigation` only sees the top-level frame. `create_main_window`
+    registers a `FrameNavigationStarting` handler (WebView2 COM, the same style as the unparseable-URL guard) that cancels
+    every frame navigation except `about:srcdoc` (`navigation::cancels_frame_navigation`, unit-tested). Kladde has no
+    other frames (the Markdown sanitizer drops `iframe`, Mermaid draws inline SVG), so nothing else needs to pass. The
+    page cancels link clicks itself (see "Focus and keys"); the guard and the page's policy (`frame-src` falls back to
+    `default-src 'self'`) are the layers behind that. The test points the frame at `about:blank` and at the app's own
+    origin (neither is refused by the policies) and adds a `<meta>` refresh: the frame must stay the same document, and
+    the guard logs the cancellations.
+  - **The cleaner stays as the second layer** (`cleanDocumentNodes`, `css-scan.ts`; it also keeps the DOM small): the
+    engine builds its DOM element by element, and before the nodes are moved into the frame (nothing has been fetched
+    yet) every `<style>` is parsed into a constructable `CSSStyleSheet` (`@import` ignored), its rules are walked
+    (CSSOM), `@import` and `@property` rules are dropped and every declaration whose value refers to something other
+    than a `data:` address is removed (a tokenizer, not a regular expression, so CSS escapes such as `u\72l(` and
+    comments cannot hide an address); the same for `style` attributes and every attribute of every element (the engine
+    copies VML colors unchanged into SVG `fill` and `stroke`). Scripts, frames, objects, links, forms and media
+    elements, event handler attributes and every address attribute that is not a link's `href` go too. `:host` rules are
+    dropped as before, although the frame has no host. The guarantee does not rest on the cleaner any more.
+  - **Test hook:** with an isolated profile and `KLADDE_DOCUMENT_NO_CLEAN=1`, the viewer skips the cleaner
+    (`document_no_clean` in `lib.rs`, one cached call per run; `no_clean_for` is unit-tested to need the isolated
+    profile, so a stray variable can never switch the cleaner off in a normal installation). The e2e test renders a
+    document that tries every known way out (testing.md) that way and listens for any connection.
+  - What the checks cover (`document.test.mjs`): with the cleaner on, the per-way listeners (font-name injection,
+    `image-set(var())` through a font name and a VML style, VML fill and stroke, a linked picture) and the computed
+    styles; with it off, fourteen CSS ways (`url()`, `image-set()` also through `var()`, `border-image`,
+    `list-style-image`, `cursor`, `mask`, `filter`, `clip-path`, `shape-outside`, `content`, `@font-face`, two kinds of
+    `@import`), SVG paint attributes and a linked SVG `<image>`, a linked `<img>`, and 22 kinds of element put into the
+    live frame (`img`, `srcset`, `picture`, three `link`s, nested frames, `object`, `embed`, `video`/`audio` with a poster,
+    SVG `image`/`use`/`fill`, `input type=image`, `table background`, a `style` attribute and element, `a ping`, a form
+    submission and a `<meta>` refresh). A control frame without a policy of its own gets the same material and does
+    fetch it, so the listeners can see a leak.
 - **Layout and zoom:** pages have the document's own size (A4 is 794 px). They are shown at their size, or shrunk to the
   width of the window (fit to width, never enlarged); Kladde's zoom (keys, `Ctrl`+wheel, the same `ui.zoom` as the font
-  size) scales them on top, by the same proportion as the font size. Done with the CSS `zoom` of the host; the scroll
-  position scales with it (`overflow-anchor: none`, set by hand). The pages' width is measured when the pane has a
-  layout: a render that finishes while another tab is shown (a reload, or the first render of a background tab) has
-  none, every width reads 0, so scale, zoom and place stay as they were and the measurement waits for the tab to be
-  shown again. The place is kept in px at scale 1 across a measurement, so it is not scaled twice.
-- **Focus and keys:** the viewer takes the focus (its pane, `tabindex=0`) when its tab becomes active, after a palette or
-  dialog closed (`workspace.registerDocument`, `refocusDocument`, called by the palette, the dialogs, the Windows
-  registration dialog and the key capture dialog) and after an error is shown, never while one of them is open, so PageDown and the arrows
-  scroll without a click. Kladde's shortcuts are handled by the window's capture listener and work as everywhere.
-  `Ctrl+A` selects the document only; `Ctrl+C` is the native copy. Links are found with `event.composedPath()` (a click
-  in a shadow root is retargeted to its host) and go through `workspace.openHref` (http, https, mailto; `#bookmarks`
-  scroll). The app blocks WebView2's context menu unless the target is text it knows (`onContextMenu` in `App.svelte`: a
-  shadow host is none of them); the viewer shows its own menu with *Copy*, and only while text is selected.
+  size) scales them on top, by the same proportion as the font size. Done with the CSS `zoom` of the host element inside
+  the frame; the scroll position scales with it (`overflow-anchor: none`, set by hand). The pages' width is measured
+  when the frame has a layout: a render that finishes while another tab is shown (a reload, or the first render of a
+  background tab) has none, every width reads 0, so scale, zoom and place stay as they were and the measurement waits
+  for the tab to be shown again (the frame window's `resize` and a `ResizeObserver` on the frame element say so). The
+  place is kept in px at scale 1 across a measurement, so it is not scaled twice, and the scroll events of a frame
+  that comes back from `display: none` do not overwrite it while it is put back (`settling`).
+- **The frame scrolls itself.** The iframe fills the pane and its own document is the scroller (desk background
+  `--bg-alt`, the app's scrollbar style, pages centered, horizontal scroll when wider), instead of a frame as tall as its
+  content inside a scroll pane of the page. Why: keyboard scrolling (arrows, PageUp/PageDown, Home/End, Space) is the
+  browser's own and works with the focus in the document without any forwarding, nothing has to measure the
+  document's height across the boundary (a reload would have to resize the frame), and the frame clips whatever the
+  document positions (`position: fixed` or absolute shapes, which used to need `contain: paint` on the stage) to its box.
+  `data-removed` and `data-scale`, the hooks the tests read, are on the iframe element.
+- **Theme:** the overrides use the app's variables (`--paper`, `--paper-text`, `--paper-insert`, `--paper-delete`, and
+  `--bg-alt`, `--fg-dim` for the desk and scrollbars). Custom properties do not inherit into an iframe, so the viewer
+  copies their computed values onto the frame's root element (`FRAME_VARIABLES`, `syncTheme`) when the frame loads and on
+  every `kladde-theme` event, which `applyTheme` (flavor, accent, system mode) and `setUserTheme` (a live-edited
+  `theme.css`) dispatch. The host's font defaults (Calibri, Carlito, Segoe UI, 11 pt) are the frame's own CSS.
+- **Focus and keys:** the viewer takes the focus (the iframe element and its window) when its tab becomes active, after a
+  palette or dialog closed (`workspace.registerDocument`, `refocusDocument`, called by the palette, the dialogs, the
+  Windows registration dialog and the key capture dialog) and after an error is shown, never while one of them is open,
+  so PageDown and the arrows scroll without a click. Events do not leave a frame, so the page's window listeners
+  (`App.svelte`: shortcuts, zoom, mouse buttons) never see what happens inside it. The viewer bridges them from the
+  frame's window by dispatching a **copy of the event on the iframe element** in the page (`forward`, with
+  `keyboardInit`/`wheelInit`/`mouseInit` carrying the fields over and moving pointer coordinates by the frame's box):
+  the same capture handlers run as for any other target, including their "not while a dialog is open" rule, and when one
+  of them cancels the copy the original is cancelled too. Forwarded: every `keydown` (shortcuts such as Ctrl+W,
+  Ctrl+Tab, Ctrl+Shift+P, Ctrl+S, F5, the zoom keys), `Ctrl`+wheel (zoom; the pointer may be over the document) and the
+  mouse's back and forward buttons. Plain wheel and keys the page does not handle are the frame's own (scrolling).
+  `Ctrl+A` selects the document only (the pages, not the desk; handled in the frame after the page declined the key);
+  `Ctrl+C` is the native copy of the frame's selection. Links are found from the click's target with `closest("a")`
+  (the frame's elements belong to another realm, so no `instanceof`), the click is always cancelled, and it goes
+  through `workspace.openHref` with the file's folder as `baseDir` (http, https, mailto; `#bookmarks` scroll the
+  frame). The page's context menu handler never sees an event of the frame, which has its own: the native menu is
+  always cancelled, an own menu with *Copy* shows only while text is selected, at the pointer's place in the window (the
+  frame's coordinates plus the frame's box); a pointer press inside the frame closes it (the menu's own close on
+  `pointerdown` does not see it).
+- **Comments:** the engine registers the ranges of comments in `CSS.highlights` under `docx-comments`, on the page's
+  global. They belong in the frame, where their nodes are: the viewer takes the highlight out of the page's registry right
+  after rendering (in a queue, so two document tabs rendering at once cannot take each other's) and registers it in the
+  frame window's registry; the registries are cleared on destroy and the frame goes with the tab. (The engine ships no
+  `::highlight()` style, so nothing is painted today; the registry entry is what is kept equal to before.)
 - **Scroll position** is kept in the tab's runtime entry (`setDocumentScroll`), so it survives tab switches (the viewer is
   kept alive while hidden, so a document is not rendered again on every visit; a hidden tab has no layout, hence the
   explicit save and restore), reloads and the session.
@@ -527,6 +575,9 @@ nothing is read or loaded at startup.
   URL goes into `KLADDE_OPEN_URL_LOG` instead, like for links the page opens, and is dropped (stderr only) when the
   variable is not set, so a test can never open the real browser or mail program. A reload is a navigation to the
   own origin and is cancelled like any other later one (F5 is swallowed and the native menu is gone, see below).
+  A third handler, `FrameNavigationStarting` (`cancel_frame_navigations`), covers the frames inside the page: `on_navigation`
+  only sees the top-level frame. It cancels everything but `about:srcdoc`, the document viewer's frame
+  (`cancels_frame_navigation`), and logs `[navigation] cancelled frame navigation to <uri>`.
 - A cancelled navigation's request may still reach the server (WebView2 reports `NavigationStarting` after the request
   was prepared; a form post is already on its way), so the guard is the last line, the sanitizer and the CSP the first.
 - **Context menu**: WebView2's native menu depends on the target. On text you can type into it is Cut/Copy/Paste and
@@ -542,7 +593,8 @@ nothing is read or loaded at startup.
   cannot open native menus: that the native menu of an editable field has no navigation entries (it has none in the
   WebView2 versions we know).
 - Documents are untrusted content under a CSP that allows https images: see "Document tabs" for how the viewer keeps
-  them from fetching anything. The CSP needed no change (`img-src` and `font-src` already allow `data:`; no `blob:`).
+  them from fetching anything (a frame with a policy of its own, sandboxed, whose navigations the **frame guard**
+  cancels). The page's CSP needed no change (`img-src` and `font-src` already allow `data:`; no `blob:`).
 - Capabilities (`capabilities/default.json`) grant window show/focus/title/destroy/theme, dialogs, opener.
 - Tauri's `dragDropEnabled: true` delivers file drops but disables HTML5 drag and drop in the page: tab reordering
   uses pointer events instead.

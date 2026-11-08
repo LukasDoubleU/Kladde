@@ -66,16 +66,26 @@ The default preset contains deliberate choices; presets (Notepad++, VS Code) and
   change. Its output is not re-colored with the theme (forcing Catppuccin colors onto it breaks documents): the pages
   are white (`--paper`), only the surroundings follow the theme.
 - **No remote content, ever.** A document cannot load anything from the network (linked images, styles, fonts, VML
-  backgrounds, SVG paint attributes, addresses smuggled through custom properties and `image-set(var())`): the viewer
-  removes every address that is not `data:` before attaching anything. This follows the privacy rule (nothing leaves
-  the machine unless the user turns it on) and a document is a file from someone else.
-- **The cleaner, not an iframe (for now).** A sandboxed `srcdoc` iframe with its own meta CSP (`img-src data:`) would
-  be a boundary that does not depend on knowing every way CSS and SVG can name an address, and it is the stronger
-  design. It was not chosen because the viewer would then need its own scroll, focus, keyboard, selection, zoom and link
-  plumbing across the frame boundary (the shortcuts, Ctrl+A/Ctrl+C and the context-menu rules all rely on the window's
-  listeners), a much larger change than the fix that was needed. The cleaner is therefore the only barrier and is
-  tested with one listener per known way in; a new way in is a bug to fix there, and moving to a frame is the next step
-  if one turns up. Dropping `https:` from `img-src` is not possible: the Markdown preview shows remote images.
+  backgrounds, SVG paint attributes, addresses smuggled through custom properties and `image-set(var())`). This holds
+  by construction: the document is shown in a sandboxed `srcdoc` frame whose own CSP allows nothing but `data:` images
+  and fonts, and the viewer's cleaner (every address that is not `data:` removed before anything is attached) is the
+  second layer. This follows the privacy rule (nothing leaves the machine unless the user turns it on) and a document
+  is a file from someone else.
+- **A frame with a policy of its own, not a cleaner alone (issue #24).** The first version (#22) kept a document from
+  the network with a deny-list cleaner over the rendered DOM and CSS, attached into a shadow root of Kladde's own
+  page, whose CSP allows https images for the Markdown preview. A review found four ways past the first version, all
+  fixed, and a deny-list has no end. So the document is now rendered into a same-origin `srcdoc` iframe with its own
+  `<meta>` CSP (`default-src 'none'; img-src data:; font-src data:; style-src 'unsafe-inline'`, plus `base-uri` and
+  `form-action`), which a shadow root cannot have, sandboxed with `allow-same-origin` only, and a navigation guard
+  cancels every frame navigation but `about:srcdoc`. The cost was the plumbing the earlier decision had weighed
+  (scroll, focus, keyboard, selection, zoom, link and context-menu handling across the frame boundary); it is a small
+  bridge in the viewer (events copied from the frame to the page's own handlers, see architecture.md), and the
+  frame scrolls itself so that keyboard scrolling needs none. The cleaner stays as a second layer. Dropping `https:`
+  from the page's `img-src` is still not possible: the Markdown preview shows remote images. Two choices worth knowing:
+  `allow-same-origin` is granted because the page drives the frame (without it the frame's document is unreachable
+  from the page); that is safe because no script can run in the frame (no `allow-scripts`, and the policy forbids
+  them). And the Rust guard exists because sandbox flags and the page's `frame-src` do not cover a `<meta>` refresh
+  or a script-free `location` change in the way a navigation guard does.
 - **Tracked changes and comments are shown**, as markup (insertions underlined, deletions struck through, comments as a
   marker with the text on hover), because the alternative (insertions as plain text, deletions and comments dropped) shows a
   text that is not what the file says.

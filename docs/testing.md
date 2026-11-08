@@ -5,8 +5,8 @@
 | Command | What it covers | Needs |
 |---|---|---|
 | `npm run check` | svelte-check (types of all `.ts`/`.svelte`) | — |
-| `npm run test:unit` | Node's test runner on `tests/unit/*.test.mjs`: formatters, keys/presets, grammar text side, themes, settings metadata, update manifest, last-check time format, link finding and heading anchors, the CSP and the asset scope in `tauri.conf.json`, the document viewer's pure parts (container signatures, zoom and fit, the CSS scan for addresses in declarations, escapes included) | — |
-| `cd src-tauri && cargo test` | file I/O and encodings (binary and lossy flags), safe saving, large viewer (index, search, piece table, editing, streaming save, journal), LanguageTool client (local socket), local LanguageTool (hash check, download, atomic install, version cleanup, routing, idle stop, start/stop/crash of a stand-in process, job object), registry code (throwaway key), updater helpers, the URL classification of the navigation guard, the size limit of the document reader | Rust |
+| `npm run test:unit` | Node's test runner on `tests/unit/*.test.mjs`: formatters, keys/presets, grammar text side, themes, settings metadata, update manifest, last-check time format, link finding and heading anchors, the CSP and the asset scope in `tauri.conf.json`, the document viewer's pure parts (container signatures, zoom and fit, the frame's policy, sandbox and starting document, the copies of keyboard, wheel and mouse events, the CSS scan for addresses in declarations, escapes included) | — |
+| `cd src-tauri && cargo test` | file I/O and encodings (binary and lossy flags), safe saving, large viewer (index, search, piece table, editing, streaming save, journal), LanguageTool client (local socket), local LanguageTool (hash check, download, atomic install, version cleanup, routing, idle stop, start/stop/crash of a stand-in process, job object), registry code (throwaway key), updater helpers, the URL classification of the navigation guard and the frame guard's decision (`about:srcdoc` only), the isolated-profile check of the document cleaner hook, the size limit of the document reader | Rust |
 | `npm run test:e2e` | the real app through the DevTools protocol: `tests/e2e/*.test.mjs` | `npx tauri build --debug --no-bundle` first |
 
 Run all four before merging anything. For e2e prefer `node --test --test-concurrency=1 "tests/e2e/*.test.mjs"`:
@@ -54,7 +54,7 @@ Rules:
 | smoke | 9340 |
 | compare | 9371–9373 |
 | format | 9343, 9363–9365 |
-| document | 9427–9440 |
+| document | 9427–9440, 9445–9447 |
 | grammar | 9387–9389 |
 | binary-save | 9413–9419 (one app at a time; every port is reused once or twice) |
 | hot-exit | 9344, 9354–9358, 9380, 9390, 9400–9404 |
@@ -69,7 +69,7 @@ Rules:
 | theme | 9348, 9381–9383 |
 | update | 9349, 9359–9362, 9366–9368, 9394–9396 |
 
-Free for new files: 9445 and up (9380 and 9390 are taken by hot-exit now).
+Free for new files: 9448 and up (9380 and 9390 are taken by hot-exit now).
 
 ## Environment variables
 
@@ -87,6 +87,7 @@ Free for new files: 9445 and up (9380 and 9390 are taken by hot-exit now).
 | `KLADDE_SESSION_DELAY_MS` | Waits this many ms before every write of `session.json` (isolated profile only); with the old write order it holds the session back after the backups, so a test can kill Kladde inside that window |
 | `KLADDE_BACKUP_DELAY_MS` | Waits this many ms before every write of a text backup (isolated profile only); the window between the session naming a tab and its backup being written |
 | `KLADDE_OPEN_URL_LOG` | File that receives every external link (http, https, mailto) one URL per line, instead of the browser starting (isolated profile only); tests assert the URL that would have been opened. "Open in default app" of the document viewer logs the file's path here instead of starting Word |
+| `KLADDE_DOCUMENT_NO_CLEAN` | `1` makes the document viewer skip its cleaning of the rendered document (isolated profile only; any other value or a normal profile is ignored), so a test can prove that the viewer's frame alone keeps a document from the network |
 | `KLADDE_E2E_START_TIMEOUT` | Harness: how long to wait for the app to come up (ms, default 20000; CI uses 90000) |
 
 ## Pitfalls we hit (and how the harness handles them)
@@ -132,21 +133,36 @@ Free for new files: 9445 and up (9380 and 9390 are taken by hot-exit now).
 - **Documents (`document.test.mjs`):** the Word files are generated at test time with the `docx` package
   (devDependency; `docx-fixtures.mjs`: deflated zips with a fixed test author, never a file saved by Word, nothing
   committed as a binary) and post-edited with JSZip where a test needs hostile XML (a style injected through a font
-  name, a VML shape that is `position: fixed`, an external image). The no-network test starts one TCP listener per
-  way in (a plain `url()`, an address hidden in a custom property that `image-set(var())` pastes in, through a font
-  name and through a VML style, VML fill and stroke colors that become SVG attributes, a linked VML picture) and puts
-  its address into the document: any connection is a leak, and the failure names the listener; the page's own
-  requests are logged through a second DevTools connection, and the computed styles are searched for addresses. A
-  `:host` rule injected through a font name must be gone and the tab bar and status bar must stay what a click hits
-  (the test also turns the containment off to see that the document then does cover them). The test fails when the
-  cleaning in `lib/document-clean.ts` and `lib/css-scan.ts` is removed or reverted (checked by hand against the
-  version before the review fixes: the font-name custom property was contacted). The hidden-render test narrows the
-  window, scrolls, reloads the document while another tab is shown (F5, then Ctrl+Tab within the 300 ms debounce) and
-  checks fit, zoom and place after returning, once fitted and once with Kladde's zoom. The page count in the status bar
-  is the file's own (`appPages` of `makeDocx` writes `docProps/app.xml`; the `docx` package writes none). The half-written-file test writes the first
-  half of a document over the file and fails when the viewer shows an error instead of reading again. Focus is never
-  set by the tests: they click a tab and press PageDown. `Ctrl+O` is not pressed (it opens a native dialog); the other
-  shortcuts go through the same window listener. A 51 MB file of zeros is written for the size limit.
+  name, a VML shape that is `position: fixed`, an external image). The document is shown in an iframe
+  (`.fill:not(.hidden) .document-view .frame`) whose own document scrolls: the tests reach into `contentDocument`
+  (`ROOT`), read the scroll position from its `scrollingElement` (`PANE`), and the hooks `data-removed` and `data-scale`
+  are on the iframe element. Coordinates inside the frame are the frame's: add the frame's box for CDP mouse events and
+  for where the context menu should appear. Real keys and wheel events go through CDP and reach whichever frame has the
+  focus or is under the pointer (the shortcut test asserts that the focus is in the frame; the zoom test that the
+  pointer is over it). The no-network test (cleaner **on**) starts one TCP listener per way in (a plain `url()`, an
+  address hidden in a custom property that `image-set(var())` pastes in, through a font name and through a VML style,
+  VML fill and stroke colors that become SVG attributes, a linked VML picture) and puts its address into the document:
+  any connection is a leak, and the failure names the listener; the page's own requests are logged through a second
+  DevTools connection, and the computed styles are searched for addresses. It fails when the cleaning in
+  `lib/document-clean.ts` and `lib/css-scan.ts` is removed *and* the frame's policy is too; the next test is the one
+  that isolates the frame. **The cleaner-off test** starts the app with `KLADDE_DOCUMENT_NO_CLEAN=1`
+  (`makeEscapeDocx`: fourteen CSS ways through font names, SVG paint attributes, a linked picture and a linked
+  drawing, one listener each), then puts 22 kinds of element into the live frame (`ELEMENT_WAYS`: images, `link`s,
+  frames, media, SVG, forms, `a ping`, a `<meta>` refresh) and waits: no listener may be contacted. It asserts that the
+  cleaner really was off (`data-removed` is 0, the addresses are in the CSS and the attributes, the computed style
+  holds one) and ends with a **control**: the same material in a frame *without* the meta policy (only the page's
+  policy applies, which allows https images) must reach a set of listeners, so a passing run cannot be a test that is
+  unable to see a leak. The frame-navigation test points the frame at `about:blank` and at the app's own origin with
+  `location.assign` (the policies do not refuse these; only the Rust guard stands in the way) and adds a `<meta>`
+  refresh, then expects the same document object and the guard's stderr lines. The theme test changes the flavor and a
+  variable the way the app does (`kladde-theme`) and compares the frame's copies of the variables and what is painted.
+  The hidden-render test narrows the window, scrolls, reloads the document while another tab is shown (F5, then
+  Ctrl+Tab within the 300 ms debounce) and checks fit, zoom and place after returning, once fitted and once with
+  Kladde's zoom. The page count in the status bar is the file's own (`appPages` of `makeDocx` writes
+  `docProps/app.xml`; the `docx` package writes none). The half-written-file test writes the first half of a document
+  over the file and fails when the viewer shows an error instead of reading again. Focus is never set by the tests: they
+  click a tab and press PageDown. `Ctrl+O` is not pressed (it opens a native dialog); the other shortcuts go through the
+  same window listener. A 51 MB file of zeros is written for the size limit.
 - **Large files:** lower `largeFileThresholdMB` in the isolated profile's `settings.json` instead of generating
   huge fixtures; delete generated files. Editing tests focus `.large .input` (the hidden textarea), type with
   `type()`/`key()` and check `.large .line .text`; a kill is only safe once the journal in `data/backup`
