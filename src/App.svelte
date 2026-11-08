@@ -78,6 +78,12 @@
     { id: "file.open", label: "Open file…", keys: ["Ctrl+O"], run: () => workspace.openWithDialog() },
     { id: "file.save", label: "Save", keys: ["Ctrl+S"], run: () => workspace.save(), enabled: editableTab },
     { id: "file.saveAs", label: "Save as…", keys: ["Ctrl+Shift+S"], run: () => workspace.saveAs(), enabled: editableTab },
+    {
+      id: "file.editAnyway",
+      label: "Edit anyway (make a file that is not text editable)",
+      run: () => workspace.active && workspace.editAnyway(workspace.active),
+      enabled: () => !!workspace.active && workspace.isReadOnly(workspace.active),
+    },
     { id: "file.saveAll", label: "Save all", keys: ["Ctrl+Alt+Shift+S"], run: () => workspace.saveAll() },
     {
       id: "file.close",

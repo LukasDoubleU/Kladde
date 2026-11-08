@@ -184,7 +184,11 @@ Key mechanisms:
   writes nothing and succeeds (`unchanged`), so Ctrl+S on an untouched file keeps its bytes: mixed line endings,
   a .docx, anything the editor cannot round-trip. Exceptions: the file is gone from the disk (checked with
   `stat`; saving recreates it; large tabs likewise), and Save As, which always writes (`writeText(tab, true)`).
-  Callers: Save, Save all and the close prompt only reach `save` for dirty tabs; a failed or cancelled save keeps the tab open and dirty.
+  Callers: Save all and the close prompt only reach `save` for dirty tabs; Save (Ctrl+S, `file.save`) calls it for any
+  tab, which is why a clean tab must write nothing (it still calls `onConfigSaved`, so saving an unchanged
+  settings, keybindings or theme file applies it). A failed or cancelled save keeps the tab open and dirty.
+  A file that vanished sets `rt.gone` (dirty, so hot exit keeps the text, but not `metaDirty`): it clears when the file
+  comes back with the same modification time, and a tab with `gone` is never "unchanged".
 - **Files that are not text:** a tab with `binary` or `lossy` is read-only (`workspace.isReadOnly`: flags and not
   `tab.unlocked`) in text tabs (the `readOnly` compartment, `EditorState.readOnly`: CodeMirror's commands, typing,
   paste, drop and the search panel's replace refuse; `format` and the image paste check it themselves) and in the large
@@ -193,8 +197,10 @@ Key mechanisms:
   (`confirmNonTextWrite`, remembered in `rt.bytesConfirmed`; Cancel is the default button and keeps the tab dirty).
   Changing encoding or line ending of a read-only tab is refused. A reload (external change, F5) keeps `unlocked`
   while the file stays binary or lossy. On restore, a tab with edits (dirty after the backup was applied, or a large
-  journal) comes back unlocked so the user can save them, an unedited one read-only; a vanished file keeps its
-  `binary`/`lossy` from the session (optional fields).
+  journal) comes back unlocked so the user can save them, an unedited one read-only (a discarded journal locks it
+  again); a vanished file keeps its `binary`/`lossy` from the session (optional fields). `unlocked` is only ever set
+  for a tab that is binary or lossy (so a restored text tab that later turns lossy is read-only). Read-only tabs are
+  not grammar checked (`grammarEligible`) and a grammar fix refuses to edit a read-only view.
 - `workspace.openPath(path, { asText: true })` opens a file in a text tab although its type would route it elsewhere
   (images today; a viewer for other types, offering "Open as text", later). It ignores a viewer tab that already
   shows the path (a text or large tab of the path is activated instead), and size still picks the large viewer.

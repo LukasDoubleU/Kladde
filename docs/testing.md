@@ -55,7 +55,7 @@ Rules:
 | compare | 9371–9373 |
 | format | 9343, 9363–9365 |
 | grammar | 9387–9389 |
-| binary-save | 9413–9419 (one app at a time; 9413 is used twice) |
+| binary-save | 9413–9419 (one app at a time; every port is reused once or twice) |
 | hot-exit | 9344, 9354–9358, 9380, 9390, 9400–9404 |
 | integration | 9347 |
 | keys | 9350–9351, 9384–9386 |
@@ -125,7 +125,9 @@ Free for new files: 9420 and up (9380 and 9390 are taken by hot-exit now).
 - **Files that are not text:** `binary-save.test.mjs` compares SHA-256 (and mtime, to prove nothing was written)
   of generated files before and after Ctrl+S: a binary blob with lone CR bytes, a .docx-like stored zip (`zip.mjs`),
   a text file with mixed line endings, the same in the large viewer (threshold lowered), the read-only banner, "Edit
-  anyway", the confirmation dialog (Cancel, then Save anyway), and a crash with an edited and an unedited binary tab.
+  anyway", the confirmation dialog (Cancel, then Save anyway), and a crash with an edited and an unedited binary tab (also a restored text tab that later turns lossy, a discarded large
+  journal, a file that vanishes and returns, and grammar checking, which skips read-only tabs; a fake LanguageTool
+  records what it is sent).
   The zip is named `.zip`, not `.docx`, so the test does not depend on how Kladde routes Office files.
 - **Data loss:** any change to saving, backups or the session must be verified by killing the app with unsaved
   changes and checking the restore (`hot-exit.test.mjs` does it; it also proves the typing throttle by failing

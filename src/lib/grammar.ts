@@ -239,6 +239,8 @@ function diagnosticOf(f: Finding, text: string): Diagnostic {
   const actions: Action[] = f.replacements.map((value) => ({
     name: label(value),
     apply: (view: EditorView, from: number, to: number) => {
+      // Dispatching ignores EditorState.readOnly: a fix must not edit a tab that was opened read-only.
+      if (view.state.readOnly) return;
       view.dispatch({ changes: { from, to, insert: value }, userEvent: "input.complete" });
     },
   }));

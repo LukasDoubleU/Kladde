@@ -83,7 +83,7 @@ it, but I may decline requests that don't fit how I work, and there is no promis
   keeps CRLF, LF or CR line endings.
 - Files that are not text (a .docx, a zip, most PDFs: NUL bytes, or bytes that are not valid in the encoding)
   open read-only with a banner, because the editor shows decoded text and saving it again cannot give back the
-  original bytes. **Edit anyway** makes the tab editable; the first save then asks once. The same holds in the
+  original bytes. **Edit anyway** (the banner button, or the command of the same name in the command palette) makes the tab editable; the first save then asks once. The same holds in the
   large file view. A tab without changes is never written: `Ctrl+S` on an unchanged file does nothing (unless
   the file was deleted, then it is written again), so mixed line endings stay as they are until you edit.
 - Large files: anything above 32 MB opens in the large file view, which indexes lines in the background and

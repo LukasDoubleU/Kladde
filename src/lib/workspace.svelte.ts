@@ -75,6 +75,11 @@ interface Runtime {
   saved: Text;
   /** Encoding or line ending changed: needs saving although the text is unchanged. */
   metaDirty: boolean;
+  /**
+   * The file is gone from the disk: the tab counts as dirty (so hot exit keeps its text) but is not changed.
+   * It clears when the file comes back unchanged; a save while it is gone writes the file again.
+   */
+  gone?: boolean;
   scrollTop: number;
   version: number;
   /** The version last written as a backup; -1 if never. */
@@ -350,6 +355,8 @@ class Workspace {
   private applyReadOnly(tab: Tab) {
     if (tab.kind !== "text") return;
     this.reconfigure(tab, readOnly.reconfigure(EditorState.readOnly.of(this.isReadOnly(tab))));
+    // Grammar checking skips read-only tabs (see grammarEligible).
+    if (tab.id === this.activeId) void this.applyGrammar();
   }
 
   /** The "Edit anyway" button: makes a read-only binary or lossy tab editable. */
@@ -392,7 +399,7 @@ class Workspace {
     if (update.docChanged) {
       const rt = this.runtime.get(tab.id)!;
       rt.version++;
-      const dirty = rt.metaDirty || !this.isSaved(rt, update.state.doc);
+      const dirty = rt.metaDirty || !!rt.gone || !this.isSaved(rt, update.state.doc);
       if (tab.dirty !== dirty) tab.dirty = dirty;
       this.schedulePreview();
       this.scheduleSession();
@@ -435,7 +442,8 @@ class Workspace {
 
   /** Markdown and plain text, or every text file with the languageToolAllFiles setting. */
   private grammarEligible(tab: Tab | undefined): boolean {
-    return !!tab && tab.kind === "text" && (settings.languageToolAllFiles || tab.language === null || isMarkdown(tab.language));
+    // A read-only tab is neither checked nor sent to the server: its text is not text, and a quick fix would edit it.
+    return !!tab && tab.kind === "text" && !this.isReadOnly(tab) && (settings.languageToolAllFiles || tab.language === null || isMarkdown(tab.language));
   }
 
   private grammarHost: GrammarHost = {
@@ -987,7 +995,7 @@ class Workspace {
       tab.journal = null;
       tab.dirty = result.dirty;
       // Restored edits must stay editable (and saveable); a journal that is gone leaves the tab as freshly opened.
-      tab.unlocked = result.dirty;
+      tab.unlocked = result.dirty && (tab.binary || tab.lossy);
       tab.revision++;
       // The journal on disk is this state already.
       const rt = this.runtime.get(tab.id);
@@ -1003,6 +1011,8 @@ class Workspace {
   discardLargeJournal(tab: Tab) {
     tab.journal = null;
     tab.dirty = false;
+    // Nothing is left to save: a binary or lossy file is read-only again, as when opened.
+    tab.unlocked = false;
     this.scheduleSession();
   }
 
@@ -1128,7 +1138,8 @@ class Workspace {
   private unchanged(tab: Tab): boolean {
     const rt = this.runtime.get(tab.id);
     const state = this.stateOf(tab);
-    return !!rt && !!state && !rt.metaDirty && this.isSaved(rt, state.doc);
+    // A file that vanished (`gone`) is not unchanged: saving puts it back, even if the poll has not noticed yet.
+    return !!rt && !!state && !rt.metaDirty && !rt.gone && this.isSaved(rt, state.doc);
   }
 
   /** Writes a text tab to `tab.path`; `force` (Save As) writes even if nothing changed. */
@@ -1137,7 +1148,12 @@ class Workspace {
     try {
       if (!force && this.unchanged(tab)) {
         // Edits made while the disk was asked are not lost: the tab is not unchanged any more and gets written.
-        if ((await api.statFile(tab.path)).exists && this.unchanged(tab)) return true;
+        if ((await api.statFile(tab.path)).exists && this.unchanged(tab)) {
+          // Saving a settings, keybindings or theme file is also how it is applied (it may have changed on disk
+          // and been reloaded into the tab): nothing is written, the config is read again.
+          this.onConfigSaved(tab.path);
+          return true;
+        }
       }
       if (!(await this.confirmNonTextWrite(tab))) return false;
       const state = this.stateOf(tab);
@@ -1147,6 +1163,7 @@ class Workspace {
       const rt = this.runtime.get(tab.id)!;
       rt.saved = doc;
       rt.metaDirty = false;
+      rt.gone = false;
       tab.mtime = mtime;
       tab.external = null;
       tab.dirty = !this.isSaved(rt, this.stateOf(tab)!.doc);
@@ -1252,6 +1269,7 @@ class Workspace {
       else rt.state = state.update({ changes: change }).state;
       rt.saved = this.stateOf(tab)!.doc;
       rt.metaDirty = false;
+      rt.gone = false;
       Object.assign(tab, {
         encoding: content.encoding,
         bom: content.bom,
@@ -1312,6 +1330,25 @@ class Workspace {
     this.scheduleSession();
   }
 
+  /** The file vanished: the tab is dirty until it is saved (which writes the file again) or the file comes back. */
+  private markGone(tab: Tab) {
+    const rt = this.runtime.get(tab.id);
+    if (!rt) return;
+    rt.gone = true;
+    tab.dirty = true;
+    this.scheduleSession();
+  }
+
+  /** The file is back as it was (same modification time): the tab is as dirty as its text says, not more. */
+  private clearGone(tab: Tab) {
+    const rt = this.runtime.get(tab.id);
+    const state = this.stateOf(tab);
+    if (!rt?.gone || !state) return;
+    rt.gone = false;
+    tab.dirty = rt.metaDirty || !this.isSaved(rt, state.doc);
+    this.scheduleSession();
+  }
+
   /** Detects files changed or deleted by other programs. */
   async checkExternalChanges(only?: Tab) {
     const tabs = (only ? [only] : this.tabs).filter((t) => t.path);
@@ -1333,7 +1370,7 @@ class Workspace {
       if (!stat.exists) {
         if (tab.external !== "deleted") {
           tab.external = "deleted";
-          if (tab.kind === "text") this.markMetaDirty(tab);
+          if (tab.kind === "text") this.markGone(tab);
         }
       } else if (tab.kind === "large") {
         if (stat.mtime !== tab.mtime || stat.size !== tab.size) void this.refreshLarge(tab, stat);
@@ -1344,6 +1381,7 @@ class Workspace {
         else if (tab.external === null) tab.external = "modified";
       } else if (tab.external === "deleted") {
         tab.external = null;
+        if (tab.kind === "text") this.clearGone(tab);
       }
     });
   }
@@ -1970,7 +2008,7 @@ class Workspace {
         // was written can leave an older session file, and a journal must never be pruned unseen.
         tab.dirty = saved.hasBackup;
         // Edits that come back from the journal stay editable (see restoreLargeJournal); an unedited tab is read-only again.
-        tab.unlocked = saved.hasBackup;
+        tab.unlocked = saved.hasBackup && (tab.binary || tab.lossy);
         tab.journal = "restoring";
         void this.restoreLargeJournal(tab);
       }
@@ -2021,7 +2059,7 @@ class Workspace {
     }
     // A binary or lossy file comes back read-only, unless it has edits: those are only worth restoring if the
     // user can still save them.
-    tab.unlocked = tab.dirty;
+    tab.unlocked = tab.dirty && (tab.binary || tab.lossy);
     this.runtime.set(tab.id, rt);
     this.applyReadOnly(tab);
     this.tabs.push(tab);

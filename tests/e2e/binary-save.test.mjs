@@ -5,9 +5,11 @@
 //   npx tauri build --debug --no-bundle && node --test tests/e2e/binary-save.test.mjs
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
+import { createServer } from "node:http";
+import { appendFileSync, existsSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
+import { matchesIn, readable } from "./fake-lt.mjs";
 import { launch, removeProfile, tempProfile, writeFixture } from "./kladde.mjs";
 import { makeZip } from "./zip.mjs";
 
@@ -73,6 +75,27 @@ async function openTab(app, title) {
     await app.cdp.send("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 });
   }
   await app.waitFor(activeIs(title));
+}
+
+/** "Change encoding" > "Reopen with encoding" > the first encoding that starts with `name`. */
+async function reopenAs(app, name) {
+  await app.key("Ctrl+Shift+P");
+  await app.type("Change encoding");
+  await app.waitFor(`document.querySelector('.picker [role=option]')`);
+  await app.key("Enter");
+  await app.waitFor(`[...document.querySelectorAll('.picker [role=option]')].some((o) => o.textContent.includes('Reopen with encoding'))`);
+  await app.key("Enter");
+  await app.waitFor(`[...document.querySelectorAll('.picker [role=option]')].some((o) => o.textContent.trim().startsWith(${JSON.stringify(name)}))`);
+  await app.type(name);
+  await app.waitFor(`document.querySelector('.picker [role=option]')?.textContent.trim().startsWith(${JSON.stringify(name)})`);
+  await app.key("Enter");
+}
+
+async function runCommand(app, text) {
+  await app.key("Ctrl+Shift+P");
+  await app.type(text);
+  await app.waitFor(`document.querySelector('.picker [role=option]')`);
+  await app.key("Enter");
 }
 
 /** Typing, a printable key, Enter and Backspace in a read-only tab change nothing. */
@@ -230,16 +253,7 @@ test("Edit anyway, then the first save asks once; Cancel keeps the tab unsaved",
     // A lossy file (no NUL bytes, but not valid in its encoding) is read-only as well, also after a reload.
     await openTab(app, "latin.json");
     assert.equal(await banner(app), null, "valid as ANSI: a normal text tab");
-    await app.key("Ctrl+Shift+P");
-    await app.type("Change encoding");
-    await app.waitFor(`document.querySelector('.picker [role=option]')`);
-    await app.key("Enter");
-    await app.waitFor(`[...document.querySelectorAll('.picker [role=option]')].some((o) => o.textContent.includes('Reopen with encoding'))`);
-    await app.key("Enter");
-    await app.waitFor(`[...document.querySelectorAll('.picker [role=option]')].some((o) => o.textContent.trim().startsWith('UTF-8'))`);
-    await app.type("UTF-8");
-    await app.waitFor(`document.querySelector('.picker [role=option]')?.textContent.trim().startsWith('UTF-8')`);
-    await app.key("Enter");
+    await reopenAs(app, "UTF-8");
     await app.waitFor(`document.querySelector('.banner.readonly')`);
     assert.match(await footer(app), /invalid bytes/);
 
@@ -328,6 +342,123 @@ test("a binary tab edited after Edit anyway comes back editable after a crash, a
     assert.equal(sha(readFileSync(untouched)), sha(originals[1]));
   } finally {
     await app.kill();
+    await removeProfile(dir);
+  }
+});
+
+test("a text tab that came back from a backup with edits is read-only when its file later turns lossy", async () => {
+  const dir = tempProfile("kladde-binary-save-restored-text");
+  const latin = Buffer.concat([Buffer.from("caf"), Buffer.from([0xe9]), Buffer.from("\nline two\n")]);
+  const file = writeFixture(dir, "latin.txt", latin);
+  let app = await launch({ port: 9414, profile: dir, files: [file] });
+  try {
+    await app.waitFor(activeIs("latin.txt"));
+    assert.equal(await banner(app), null, "valid as ANSI: a normal text tab");
+    await focusEditor(app);
+    await app.key("Ctrl+End");
+    await app.type("EDIT");
+    await until(() => sessionTab(dir, "latin.txt")?.hasBackup && backupTexts(dir).some((t) => t.includes("EDIT")), "the backup");
+  } finally {
+    await app.kill();
+  }
+
+  app = await launch({ port: 9415, profile: dir });
+  try {
+    await app.waitFor(activeIs("latin.txt"));
+    assert.deepEqual(await dirtyTabs(app), ["latin.txt"]);
+    await focusEditor(app);
+    await app.key("Ctrl+S");
+    await app.waitFor(`!document.querySelector('.tab.dirty')`, 10000);
+    assert.equal(await dialog(app), null, "a text file needs no question");
+    const saved = readFileSync(file);
+    assert.ok(saved.includes("EDIT"));
+
+    // The same tab, read as UTF-8: the Latin-1 byte is invalid there. The restore must not have left it unlocked.
+    await reopenAs(app, "UTF-8");
+    await app.waitFor(`document.querySelector('.banner.readonly')`);
+    assert.match(await footer(app), /invalid bytes/);
+    assert.match(await footer(app), /read-only/);
+    await focusEditor(app);
+    await typeIntoReadOnly(app);
+    await app.key("Ctrl+S");
+    await sleep(300);
+    assert.equal(sha(readFileSync(file)), sha(saved));
+  } finally {
+    await app.kill();
+    await removeProfile(dir);
+  }
+});
+
+test("a file that vanishes and comes back unchanged is not written again by Save", async () => {
+  const dir = tempProfile("kladde-binary-save-flicker");
+  const content = "crlf one\r\nlf two\nthree\rfour\r\n";
+  const file = writeFixture(dir, "mixed.txt", content);
+  const away = `${file}.away`;
+  const app = await launch({ port: 9416, profile: dir, files: [file] });
+  try {
+    await app.waitFor(activeIs("mixed.txt"));
+    const stamp = statSync(file).mtimeMs;
+    await focusEditor(app);
+    renameSync(file, away);
+    await app.waitFor(`document.querySelector('.banner')?.textContent.includes('deleted')`, 10000);
+    assert.deepEqual(await dirtyTabs(app), ["mixed.txt"], "a vanished file keeps its tab dirty, so hot exit has its text");
+    renameSync(away, file);
+    await app.waitFor(`!document.querySelector('.banner')`, 10000);
+    assert.equal(statSync(file).mtimeMs, stamp, "same modification time");
+    await app.waitFor(`!document.querySelector('.tab.dirty')`, 10000);
+
+    await app.key("Ctrl+S");
+    await sleep(400);
+    assert.equal(readFileSync(file, "utf8"), content, "the line endings were not normalized");
+    assert.equal(statSync(file).mtimeMs, stamp);
+  } finally {
+    await app.kill();
+    await removeProfile(dir);
+  }
+});
+
+/** A LanguageTool stand-in that only records what it was sent (it flags "eror", see fake-lt.mjs). */
+async function fakeServer() {
+  const requests = [];
+  const server = createServer((req, res) => {
+    let body = "";
+    req.on("data", (d) => (body += d));
+    req.on("end", () => {
+      const annotation = JSON.parse(new URLSearchParams(body).get("data")).annotation;
+      requests.push(annotation.map((i) => i.text ?? "").join(""));
+      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ matches: matchesIn(readable(annotation)) }));
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  return { requests, url: `http://127.0.0.1:${server.address().port}`, close: () => server.close() };
+}
+
+test("grammar checking skips a read-only tab; the Edit anyway command unlocks it", async () => {
+  const dir = tempProfile("kladde-binary-save-grammar");
+  const server = await fakeServer();
+  writeFixture(join(dir, "data"), "settings.json", JSON.stringify({ languageToolServer: server.url }));
+  const bytes = Buffer.concat([Buffer.from("Some eror here.\r\n"), Buffer.alloc(40), Buffer.from("tail\r")]);
+  const file = writeFixture(dir, "notes.bin", bytes);
+  const app = await launch({ port: 9417, profile: dir, files: [file] });
+  try {
+    await app.waitFor(activeIs("notes.bin"));
+    assert.equal(await banner(app), `${BANNER} Edit anyway`);
+    await runCommand(app, "toggle grammar checking");
+    await app.waitFor(`document.querySelector('.notice')?.textContent.includes('Grammar checking on')`, 10000);
+    await sleep(2000);
+    assert.equal(server.requests.length, 0, "the decoded bytes of a read-only tab are not sent anywhere");
+    assert.equal(await app.eval(`document.querySelectorAll('.cm-lt-spelling').length`), 0);
+
+    // The command is in the palette and does what the button does.
+    await runCommand(app, "Edit anyway");
+    await app.waitFor(`!document.querySelector('.banner.readonly')`);
+    await app.waitFor(`document.querySelectorAll('.cm-lt-spelling').length === 1`, 10000);
+    assert.ok(server.requests.some((r) => r.includes("Some eror here")), "now it is checked like any text");
+    assert.deepEqual(await dirtyTabs(app), []);
+    assert.equal(sha(readFileSync(file)), sha(bytes));
+  } finally {
+    await app.kill();
+    server.close();
     await removeProfile(dir);
   }
 });
@@ -454,6 +585,48 @@ test("a large binary file edited after Edit anyway comes back editable after a c
     await clickButton(app, ".dialog button", "Save anyway");
     await app.waitFor(`!document.querySelector('.tab.dirty')`, 10000);
     assert.equal(sha(readFileSync(file)), sha(Buffer.concat([Buffer.from("MONE "), bytes])));
+  } finally {
+    await app.kill();
+    await removeProfile(dir);
+  }
+});
+
+test("discarding the journal of a large binary file makes it read-only again", async () => {
+  const dir = tempProfile("kladde-binary-save-large-discard");
+  largeSettings(dir);
+  const bytes = largeBinary();
+  const file = writeFixture(dir, "discard.bin", bytes);
+  let app = await launch({ port: 9418, profile: dir, files: [file] });
+  try {
+    await waitLarge(app);
+    await editAnyway(app);
+    await focusView(app);
+    await app.key("Ctrl+Home");
+    await app.type("ONE ");
+    await until(() => journalAdded(dir) === 4, "the journal of the edit");
+  } finally {
+    await app.kill();
+  }
+  // Another program changes the file while Kladde is not running: the journal no longer fits.
+  appendFileSync(file, "appended later\r\n");
+  const changed = readFileSync(file);
+
+  app = await launch({ port: 9419, profile: dir });
+  try {
+    await app.waitFor(`document.querySelector('.banner')?.textContent.includes('changed since')`, 10000);
+    await waitLarge(app);
+    await clickButton(app, ".banner button", "Discard my changes");
+    await app.waitFor(`!document.querySelector('.tab.dirty')`, 10000);
+    await app.waitFor(`document.querySelector('.banner.readonly')`, 10000);
+    const head = await firstLine(app);
+    assert.match(head, /^HEAD/);
+    await focusView(app);
+    await app.key("Ctrl+Home");
+    await app.type("typed");
+    await sleep(200);
+    assert.equal(await firstLine(app), head, "the tab is not editable without Edit anyway");
+    assert.deepEqual(await dirtyTabs(app), []);
+    assert.equal(sha(readFileSync(file)), sha(changed));
   } finally {
     await app.kill();
     await removeProfile(dir);

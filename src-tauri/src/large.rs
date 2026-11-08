@@ -1222,7 +1222,6 @@ impl LargeFile {
     }
 }
 
-/// What `LargeFiles::register` needs to know about a file that was just opened.
 /// Whether the start of a file is binary or lossy (see `files::sniff_flags`). The viewer never reads the whole
 /// file, so it judges by the first megabyte, like the encoding. An unreadable file counts as text here: the
 /// viewer's own reads report the error.
@@ -1233,6 +1232,7 @@ fn sniff_start(file: &File, size: u64, encoding: &'static Encoding, bom_len: u64
     sniff_flags(body, encoding, n as u64 == size)
 }
 
+/// What `LargeFiles::register` needs to know about a file that was just opened.
 struct Opening {
     path: PathBuf,
     file: File,
@@ -1443,9 +1443,13 @@ mod tests {
         // A zip-like start: NUL bytes and a lone CR.
         let binary = files.open(&write("flags-binary.dat", b"PK\x03\x04\x00\x00\r\x00data")).unwrap();
         assert!(binary.binary);
-        // Invalid UTF-8 without NUL bytes.
-        let lossy = files.open(&write("flags-lossy.txt", b"caf\xE9 \xFF\xFE broken\n")).unwrap();
-        assert!(!lossy.binary);
+        // Invalid UTF-8 without NUL bytes: the BOM fixes the encoding, so nothing is guessed and the bad bytes show.
+        let lossy = files.open(&write("flags-lossy.txt", b"\xEF\xBB\xBFcaf\xC3( broken\n")).unwrap();
+        assert_eq!(lossy.encoding, "UTF-8");
+        assert!(lossy.lossy && !lossy.binary);
+        // Without a BOM the encoding is guessed (a legacy code page), which may decode it cleanly: never binary.
+        let guessed = files.open(&write("flags-guessed.txt", b"caf\xE9 \xFF\xFE broken\n")).unwrap();
+        assert!(!guessed.binary);
         // UTF-16 is full of NUL bytes and still text.
         let utf16 = files.open(&write("flags-utf16.txt", &utf16("hello\nworld", true, true))).unwrap();
         assert!(!utf16.binary && !utf16.lossy);
