@@ -55,6 +55,14 @@
   let imageSize: { w: number; h: number } | null = $state(null);
   /** Document tabs that have been shown: their viewer (and the engine behind it) loads on the first visit only. */
   let shownDocuments = $state<string[]>([]);
+  // In the order they were first shown, not the tab order: a document's frame loses its document when the browser
+  // moves it in the DOM, which a reordered tab list would do (dragging a tab).
+  const shownDocumentTabs = $derived(
+    shownDocuments.flatMap((id) => {
+      const t = workspace.tabs.find((tab) => tab.id === id);
+      return t?.kind === "document" ? [t] : [];
+    }),
+  );
   let dropping = $state(false);
   let systemDark = $state(window.matchMedia("(prefers-color-scheme: dark)").matches);
   let configDir = "";
@@ -576,7 +584,7 @@
     {/each}
     <!-- Kept alive while hidden, so a document keeps its place and does not render again on every visit; a
          restored document waits for its first visit. The viewer and its engine load on first use. -->
-    {#each workspace.tabs.filter((t) => t.kind === "document" && shownDocuments.includes(t.id)) as t (t.id)}
+    {#each shownDocumentTabs as t (t.id)}
       <div class="fill" class:hidden={t.id !== tab?.id}>
         {#await import("./components/DocumentView.svelte") then { default: DocumentView }}
           <DocumentView tab={t} active={t.id === tab?.id} />

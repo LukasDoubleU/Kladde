@@ -187,6 +187,9 @@ test("the frame's document starts with its policy, before anything that could lo
   const policy = html.indexOf('http-equiv="Content-Security-Policy"');
   assert.ok(policy > 0);
   assert.ok(html.includes(`content="${FRAME_CSP}"`));
+  // Next to it: no background DNS lookups for the hosts of links.
+  const dns = html.indexOf('http-equiv="x-dns-prefetch-control" content="off"');
+  assert.ok(dns > policy && dns < html.indexOf("<style"));
   for (const later of ["<style", "<body", "<link", "<img", "<script", "<iframe", "<div"]) assert.ok(html.indexOf(later) === -1 || html.indexOf(later) > policy, later);
   // Nothing in it can fetch anything or run: no scripts, links, frames, images, imports or addresses.
   assert.doesNotMatch(html, /<script|<link|<iframe|<img|@import|url\(|https?:/i);

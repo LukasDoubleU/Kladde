@@ -103,8 +103,12 @@
   let fdoc: Document | null = null;
   let fwin: (Window & { CSS: typeof CSS }) | null = null;
   let host: HTMLElement | null = null;
-  let markReady: () => void = () => {};
-  const frameReady = new Promise<void>((resolve) => (markReady = resolve));
+  // Resolves true when the frame's document is ready, false when it never will be (the viewer was closed first, or the
+  // frame did not load in time): whoever waits for the frame has to leave then, with what it holds.
+  let markReady: (loaded: boolean) => void = () => {};
+  const frameReady = new Promise<boolean>((resolve) => (markReady = resolve));
+  const FRAME_TIMEOUT = 10_000;
+  const startProblem: DocumentProblem = { kind: "unreadable", message: "The viewer could not start. Close the tab and open the document again." };
   let problem = $state<DocumentProblem | null>(null);
   let loading = $state(true);
   let rendered = false;
@@ -140,6 +144,8 @@
 
   /** One try to read and render. `again`: there is a rendering to keep, so failures that a save in progress causes are expected. */
   async function attempt(again: boolean): Promise<Outcome> {
+    // The frame first: a render needs it, and the file's bytes (up to 50 MB) are not held while waiting for it.
+    if (!(await frameReady)) return { ok: false, problem: startProblem, transient: false };
     let bytes: Uint8Array;
     try {
       bytes = new Uint8Array(await api.readDocument(tab.path!));
@@ -158,9 +164,7 @@
       const { parseAsync, renderDocument } = await import("docx-preview");
       const parsed = await parseAsync(bytes, OPTIONS);
       // The engine makes its nodes with the frame's document (`makeH`), so they are born under the frame's policy: an
-      // element that starts loading when its attribute is set, detached or not, is held by it. The frame has to
-      // be there first.
-      await frameReady;
+      // element that starts loading when its attribute is set, detached or not, is held by it.
       const doc = fdoc;
       if (!doc) throw new Error("the viewer was closed");
       const options = { ...OPTIONS, h: makeH(doc) };
@@ -205,8 +209,7 @@
   }
 
   async function show(result: Extract<Outcome, { ok: true }>) {
-    await frameReady;
-    if (!fdoc || !fwin || !host) return;
+    if (!(await frameReady) || !fdoc || !fwin || !host) return;
     const overrides = fdoc.createElement("style");
     overrides.textContent = OVERRIDES;
     // One swap: the old rendering stays until the new one is complete.
@@ -288,6 +291,11 @@
   // A frame that was hidden comes back without its scroll position, and the scroll event of that is not the user's:
   // until the place has been put back, scroll events do not overwrite it.
   let settling = false;
+  // One number per activation of the tab: the loop of an earlier one stops when a later one starts (or the tab goes
+  // away again), and only the latest clears `settling`. `touched`: the user scrolled in the frame since, which ends
+  // the restoring (it would fight the user's own wheel or PageDown).
+  let activation = 0;
+  let touched = false;
 
   function onScroll() {
     // A hidden tab has no height and reports 0.
@@ -328,14 +336,25 @@
 
   // The tab was hidden (no layout, no scroll position): back in view it returns to where it was and takes the focus.
   $effect(() => {
-    if (!active) return;
+    if (!active) {
+      activation++;
+      settling = false;
+      return;
+    }
     untrack(() => {
+      const mine = ++activation;
       settling = true;
+      touched = false;
       // The frame's layout comes back a frame or two after the tab is shown, and a place set before the content has
       // its height is clamped: put it back until it stays (the scroll events meanwhile are not the user's).
       let frames = 0;
       let steady = 0;
       const settle = () => {
+        if (mine !== activation) return;
+        if (touched) {
+          settling = false;
+          return;
+        }
         applyScale();
         restoreScroll();
         if (frames === 0) focusViewer();
@@ -369,7 +388,15 @@
     observer.observe(frame);
     // The theme changed (flavor, accent, a live-edited theme.css): the frame follows.
     window.addEventListener("kladde-theme", syncTheme);
+    // A frame that does not come up must not leave the tab on "Loading…" for good.
+    const wait = window.setTimeout(() => {
+      if (fdoc) return;
+      markReady(false);
+      problem = startProblem;
+      loading = false;
+    }, FRAME_TIMEOUT);
     return () => {
+      clearTimeout(wait);
       observer.disconnect();
       window.removeEventListener("kladde-theme", syncTheme);
     };
@@ -377,6 +404,8 @@
 
   onDestroy(() => {
     generation++;
+    activation++;
+    markReady(false);
     clearTimeout(timer);
     workspace.registerDocument(tab.id, null);
     // The comment ranges belong to the frame, which goes with the tab; the registries are cleared anyway.
@@ -402,6 +431,7 @@
   }
 
   function onFrameKeydown(e: KeyboardEvent) {
+    touched = true;
     forward(e, new KeyboardEvent("keydown", keyboardInit(e)));
     // Ctrl+A selects the document, not the whole frame; Ctrl+C is the native copy of the frame's selection.
     if (!e.defaultPrevented && isSelectAll(e)) {
@@ -413,6 +443,7 @@
 
   // Ctrl+wheel is Kladde's zoom, also with the pointer over the document (wheel events do not leave the frame).
   function onFrameWheel(e: WheelEvent) {
+    touched = true;
     if (e.ctrlKey) forward(e, new WheelEvent("wheel", wheelInit(e, frame.getBoundingClientRect())));
   }
 
@@ -450,6 +481,9 @@
     const win = frame.contentWindow;
     const element = doc?.getElementById(FRAME_HOST_ID);
     if (!doc || !win || !element) return;
+    // A second load is a new document: the browser throws the frame's document away when the iframe is moved in the
+    // page's DOM (a keyed list that reorders), and loads the srcdoc again, empty. What was shown is gone with it.
+    const again = fdoc !== null;
     fdoc = doc;
     fwin = win as Window & { CSS: typeof CSS };
     host = element;
@@ -463,9 +497,18 @@
     win.addEventListener("resize", onViewportChange);
     doc.addEventListener("click", onFrameClick);
     doc.addEventListener("auxclick", onFrameClick);
-    doc.addEventListener("pointerdown", () => (menu = null));
+    doc.addEventListener("pointerdown", () => {
+      touched = true;
+      menu = null;
+    });
     doc.addEventListener("contextmenu", onFrameContextMenu);
-    markReady();
+    markReady(true);
+    // Rendered again, like a reload: the old rendering is already gone, and the place and zoom are kept (`measure`
+    // takes the scale back to 1 whatever the new document has, and the place with it).
+    if (again && !problem) {
+      clearTimeout(timer);
+      timer = window.setTimeout(() => void load(), 0);
+    }
   }
 
   async function openExternally() {

@@ -159,9 +159,15 @@ body { margin: 0; }
   user-select: text;
 }`;
 
+/**
+ * Chromium may resolve the host names of links in the background (DNS prefetch), which no CSP governs. The frame
+ * says it should not, next to the policy (`index.html` says it for the page).
+ */
+export const FRAME_DNS_PREFETCH = "off";
+
 /** The document the frame starts with: the policy first, before anything that could load something, then an empty host. */
 export function frameSrcdoc(): string {
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${FRAME_CSP}"><style>${FRAME_CSS}</style></head><body><div class="stage"><div id="${FRAME_HOST_ID}"></div></div></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${FRAME_CSP}"><meta http-equiv="x-dns-prefetch-control" content="${FRAME_DNS_PREFETCH}"><style>${FRAME_CSS}</style></head><body><div class="stage"><div id="${FRAME_HOST_ID}"></div></div></body></html>`;
 }
 
 /** The part of a keyboard event the page's shortcut handling reads, for a copy it can dispatch on its own element. */
