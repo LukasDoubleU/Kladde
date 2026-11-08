@@ -109,6 +109,10 @@ export const THEME_VARIABLES: { title: string; names: string[] }[] = [
     names: ["del-bg", "del-text", "del-mark", "add-bg", "add-text", "add-mark"].map((n) => `--diff-${n}`),
   },
   {
+    title: "Documents (the paper of the Word viewer and its tracked changes)",
+    names: ["paper", "paper-text", "paper-insert", "paper-delete"].map((n) => `--${n}`),
+  },
+  {
     title: "Syntax highlighting (editor and code blocks in the preview)",
     names: [
       "keyword", "string", "escape", "number", "comment", "function", "type", "property", "variable", "operator",

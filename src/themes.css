@@ -206,6 +206,12 @@
   --diff-add-bg: color-mix(in srgb, var(--ctp-green) 10%, transparent);
   --diff-add-text: color-mix(in srgb, var(--ctp-green) 28%, transparent);
   --diff-add-mark: var(--ctp-green);
+  /* Word documents are shown on white paper in every theme (their own colors would be unreadable on a dark one);
+     the markers color tracked insertions and deletions. */
+  --paper: #ffffff;
+  --paper-text: #000000;
+  --paper-insert: #1a5fb4;
+  --paper-delete: #c01c28;
 
   --tok-keyword: var(--ctp-mauve);
   --tok-string: var(--ctp-green);

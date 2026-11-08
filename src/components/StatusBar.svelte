@@ -2,6 +2,7 @@
   import { runAction, shortcutLabel } from "../lib/actions";
   import { keyHint } from "../lib/keyhint.svelte";
   import { localLanguageTool } from "../lib/languagetool-local.svelte";
+  import { documentFormat } from "../lib/documents";
   import { workspace } from "../lib/workspace.svelte";
 
   let { imageSize }: { imageSize: { w: number; h: number } | null } = $props();
@@ -54,6 +55,12 @@
       <span>{changes === 0 ? "No differences" : `${changes} ${changes === 1 ? "change" : "changes"}`}</span>
     {/if}
     <span class="dim">{shortcutLabel("compare.next")} / {shortcutLabel("compare.previous")}: next / previous change</span>
+  {:else if tab?.kind === "document"}
+    <span>{documentFormat(tab.path)} (read-only)</span>
+    {#if workspace.documentPages[tab.id]}
+      <span class="dim">{workspace.documentPages[tab.id]} {workspace.documentPages[tab.id] === 1 ? "page" : "pages"}</span>
+    {/if}
+    <span class="dim">{formatSize(tab.size)}</span>
   {:else if tab?.kind === "image"}
     {#if imageSize}<span>{imageSize.w} × {imageSize.h}</span>{/if}
     <span class="dim">{formatSize(tab.size)}</span>

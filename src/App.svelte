@@ -53,6 +53,8 @@
   let content: HTMLDivElement;
   let splitRatio = $state(0.5);
   let imageSize: { w: number; h: number } | null = $state(null);
+  /** Document tabs that have been shown: their viewer (and the engine behind it) loads on the first visit only. */
+  let shownDocuments = $state<string[]>([]);
   let dropping = $state(false);
   let systemDark = $state(window.matchMedia("(prefers-color-scheme: dark)").matches);
   let configDir = "";
@@ -72,6 +74,7 @@
   const textTab = () => workspace.active?.kind === "text";
   const largeTab = () => workspace.active?.kind === "large";
   const compareTab = () => workspace.active?.kind === "compare";
+  const documentTab = () => workspace.active?.kind === "document";
   /** Tabs whose document can be edited and saved. */
   const editableTab = () => textTab() || largeTab();
 
@@ -189,6 +192,12 @@
       label: "Open large file in the editor",
       run: () => workspace.openLargeInEditor(),
       enabled: () => workspace.active?.kind === "large",
+    },
+    {
+      id: "document.openAsText",
+      label: "Open as text",
+      run: () => workspace.openAsText(),
+      enabled: documentTab,
     },
     { id: "compare.with", label: "Compare with…", run: () => workspace.compareWith(), enabled: textTab },
     {
@@ -426,6 +435,11 @@
     imageSize = null;
   });
 
+  $effect(() => {
+    const t = workspace.active;
+    if (t?.kind === "document" && !shownDocuments.includes(t.id)) shownDocuments = [...shownDocuments, t.id];
+  });
+
   onMount(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const onScheme = () => (systemDark = media.matches);
@@ -557,6 +571,15 @@
       <div class="fill" class:hidden={t.id !== tab?.id}>
         {#await import("./components/SettingsPage.svelte") then { default: SettingsPage }}
           <SettingsPage active={t.id === tab?.id} />
+        {/await}
+      </div>
+    {/each}
+    <!-- Kept alive while hidden, so a document keeps its place and does not render again on every visit; a
+         restored document waits for its first visit. The viewer and its engine load on first use. -->
+    {#each workspace.tabs.filter((t) => t.kind === "document" && shownDocuments.includes(t.id)) as t (t.id)}
+      <div class="fill" class:hidden={t.id !== tab?.id}>
+        {#await import("./components/DocumentView.svelte") then { default: DocumentView }}
+          <DocumentView tab={t} active={t.id === tab?.id} />
         {/await}
       </div>
     {/each}

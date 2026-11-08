@@ -29,13 +29,19 @@ import type { GrammarHost } from "./grammar";
 import { frontMatterLanguage, isPublicServer, LANGUAGES, normalizeLanguage } from "./grammar-text";
 import { formatterFor, formattableLanguages, formatWith, mapCursor, type Formatter } from "./formatters";
 import { localLanguageTool as localLt } from "./languagetool-local.svelte";
+import { isDocumentPath } from "./documents";
 import { allLanguages, detectLanguage, extensionOf, findLanguage, IMAGE_EXTENSIONS, isMarkdown } from "./languages";
 import { linkAtPos, linkExtension } from "./editor-links";
 import { classifyHref, dirname, headingAnchors, resolvePath } from "./links";
 import { renderMarkdown, renderSvg, setLanguageLoadedHandler } from "./markdown";
 import { settings, updateSettingsFile } from "./settings.svelte";
 
-export type TabKind = "text" | "large" | "image" | "compare" | "settings";
+/**
+ * What a tab shows. The kind is part of the session file (`session.json` stores it per tab, a public format):
+ * `document` is a read-only view of a file by path, shown by `DocumentView.svelte` (Word documents now, PDF later).
+ * Names are never renamed, and a new kind needs a restore path in `restoreTab`.
+ */
+export type TabKind = "text" | "large" | "image" | "document" | "compare" | "settings";
 export type PreviewMode = "off" | "split" | "only";
 
 export interface Tab {
@@ -63,7 +69,10 @@ export interface Tab {
   largeId: number | null;
   /** The file changed or vanished on disk while the tab has unsaved changes. */
   external: "modified" | "deleted" | null;
-  /** Bumped when a large tab's document changes without the view doing it (restored edits). */
+  /**
+   * Bumped when a large tab's document changes without the view doing it (restored edits), and when a document
+   * tab has to be rendered again (the file changed on disk, F5).
+   */
   revision: number;
   /** A large tab's hot-exit journal: being applied, or made for a file that has changed since. */
   journal: "restoring" | "conflict" | null;
@@ -264,6 +273,8 @@ class Workspace {
   compareOptions = $state({ ignoreWhitespace: false, ignoreCase: false, unified: false });
   /** Number of changes per compare tab id. */
   compareChanges: Record<string, number> = $state({});
+  /** Number of pages per document tab id, once the viewer knows it (for the status bar). */
+  documentPages: Record<string, number> = $state({});
   /** Set by the large file view of the active tab. */
   largeApi: { gotoLine(line: number): void; focusSearch(): void; run(command: string): void } | null = null;
   onConfigSaved: (path: string) => void = () => {};
@@ -276,6 +287,8 @@ class Workspace {
   private grammarConsent: Promise<boolean> | null = null;
   private compareData = new Map<string, { left: CompareSide; right: CompareSide }>();
   private compareHandles = new Map<string, CompareHandleLike>();
+  /** Gives the keyboard focus to the viewer of a document tab (registered by `DocumentView`). */
+  private documentFocus = new Map<string, () => void>();
   private closedPaths: string[] = [];
   /** Recently activated tabs, for back/forward navigation like in a browser. */
   private history: string[] = [];
@@ -814,12 +827,13 @@ class Workspace {
 
   /**
    * Opens a file in a tab, or activates the tab that already has it. Which kind of tab depends on the file
-   * (an image tab for images, the large file viewer above `largeFileThresholdMB`, otherwise a text tab).
+   * (an image tab for images, the document viewer for Word documents, the large file viewer above
+   * `largeFileThresholdMB`, otherwise a text tab).
    *
-   * `asText` forces the text route for a file whose type would normally send it somewhere else (today only
-   * images; a viewer for another type would do the same), so a viewer can offer "Open as text". It opens a text
-   * tab even when a viewer tab already shows the path; only a text or large tab of that path counts as "already
-   * open". Size still decides between the editor and the large file viewer, and binary files still open read-only.
+   * `asText` forces the text route for a file whose type would normally send it somewhere else (images,
+   * documents), so a viewer can offer "Open as text". It opens a text tab even when a viewer tab already shows
+   * the path; only a text or large tab of that path counts as "already open". Size still decides between the
+   * editor and the large file viewer, and binary files still open read-only.
    */
   async openPath(path: string, options: { asText?: boolean } = {}) {
     const asText = options.asText === true;
@@ -833,7 +847,10 @@ class Workspace {
       if (!stat.exists) throw new Error("The file does not exist.");
       if (!stat.isFile) throw new Error("This is a folder, not a file.");
       const ext = extensionOf(path);
-      if (!asText && IMAGE_EXTENSIONS.has(ext)) {
+      if (!asText && isDocumentPath(path)) {
+        // Before the large file check: the viewer has its own size limit and message.
+        this.addTab(this.textTab({ kind: "document", path, title: basename(path), mtime: stat.mtime, size: stat.size }));
+      } else if (!asText && IMAGE_EXTENSIONS.has(ext)) {
         this.addTab(this.textTab({ kind: "image", path, title: basename(path), mtime: stat.mtime, size: stat.size }));
       } else if (stat.size > settings.largeFileThresholdMB * 1024 * 1024) {
         await this.openLarge(path);
@@ -1020,6 +1037,14 @@ class Workspace {
     for (const path of paths) await this.openPath(path);
   }
 
+  /** Opens the file of a document tab as text, in place of the document (when the viewer cannot show it). */
+  async openAsText(tab: Tab | undefined = this.active) {
+    if (!tab?.path || tab.kind !== "document") return;
+    const { id, path } = tab;
+    await this.openPath(path, { asText: true });
+    if (this.tabs.some((t) => t.path === path && t.kind !== "document")) this.removeTab(id);
+  }
+
   async openWithDialog() {
     const dir = this.active?.path ? dirname(this.active.path) : undefined;
     const picked = await openDialog({ multiple: true, directory: false, defaultPath: dir });
@@ -1036,6 +1061,8 @@ class Workspace {
     this.compareData.delete(id);
     this.compareHandles.delete(id);
     delete this.compareChanges[id];
+    this.documentFocus.delete(id);
+    delete this.documentPages[id];
     if (this.activeId === id) {
       this.activeId = null;
       const next = this.tabs[index] ?? this.tabs[index - 1];
@@ -1253,11 +1280,13 @@ class Workspace {
       await this.reopenLarge(tab);
       return;
     }
-    if (tab.kind === "image") {
+    if (tab.kind === "image" || tab.kind === "document") {
       const stat = await api.statFile(tab.path);
       tab.mtime = stat.mtime;
       tab.size = stat.size;
       tab.external = null;
+      // The viewer renders again when this changes (also for F5, where the file may be the same).
+      tab.revision++;
       return;
     }
     try {
@@ -1377,7 +1406,7 @@ class Workspace {
         else if (tab.external === "deleted") tab.external = null;
       } else if (stat.mtime !== tab.mtime) {
         if (tab.kind === "text" && !tab.dirty) void this.reload(tab, tab.encoding);
-        else if (tab.kind === "image") void this.reload(tab);
+        else if (tab.kind === "image" || tab.kind === "document") void this.reload(tab);
         else if (tab.external === null) tab.external = "modified";
       } else if (tab.external === "deleted") {
         tab.external = null;
@@ -1496,7 +1525,7 @@ class Workspace {
 
   async gotoLine() {
     const tab = this.active;
-    if (!tab || tab.kind === "image" || tab.kind === "compare" || tab.kind === "settings") return;
+    if (!tab || tab.kind === "image" || tab.kind === "document" || tab.kind === "compare" || tab.kind === "settings") return;
     const max = tab.kind === "large" ? this.largeStatus.lines : this.cursor.lines;
     const answer = await this.pick({ placeholder: `Go to line (1 – ${max})`, items: [], freeText: true });
     const line = typeof answer === "string" ? parseInt(answer, 10) : NaN;
@@ -1789,6 +1818,7 @@ class Workspace {
         resolve: (id) => {
           this.dialog = null;
           resolve(id);
+          this.refocusDocument();
         },
       };
     });
@@ -1804,9 +1834,36 @@ class Workspace {
           resolve(value);
           // Not when the answer opened the next picker (command palette -> "Compare with…"), which wants the focus.
           if (this.active?.kind === "text") requestAnimationFrame(() => !this.picker && !this.dialog && this.view?.focus());
+          else this.refocusDocument();
         },
       };
     });
+  }
+
+  // ---------------------------------------------------------------- documents
+
+  registerDocument(id: string, focus: (() => void) | null) {
+    if (focus) this.documentFocus.set(id, focus);
+    else this.documentFocus.delete(id);
+  }
+
+  /** After a palette or dialog closed: the viewer of the active document tab takes the keyboard back. */
+  private refocusDocument() {
+    const tab = this.active;
+    if (tab?.kind !== "document") return;
+    requestAnimationFrame(() => {
+      if (this.activeId === tab.id && !this.picker && !this.dialog) this.documentFocus.get(tab.id)?.();
+    });
+  }
+
+  /** The viewer reports where a document is scrolled (kept for tab switches and the session). */
+  setDocumentScroll(id: string, top: number) {
+    const rt = this.runtime.get(id);
+    if (rt) rt.scrollTop = top;
+  }
+
+  documentScroll(id: string): number {
+    return this.runtime.get(id)?.scrollTop ?? 0;
   }
 
   // ---------------------------------------------------------------- session (hot exit)
@@ -2014,11 +2071,13 @@ class Workspace {
       }
       return;
     }
-    if (saved.kind === "image" && saved.path) {
+    if ((saved.kind === "image" || saved.kind === "document") && saved.path) {
       const stat = await api.statFile(saved.path);
       if (stat.exists) {
-        this.tabs.push(this.textTab({ ...saved, kind: "image", mtime: stat.mtime, size: stat.size }));
-        this.runtime.set(saved.id, { state: null, saved: Text.empty, metaDirty: false, scrollTop: 0, version: 0, backedUp: -1 });
+        this.tabs.push(this.textTab({ ...saved, kind: saved.kind, mtime: stat.mtime, size: stat.size }));
+        // A document's scroll position comes back with the tab; it is only rendered once the tab is shown.
+        const scrollTop = saved.kind === "document" ? (saved.scrollTop ?? 0) : 0;
+        this.runtime.set(saved.id, { state: null, saved: Text.empty, metaDirty: false, scrollTop, version: 0, backedUp: -1 });
       }
       return;
     }
