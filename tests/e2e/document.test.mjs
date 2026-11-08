@@ -144,6 +144,8 @@ test("a .docx opens in the viewer, before the large file check, and shows its te
         sameOrigin: f.contentWindow.origin === window.origin,
         head: [...d.head.children].map((e) => e.localName),
         csp: d.head.children[1]?.getAttribute('http-equiv') === 'Content-Security-Policy' ? d.head.children[1].content : null,
+        dnsPrefetch: d.head.children[2]?.getAttribute('http-equiv') === 'x-dns-prefetch-control' ? d.head.children[2].content : null,
+        pageDnsPrefetch: !!document.querySelector('meta[http-equiv="x-dns-prefetch-control"][content="off"]'),
         ran: d.defaultView.__ran === 1,
       };
     })()`);
@@ -151,7 +153,9 @@ test("a .docx opens in the viewer, before the large file check, and shows its te
     assert.equal(frame.sandboxFirst, true);
     assert.equal(frame.href, "about:srcdoc");
     assert.equal(frame.sameOrigin, true, "the page drives the frame, so it keeps the page's origin");
-    assert.deepEqual(frame.head, ["meta", "meta", "style"]);
+    assert.deepEqual(frame.head, ["meta", "meta", "meta", "style"]);
+    assert.equal(frame.dnsPrefetch, "off");
+    assert.equal(frame.pageDnsPrefetch, true, "the page asks for no DNS prefetch either (the Markdown preview's links)");
     assert.match(frame.csp, /default-src 'none'/);
     assert.match(frame.csp, /img-src data:(;|$)/);
     assert.match(frame.csp, /font-src data:(;|$)/);
@@ -606,7 +610,6 @@ test("a document cannot reach the network or draw over Kladde's UI", async () =>
             remoteComputed: /https?:/i.test(computed),
             hostRule: /:host/i.test(css),
             hostPosition: host.position,
-            hostContain: host.contain,
             images: [...root.querySelectorAll('img')].map((i) => i.getAttribute('src')),
             styled: !!root.querySelector('.docx_evil'),
             svgShapes: root.querySelectorAll('svg rect, svg g').length,
@@ -786,7 +789,13 @@ const ELEMENT_WAYS = {
   elPicture: (at) => `<picture><source srcset="${at("elPicture")}"><img alt=""></picture>`,
   elLinkStyle: (at) => `<link rel="stylesheet" href="${at("elLinkStyle")}">`,
   elLinkPreload: (at) => `<link rel="preload" as="image" href="${at("elLinkPreload")}">`,
+  // Inert in any frame: a favicon is only fetched for the top document, and a nested frame with the app's sandbox
+  // refuses a refresh (no `allow-scripts`). Kept so that a change of either would be seen.
   elLinkIcon: (at) => `<link rel="icon" href="${at("elLinkIcon")}">`,
+  // Resource hints: no policy governs them. `dns-prefetch` cannot be observed with an address (an IP needs no lookup;
+  // the `x-dns-prefetch-control` meta is asserted instead). `preconnect` is tolerated below if it connects.
+  elPreconnect: (at) => `<link rel="preconnect" href="${at("elPreconnect")}">`,
+  elDnsPrefetch: (at) => `<link rel="dns-prefetch" href="${at("elDnsPrefetch")}">`,
   elIframe: (at) => `<iframe src="${at("elIframe")}"></iframe>`,
   elNested: (at) => `<iframe srcdoc="&lt;img src=&quot;${at("elNested")}&quot;&gt;"></iframe>`,
   elObject: (at) => `<object data="${at("elObject")}"></object>`,
@@ -799,13 +808,27 @@ const ELEMENT_WAYS = {
   elInput: (at) => `<input type="image" src="${at("elInput")}">`,
   elTable: (at) => `<table background="${at("elTable")}"><tr><td>x</td></tr></table>`,
   elStyleAttr: (at) => `<div style="background:url(${at("elStyleAttr")})">x</div>`,
+  // `@import` first in a style of its own, where the browser honors it.
   elStyle: (at) => `<style>@import url(${at("elStyle")}); p { background: url(${at("elStyleRule")}) }</style>`,
+  elImportString: (at) => `<style>@import '${at("elImportString")}' screen;</style>`,
+  // The ping is sent by the default action of a click, which the viewer cancels: clicked for real below.
   elPing: (at) => `<a id="ping" href="${at("elPingHref")}" ping="${at("elPing")}">ping</a>`,
   elForm: (at) => `<form id="form" action="${at("elForm")}"><input name="a"></form>`,
   elRefresh: (at) => `<meta http-equiv="refresh" content="0;url=${at("elRefresh")}">`,
 };
 // Addresses that belong to an element above and have no way of their own.
 const ELEMENT_ADDRESSES = ["elPoster", "elStyleRule", "elPingHref"];
+
+// What is live in a frame without a policy of its own, under the page's policy alone (https images are allowed, fonts,
+// media, objects, frames and imported styles are not): found by running the test with the frame's `img-src` widened.
+// Every one of these must be fetched by the control frame, so "no hit" in the real frame means something. The rest of
+// the material (`imageSet`, `filter`, `fontFace`, the linked `img` and `svgImage`, media, `use`, `object`, `embed`) is
+// not fetched even then, with or without a policy, and is attempted anyway.
+const LIVE_WITHOUT_POLICY = [
+  "background", "imageSetVar", "borderImage", "listStyle", "cursor", "mask", "clipPath", "shapeOutside", "content",
+  "svgFill", "svgStroke", "svgStyleFill", "elImg", "elSrcset", "elPicture", "elLinkPreload", "elNested", "elSvgImage",
+  "elSvgFill", "elInput", "elTable", "elStyleAttr", "elPoster", "elStyleRule",
+];
 
 test("with the cleaning switched off, the frame alone keeps a document from the network", async () => {
   // One listener per way out, so a failure names it. They never answer; a connection is a leak.
@@ -831,12 +854,13 @@ test("with the cleaning switched off, the frame alone keeps a document from the 
   // navigation, have a say. No request is ever sent (the guard's cancellation is asserted below), and the engine
   // never makes a frame (alternative chunks are off) while the cleaner removes every one: so it is not in the
   // list, and its connection is asserted to be at most that.
-  const tolerated = new Set(["elIframe"]);
+  const tolerated = new Set(["elIframe", "elPreconnect"]);
   const contacted = () => names.filter((name) => !tolerated.has(name) && listeners[name].hits.length > 0);
   const doc = put("escape.docx", await makeEscapeDocx({ at }));
   const dir = tempProfile("kladde-document-escape");
   try {
-    await session({ port: 9445, paths: [doc], dir, env: { KLADDE_DOCUMENT_NO_CLEAN: "1" } }, async (app) => {
+    const log = join(dir, "urls.log");
+    await session({ port: 9445, paths: [doc], dir, env: { KLADDE_DOCUMENT_NO_CLEAN: "1", KLADDE_OPEN_URL_LOG: log } }, async (app) => {
       await app.waitFor(shows("Escape document text"), 20000);
       await app.waitFor(`${HOST}.dataset.removed !== undefined`);
 
@@ -886,12 +910,28 @@ test("with the cleaning switched off, the frame alone keeps a document from the 
         const d = ${ROOT};
         const html = ${JSON.stringify(Object.values(ELEMENT_WAYS).map((make) => make(at)))}.join('');
         d.getElementById('host').insertAdjacentHTML('beforeend', html);
-        d.getElementById('ping')?.click();
         d.getElementById('form')?.requestSubmit?.();
       })()`);
       await sleep(3000);
       assert.deepEqual(contacted(), [], "the frame let a request through");
       assert.ok(app.stderr().includes(`[navigation] cancelled frame navigation to ${at("elIframe")}`), "the guard cancelled the nested frame's navigation");
+      // A real click on the ping link, after the check above: pressing a link makes Chromium open a connection to its
+      // host ahead of time (preconnect on mouse down), which is the user's own act and not the document's (`elPingHref`
+      // is not asserted). The viewer cancels the click's default action, so no ping is sent (`elPing`), and the address
+      // goes to the link handling, which logs it here instead of opening a browser.
+      const ping = await app.eval(`(() => {
+        const a = ${ROOT}.getElementById('ping');
+        a.scrollIntoView();
+        const r = a.getBoundingClientRect();
+        const f = ${FRAME}.getBoundingClientRect();
+        return { x: f.left + r.left + r.width / 2, y: f.top + r.top + r.height / 2 };
+      })()`);
+      await clickAt(app, ping);
+      for (let i = 0; i < 40 && !existsSync(log); i++) await sleep(50);
+      assert.deepEqual(readFileSync(log, "utf8").split("\n").filter(Boolean), [at("elPingHref")]);
+      await sleep(1500);
+      assert.deepEqual(listeners.elPing.hits, [], "the ping was sent");
+
       // Still the same document: nothing navigated it (the refresh and the form went nowhere).
       assert.equal(await app.eval(`${FRAME}.contentWindow.location.href`), "about:srcdoc");
 
@@ -907,9 +947,9 @@ test("with the cleaning switched off, the frame alone keeps a document from the 
         control.srcdoc = '<!doctype html><html><head>' + styles + '</head><body>' + d.body.innerHTML + '</body></html>';
         document.body.append(control);
       })()`);
-      const expected = ["background", "imageSetVar", "borderImage", "listStyle", "content", "elImg", "elStyleAttr"];
+      const expected = LIVE_WITHOUT_POLICY;
       try {
-        for (let i = 0; i < 100 && !expected.every((n) => listeners[n].hits.length > 0); i++) await sleep(100);
+        for (let i = 0; i < 150 && !expected.every((n) => listeners[n].hits.length > 0); i++) await sleep(100);
       } finally {
         await app.eval(`document.getElementById('control')?.remove()`);
       }
@@ -1010,4 +1050,115 @@ test("the frame follows the theme, also when it changes while the document is sh
     await app.waitFor(`!document.querySelector('.document-view')`);
     assert.equal(await app.eval(`CSS.highlights.has('docx-comments')`), false);
   });
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// Tabs that move, a mouse that goes back, and a place that must survive quick switching.
+
+test("reordering the tabs of two shown documents keeps both rendered, and a frame that is moved anyway renders again", async () => {
+  const first = put("first.docx", await makeDocx({ pages: 5, marker: "First document text" }));
+  const second = put("second.docx", await makeDocx({ pages: 5, marker: "Second document text" }));
+  await session({ port: 9449, paths: [first, second] }, async (app) => {
+    // Both shown once, the second scrolled.
+    await clickTab(app, "first.docx");
+    await app.waitFor(shows("First document text"), 20000);
+    await clickTab(app, "second.docx");
+    await app.waitFor(shows("Second document text"), 20000);
+    await app.waitFor(FOCUSED);
+    await app.key("PageDown");
+    await app.key("PageDown");
+    await app.waitFor(`${PANE}.scrollTop > 500`);
+    await sleep(400);
+    const kept = await scrollTop(app);
+    await app.eval(`window.__second = ${FRAME}.contentDocument`);
+
+    // A real drag of the second tab onto the first one (pointer events with the pointer captured, like the user's).
+    const centers = () =>
+      app.eval(`Object.fromEntries([...document.querySelectorAll('.tab')].map((t) => { const r = t.getBoundingClientRect(); return [t.querySelector('.title').textContent, { x: r.left + r.width / 2, y: r.top + r.height / 2 }]; }))`);
+    const at = await centers();
+    const send = (type, x, y) => app.cdp.send("Input.dispatchMouseEvent", { type, x, y, button: type === "mouseMoved" ? "none" : "left", buttons: type === "mouseReleased" ? 0 : 1, clickCount: 1 });
+    await send("mousePressed", at["second.docx"].x, at["second.docx"].y);
+    for (const x of [at["second.docx"].x - 20, at["first.docx"].x + 10, at["first.docx"].x]) await send("mouseMoved", x, at["first.docx"].y);
+    await send("mouseReleased", at["first.docx"].x, at["first.docx"].y);
+    await app.waitFor(`[...document.querySelectorAll('.tab .title')].map((t) => t.textContent).join() === 'second.docx,first.docx'`);
+    await sleep(800);
+    // The frames were not moved in the page's DOM, so the document is the same one and still shows its place.
+    assert.equal(await app.eval(`${FRAME}.contentDocument === window.__second`), true, "the frame's document was replaced");
+    assert.match(await app.eval(TEXT), /Second document text/);
+    assert.ok(Math.abs((await scrollTop(app)) - kept) < 3, `place ${kept} -> ${await scrollTop(app)}`);
+    await clickTab(app, "first.docx");
+    await app.waitFor(shows("First document text"));
+
+    // Whatever moves a frame in the DOM makes the browser load its document again, empty: the viewer renders anew
+    // and keeps the place.
+    await clickTab(app, "second.docx");
+    await app.waitFor(shows("Second document text"));
+    await app.eval(`(() => {
+      const fill = ${VIEW}.parentElement;
+      fill.parentElement.insertBefore(fill, fill.parentElement.firstChild);
+    })()`);
+    await app.waitFor(`${FRAME}.contentDocument !== window.__second && (${TEXT}).includes('Second document text')`, 15000);
+    await app.waitFor(`Math.abs(${PANE}.scrollTop - ${kept}) < 3`, 5000);
+    // And it is the viewer one expects: keys scroll, shortcuts work, the theme is there.
+    await app.waitFor(FOCUSED);
+    assert.notEqual(await app.eval(`getComputedStyle(${ROOT}.documentElement).getPropertyValue('--paper').trim()`), "");
+    await app.key("Ctrl+W");
+    await app.waitFor(activeIs("first.docx"));
+  });
+});
+
+test("the mouse's back and forward buttons work with the pointer over the document", async () => {
+  const doc = put("history.docx", await makeDocx({ pages: 2 }));
+  const other = writeFixture(profile, "history-other.txt", "text\n");
+  await session({ port: 9450, paths: [doc, other] }, async (app) => {
+    await clickTab(app, "history.docx");
+    await app.waitFor(shows("Kladde viewer test document"), 20000);
+    await clickTab(app, "history-other.txt");
+    await clickTab(app, "history.docx");
+    await app.waitFor(FOCUSED);
+    const press = async (button) => {
+      for (const type of ["mousePressed", "mouseReleased"]) {
+        await app.cdp.send("Input.dispatchMouseEvent", { type, x: 500, y: 300, button, buttons: 0, clickCount: 1 });
+      }
+    };
+    assert.equal(await app.eval(`document.elementFromPoint(500, 300) === ${FRAME}`), true);
+    await press("back");
+    await app.waitFor(activeIs("history-other.txt"));
+    await press("forward");
+    await app.waitFor(activeIs("history.docx"));
+  });
+});
+
+test("switching away and back twice in a row keeps the place, in the view and in the session", async () => {
+  const doc = put("quick.docx", await makeDocx({ pages: 5 }));
+  const other = writeFixture(profile, "quick-other.txt", "text\n");
+  const dir = tempProfile("kladde-document-quick");
+  let kept = 0;
+  try {
+    const app = await launch({ port: 9451, profile: dir, files: [other, doc] });
+    try {
+      await app.waitFor(shows("Kladde viewer test document"), 20000);
+      await app.waitFor(FOCUSED);
+      await app.key("PageDown");
+      await app.key("PageDown");
+      await app.waitFor(`${PANE}.scrollTop > 500`);
+      await sleep(400);
+      kept = await scrollTop(app);
+      // Away and back, and again, without waiting for anything.
+      await app.key("Ctrl+Tab");
+      await app.key("Ctrl+Tab");
+      await app.key("Ctrl+Tab");
+      await app.key("Ctrl+Tab");
+      await app.waitFor(activeIs("quick.docx"));
+      await app.waitFor(`Math.abs(${PANE}.scrollTop - ${kept}) < 3`, 5000);
+      await sleep(800);
+      assert.ok(Math.abs((await scrollTop(app)) - kept) < 3, `place ${kept} -> ${await scrollTop(app)}`);
+    } finally {
+      await app.close();
+    }
+    const saved = JSON.parse(readFileSync(join(dir, "data", "session.json"), "utf8")).tabs.find((t) => t.path === doc);
+    assert.ok(Math.abs(saved.scrollTop - kept) < 3, `the session saved ${saved.scrollTop}, the place was ${kept}`);
+  } finally {
+    await removeProfile(dir);
+  }
 });

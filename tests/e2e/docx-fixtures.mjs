@@ -163,9 +163,9 @@ export const ESCAPE_CSS_WAYS = {
   clipPath: (at) => `Arial;clip-path:url(${at("clipPath")}#c)`,
   shapeOutside: (at) => `Arial;float:left;shape-outside:url(${at("shapeOutside")})`,
   content: (at) => `Arial}p::before{content:url(${at("content")})}.x{`,
+  // (An `@import` cannot be one of these: the engine's own rules come before it, so the browser ignores it. It is
+  // tried as the first rule of a style of its own, see `ELEMENT_WAYS` in document.test.mjs.)
   fontFace: (at) => `Arial}@font-face{font-family:Probe;src:url(${at("fontFace")})}p{font-family:Probe}.x{`,
-  importRule: (at) => `Arial}@import url(${at("importRule")});.x{`,
-  importStyle: (at) => `Arial}@import '${at("importStyle")}' screen;.x{`,
 };
 
 const xml = (text) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
