@@ -21,6 +21,14 @@ export interface FileStat {
   size: number;
 }
 
+/** Why `readDocument` failed: too large, held by another program for the moment (Word saving), gone, or other. */
+export interface DocumentReadError {
+  kind: "tooLarge" | "busy" | "notFound" | "io";
+  message: string;
+  /** The file's size for `tooLarge`. */
+  size: number;
+}
+
 export interface BackupVersion {
   /** 1 is the newest older version. */
   n: number;
@@ -177,6 +185,10 @@ export const api = {
   writeFile: (path: string, text: string, encoding: string, bom: boolean, eol: Eol) =>
     invoke<number>("write_file", { path, text, encoding, bom, eol }),
   writeBinary: (path: string, base64: string) => invoke<void>("write_binary", { path, base64 }),
+  /** The raw bytes of a document (up to 50 MB) as an ArrayBuffer; rejects with a `DocumentReadError`. */
+  readDocument: (path: string) => invoke<ArrayBuffer>("read_document", { path }),
+  /** Opens a document in the program Windows associates with it (only the types the viewer shows). */
+  openInDefaultApp: (path: string) => invoke<void>("open_in_default_app", { path }),
   statFile: (path: string) => invoke<FileStat>("stat_file", { path }),
   statFiles: (paths: string[]) => invoke<FileStat[]>("stat_files", { paths }),
 

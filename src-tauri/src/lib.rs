@@ -39,28 +39,28 @@ fn open_url_log_for(isolated: bool, value: Option<std::ffi::OsString>) -> Option
     value.filter(|v| isolated && !v.is_empty()).map(PathBuf::from)
 }
 
-/// Returns true when the URL went into the test log: the browser is then not opened.
-fn log_open_url(url: &str) -> Result<bool, String> {
+/// Appends a line to the test log; false when there is none (no isolated profile, or the variable is unset).
+fn log_open(line: &str) -> Result<bool, String> {
     let Some(log) = open_url_log_for(session::isolated_profile().is_some(), std::env::var_os(OPEN_URL_LOG_ENV)) else {
         return Ok(false);
     };
     use std::io::Write;
     let mut file = std::fs::OpenOptions::new().create(true).append(true).open(log).map_err(|e| e.to_string())?;
-    writeln!(file, "{url}").map_err(|e| e.to_string())?;
+    writeln!(file, "{line}").map_err(|e| e.to_string())?;
     Ok(true)
 }
 
 /// For the page: true when the URL went into the test log, so the page does not open the browser.
 #[tauri::command]
 fn open_url_hook(url: String) -> Result<bool, String> {
-    log_open_url(&url)
+    log_open(&url)
 }
 
 /// Hands a link of a cancelled navigation to the system, from a thread of its own: the webview's navigation
 /// callback must return quickly. The opener plugin's function works without the plugin being registered (an
 /// isolated profile does not register it). Failures only go to stderr: the page has no part in this.
 fn open_external(url: String) {
-    std::thread::spawn(move || match log_open_url(&url) {
+    std::thread::spawn(move || match log_open(&url) {
         Ok(true) => {}
         // An isolated profile does not register the opener plugin because the browser or the mail program would
         // pop up on the screen during a test: without a log the link is dropped, like the page's own openUrl fails.
@@ -81,6 +81,25 @@ fn handle_blocked(decision: navigation::Navigation) {
     }
 }
 
+/// Opens a document in the program Windows associates with it ("Open in default app" of the document viewer).
+/// Only the document types the viewer shows, and only existing files: the page cannot start arbitrary files
+/// through this. With the test log the path is logged instead (like links), so tests never start Word.
+#[tauri::command]
+fn open_in_default_app(app: AppHandle, path: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let file = Path::new(&path);
+    if !files::is_document_path(file) {
+        return Err("Only documents that Kladde shows can be opened this way.".into());
+    }
+    if !file.is_file() {
+        return Err("The file does not exist.".into());
+    }
+    if log_open(&path)? {
+        return Ok(());
+    }
+    app.opener().open_path(path, None::<&str>).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn initial_paths() -> Vec<String> {
     let cwd = std::env::current_dir().unwrap_or_default();
@@ -90,6 +109,16 @@ fn initial_paths() -> Vec<String> {
 #[tauri::command]
 async fn read_file(path: String, encoding: Option<String>) -> Result<files::FileContent, String> {
     files::read(Path::new(&path), encoding.as_deref())
+}
+
+/// The raw bytes of a document for the viewer, as a binary response (an `ArrayBuffer` in the page, no JSON
+/// number array). Refuses files above `files::MAX_DOCUMENT_BYTES`.
+#[tauri::command]
+async fn read_document(path: String) -> Result<tauri::ipc::Response, files::DocumentReadError> {
+    let bytes = tauri::async_runtime::spawn_blocking(move || files::read_limited(Path::new(&path), files::MAX_DOCUMENT_BYTES))
+        .await
+        .map_err(|e| files::DocumentReadError { kind: "io", message: e.to_string(), size: 0 })??;
+    Ok(tauri::ipc::Response::new(bytes))
 }
 
 #[tauri::command]
@@ -653,6 +682,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             frontend_log,
             open_url_hook,
+            open_in_default_app,
+            read_document,
             show_window,
             initial_paths,
             read_file,

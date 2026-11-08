@@ -57,6 +57,64 @@ pub fn stat(path: &Path) -> FileStat {
     }
 }
 
+/// The largest document (Word file) the viewer reads: the page holds the bytes and the rendered DOM, so an
+/// unbounded read could exhaust the WebView's memory.
+pub const MAX_DOCUMENT_BYTES: u64 = 50 * 1024 * 1024;
+
+/// Why a document could not be read for the viewer. `kind` lets the page tell a file that is too large (no retry,
+/// offers other ways to open it) and one that another program holds (Word while saving: retry) from the rest.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentReadError {
+    pub kind: &'static str,
+    pub message: String,
+    pub size: u64,
+}
+
+impl DocumentReadError {
+    fn io(e: &std::io::Error) -> Self {
+        // ERROR_SHARING_VIOLATION and ERROR_LOCK_VIOLATION: the writer has the file open for the moment.
+        let kind = match e.raw_os_error() {
+            Some(32) | Some(33) => "busy",
+            _ if e.kind() == std::io::ErrorKind::NotFound => "notFound",
+            _ => "io",
+        };
+        DocumentReadError { kind, message: e.to_string(), size: 0 }
+    }
+
+    fn too_large(size: u64, limit: u64) -> Self {
+        DocumentReadError {
+            kind: "tooLarge",
+            message: format!("The file is larger than {} MB.", limit / 1024 / 1024),
+            size,
+        }
+    }
+}
+
+/// Reads a whole file as bytes, refusing files above `limit` (also when it grew after the size was checked).
+pub fn read_limited(path: &Path, limit: u64) -> Result<Vec<u8>, DocumentReadError> {
+    use std::io::Read;
+    let file = fs::File::open(path).map_err(|e| DocumentReadError::io(&e))?;
+    let meta = file.metadata().map_err(|e| DocumentReadError::io(&e))?;
+    if !meta.is_file() {
+        return Err(DocumentReadError { kind: "io", message: "This is not a file.".into(), size: 0 });
+    }
+    if meta.len() > limit {
+        return Err(DocumentReadError::too_large(meta.len(), limit));
+    }
+    let mut bytes = Vec::with_capacity(meta.len() as usize);
+    file.take(limit + 1).read_to_end(&mut bytes).map_err(|e| DocumentReadError::io(&e))?;
+    if bytes.len() as u64 > limit {
+        return Err(DocumentReadError::too_large(bytes.len() as u64, limit));
+    }
+    Ok(bytes)
+}
+
+/// The document types the viewer shows (and the only files "Open in default app" will launch from the page).
+pub fn is_document_path(path: &Path) -> bool {
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("docx"))
+}
+
 /// Returns the encoding signalled by a byte order mark and the BOM length.
 pub fn sniff_bom(bytes: &[u8]) -> Option<(&'static Encoding, usize)> {
     Encoding::for_bom(bytes)
@@ -402,5 +460,24 @@ mod tests {
         let content = read(&path, Some("UTF-8")).unwrap();
         assert!(content.lossy);
         assert!(!content.binary);
+    }
+
+    #[test]
+    fn document_read_has_a_limit() {
+        let path = temp_file("limit.docx", &[7u8; 100]);
+        assert_eq!(read_limited(&path, 100).unwrap().len(), 100);
+        let err = read_limited(&path, 99).unwrap_err();
+        assert_eq!((err.kind, err.size), ("tooLarge", 100));
+        assert_eq!(read_limited(&path.with_file_name("missing.docx"), 100).unwrap_err().kind, "notFound");
+        assert_eq!(read_limited(path.parent().unwrap(), 100).unwrap_err().kind, "io");
+    }
+
+    #[test]
+    fn document_paths_are_recognized_by_extension() {
+        assert!(is_document_path(Path::new("Folder/Report.DOCX")));
+        assert!(is_document_path(Path::new("a.docx")));
+        assert!(!is_document_path(Path::new("a.docm")));
+        assert!(!is_document_path(Path::new("a.exe")));
+        assert!(!is_document_path(Path::new("docx")));
     }
 }
