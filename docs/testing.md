@@ -54,7 +54,7 @@ Rules:
 | smoke | 9340 |
 | compare | 9371–9373 |
 | format | 9343, 9363–9365 |
-| document | 9427–9439 |
+| document | 9427–9440 |
 | grammar | 9387–9389 |
 | binary-save | 9413–9419 (one app at a time; every port is reused once or twice) |
 | hot-exit | 9344, 9354–9358, 9380, 9390, 9400–9404 |
@@ -132,10 +132,18 @@ Free for new files: 9445 and up (9380 and 9390 are taken by hot-exit now).
 - **Documents (`document.test.mjs`):** the Word files are generated at test time with the `docx` package
   (devDependency; `docx-fixtures.mjs`: deflated zips with a fixed test author, never a file saved by Word, nothing
   committed as a binary) and post-edited with JSZip where a test needs hostile XML (a style injected through a font
-  name, a VML shape that is `position: fixed`, an external image). The no-network test starts a TCP listener on a
-  local port and puts its address (https and http) into the document: any connection is a leak; the page's own
-  requests are logged through a second DevTools connection. The test fails when the cleaning in
-  `lib/document-clean.ts` is removed (checked by hand: two connections). The half-written-file test writes the first
+  name, a VML shape that is `position: fixed`, an external image). The no-network test starts one TCP listener per
+  way in (a plain `url()`, an address hidden in a custom property that `image-set(var())` pastes in, through a font
+  name and through a VML style, VML fill and stroke colors that become SVG attributes, a linked VML picture) and puts
+  its address into the document: any connection is a leak, and the failure names the listener; the page's own
+  requests are logged through a second DevTools connection, and the computed styles are searched for addresses. A
+  `:host` rule injected through a font name must be gone and the tab bar and status bar must stay what a click hits
+  (the test also turns the containment off to see that the document then does cover them). The test fails when the
+  cleaning in `lib/document-clean.ts` and `lib/css-scan.ts` is removed or reverted (checked by hand against the
+  version before the review fixes: the font-name custom property was contacted). The hidden-render test narrows the
+  window, scrolls, reloads the document while another tab is shown (F5, then Ctrl+Tab within the 300 ms debounce) and
+  checks fit, zoom and place after returning, once fitted and once with Kladde's zoom. The page count in the status bar
+  is the file's own (`appPages` of `makeDocx` writes `docProps/app.xml`; the `docx` package writes none). The half-written-file test writes the first
   half of a document over the file and fails when the viewer shows an error instead of reading again. Focus is never
   set by the tests: they click a tab and press PageDown. `Ctrl+O` is not pressed (it opens a native dialog); the other
   shortcuts go through the same window listener. A 51 MB file of zeros is written for the size limit.

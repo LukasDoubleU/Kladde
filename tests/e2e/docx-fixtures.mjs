@@ -30,9 +30,10 @@ const filler = (n, label) => Array.from({ length: n }, (_, i) => new Paragraph({
 
 /**
  * A document of `pages` pages (explicit page breaks), each with a heading "Page N" and filler. The first page
- * has the marker text, an external link, an internal link and a table.
+ * has the marker text, an external link, an internal link and a table. `appPages` is the count in
+ * `docProps/app.xml` (what Word writes on save; the package does not), null for none.
  */
-export async function makeDocx({ pages = 5, marker = "Kladde viewer test document", links = [] } = {}) {
+export async function makeDocx({ pages = 5, marker = "Kladde viewer test document", links = [], appPages = pages } = {}) {
   const children = [];
   for (let page = 1; page <= pages; page++) {
     if (page > 1) children.push(new Paragraph({ children: [new PageBreak()] }));
@@ -57,7 +58,14 @@ export async function makeDocx({ pages = 5, marker = "Kladde viewer test documen
     children.push(...filler(12, `Page ${page}`));
   }
   const doc = new Document({ ...meta("Test document"), sections: [{ children }] });
-  return Buffer.from(await Packer.toBuffer(doc));
+  const bytes = Buffer.from(await Packer.toBuffer(doc));
+  if (appPages == null) return bytes;
+  const zip = await JSZip.loadAsync(bytes);
+  zip.file(
+    "docProps/app.xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Pages>${appPages}</Pages></Properties>`,
+  );
+  return Buffer.from(await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" }));
 }
 
 /** Tracked changes (an insertion by one author, a deletion by another) and a comment. */
@@ -89,24 +97,40 @@ export async function makeTrackedDocx() {
 /**
  * A document that tries everything: `remote` (https) and `plain` (http) are addresses on a local port that must
  * never be contacted, in an external image, a style (the font name is pasted into the generated CSS:
- * `Arial;background-image:url(...)`) and a VML shape's style, which the engine copies unchanged. The style also tries to cover the whole window
- * (`position: fixed`), as a shape can.
+ * `Arial;background-image:url(...)`) and a VML shape's style, which the engine copies unchanged. The style also tries
+ * to cover the whole window (`position: fixed`), as a shape can.
+ *
+ * `probes` are further https addresses, one per way in that does not look like an address to a scan for `url()`
+ * (each should get its own listener, so the test can say which one got through): `fontVar` and `vmlVar` hide the
+ * address in a custom property that `image-set(var(--x))` pastes in later, `fill` and `stroke` are VML colors the
+ * engine copies into SVG attributes, `picture` is a linked VML picture. The font name of a second style also
+ * closes the rule and adds a `:host` rule that tries to take the viewer's element over the window.
  */
-export async function makeHostileDocx({ remote, plain = remote }) {
+export async function makeHostileDocx({ remote, plain = remote, probes = {} }) {
+  const at = (name, path) => `${probes[name] ?? remote}/${path}`;
   const zip = await JSZip.loadAsync(await makeDocx({ pages: 1, marker: "Hostile document text" }));
   const cover = "position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:99999;background-color:red";
   let styles = await zip.file("word/styles.xml").async("string");
   const injected = `<w:style w:type="character" w:customStyle="1" w:styleId="Evil"><w:name w:val="Evil"/><w:rPr><w:rFonts w:ascii="Arial;background-image:url(${remote}/style);${cover}" w:hAnsi="Arial"/></w:rPr></w:style>`;
-  styles = styles.replace("</w:styles>", `${injected}</w:styles>`);
+  const hostBreakout = `Arial}:host{contain:none!important;position:fixed!important;inset:0!important;z-index:2147483647!important;background:red!important}.x{`;
+  const injectedVar = `<w:style w:type="character" w:customStyle="1" w:styleId="EvilVar"><w:name w:val="EvilVar"/><w:rPr><w:rFonts w:ascii="Arial;--k:'${at("fontVar", "f.png")}';background-image:image-set(var(--k))" w:hAnsi="Arial"/></w:rPr></w:style>`;
+  const injectedHost = `<w:style w:type="character" w:customStyle="1" w:styleId="EvilHost"><w:name w:val="EvilHost"/><w:rPr><w:rFonts w:ascii="${hostBreakout}" w:hAnsi="Arial"/></w:rPr></w:style>`;
+  styles = styles.replace("</w:styles>", `${injected}${injectedVar}${injectedHost}</w:styles>`);
   zip.file("word/styles.xml", styles);
 
   let rels = await zip.file("word/_rels/document.xml.rels").async("string");
-  rels = rels.replace("</Relationships>", `<Relationship Id="rIdEvil1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="${remote}/linked.png" TargetMode="External"/></Relationships>`);
+  rels = rels.replace("</Relationships>", `<Relationship Id="rIdEvil1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="${remote}/linked.png" TargetMode="External"/><Relationship Id="rIdPicture" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="${at("picture", "picture.png")}" TargetMode="External"/></Relationships>`);
   zip.file("word/_rels/document.xml.rels", rels);
 
   let body = await zip.file("word/document.xml").async("string");
   const evil = [
     `<w:p><w:r><w:rPr><w:rStyle w:val="Evil"/></w:rPr><w:t>Styled by the Evil style</w:t></w:r></w:p>`,
+    `<w:p><w:r><w:rPr><w:rStyle w:val="EvilVar"/></w:rPr><w:t>Styled by the EvilVar style</w:t></w:r></w:p>`,
+    `<w:p><w:r><w:rPr><w:rStyle w:val="EvilHost"/></w:rPr><w:t>Styled by the EvilHost style</w:t></w:r></w:p>`,
+    `<w:p><w:r><w:pict><v:rect xmlns:v="urn:schemas-microsoft-com:vml" style="width:80pt;height:40pt;--v:&quot;${at("vmlVar", "v.png")}&quot;;background-image:image-set(var(--v) 1x)" fillcolor="red" stroked="f"/></w:pict></w:r></w:p>`,
+    `<w:p><w:r><w:pict><v:rect xmlns:v="urn:schemas-microsoft-com:vml" style="width:80pt;height:40pt" fillcolor="url(${at("fill", "p.svg")}#g)" stroked="f"/></w:pict></w:r></w:p>`,
+    `<w:p><w:r><w:pict><v:rect xmlns:v="urn:schemas-microsoft-com:vml" style="width:80pt;height:40pt" fillcolor="red"><v:stroke color="url(${at("stroke", "s.svg")}#g)"/></v:rect></w:pict></w:r></w:p>`,
+    `<w:p><w:r><w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" style="width:80pt;height:40pt"><v:imagedata r:id="rIdPicture"/></v:shape></w:pict></w:r></w:p>`,
     `<w:p><w:r><w:pict><v:rect xmlns:v="urn:schemas-microsoft-com:vml" style="width:80pt;height:40pt;background-image:url(${plain}/vml);${cover}" fillcolor="red" stroked="f"/></w:pict></w:r></w:p>`,
     `<w:p><w:r><w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" distT="0" distB="0" distL="0" distR="0"><wp:extent cx="952500" cy="952500"/><wp:docPr id="99" name="Linked"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="0" name="linked.png"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:link="rIdEvil1" r:embed="rIdEvil1"/></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="952500" cy="952500"/></a:xfrm><a:prstGeom prst="rect"/></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`,
   ].join("");

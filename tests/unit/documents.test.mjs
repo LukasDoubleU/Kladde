@@ -9,6 +9,7 @@ import {
   documentFormat,
   fitScale,
   isDocumentPath,
+  pageCountOf,
   problemFor,
   tooLargeProblem,
   zoomFactor,
@@ -91,6 +92,49 @@ test("strings are addresses inside image-set(), and text elsewhere", () => {
   assert.equal(referencesRemote('"url(https://example.com/a.png)"'), false);
   assert.equal(referencesRemote("'it\\'s url(https://x)'"), false);
   assert.equal(referencesRemote('image-set("data:image/png;base64,AAAA" 1x), "https://example.com"'), false);
+});
+
+test("a function inside image-set() can bring in an address: var(), env(), attr() and anything unknown count as remote", () => {
+  // `--k: "https://…"` and then `image-set(var(--k))`: the string becomes an address after the value is parsed.
+  assert.equal(referencesRemote("image-set(var(--a) 1x)"), true);
+  assert.equal(referencesRemote("image-set(var(--a))"), true);
+  assert.equal(referencesRemote("-webkit-image-set(var(--a) 1x)"), true);
+  assert.equal(referencesRemote("IMAGE-SET(VAR(--a))"), true);
+  assert.equal(referencesRemote("image-set(v\\61r(--a))"), true);
+  assert.equal(referencesRemote("image-set(env(a) 1x)"), true);
+  assert.equal(referencesRemote("image-set(attr(title) 1x)"), true);
+  assert.equal(referencesRemote("image-set(something(1) 1x)"), true);
+  assert.equal(referencesRemote("image-set(url(data:image/png;base64,AAAA) 1x, var(--a) 2x)"), true);
+  assert.equal(referencesRemote("image-set(calc(1) 1x)"), true);
+  // What a document can legitimately put there stays.
+  assert.equal(referencesRemote("image-set(url(data:image/png;base64,AAAA) 1x, url(data:image/png;base64,BBBB) 2x)"), false);
+  assert.equal(referencesRemote("image-set(linear-gradient(red, blue) 1x)"), false);
+  // After the closing parenthesis the value is judged as before.
+  assert.equal(referencesRemote("image-set(url(data:image/png;base64,AAAA) 1x) var(--a)"), false);
+});
+
+test("a custom property is judged as if every string in it were an address", () => {
+  assert.equal(referencesRemote('"https://example.com/a.png"', true), true);
+  assert.equal(referencesRemote("'a.png'", true), true);
+  assert.equal(referencesRemote('"Times New Roman"', true), true);
+  assert.equal(referencesRemote('"d\\61ta:image/png;base64,AAAA"', true), false);
+  assert.equal(referencesRemote("#1f2a44", true), false);
+  assert.equal(referencesRemote("Calibri", true), false);
+  assert.equal(referencesRemote("url(https://example.com/a.png)", true), true);
+  assert.equal(referencesRemote("url(data:image/png;base64,AAAA)", true), false);
+  // Only custom properties: anywhere else a string is text.
+  assert.equal(referencesRemote('"https://example.com/a.png"'), false);
+});
+
+test("the page count is the file's own number, or none", () => {
+  assert.equal(pageCountOf(12), 12);
+  assert.equal(pageCountOf(1), 1);
+  assert.equal(pageCountOf(0), null);
+  assert.equal(pageCountOf(NaN), null);
+  assert.equal(pageCountOf(undefined), null);
+  assert.equal(pageCountOf("3"), null);
+  assert.equal(pageCountOf(2.5), null);
+  assert.equal(pageCountOf(10_000_000), null);
 });
 
 test("a declaration block is split at the semicolons outside strings and parentheses", () => {

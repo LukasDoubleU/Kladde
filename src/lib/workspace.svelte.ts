@@ -1848,7 +1848,7 @@ class Workspace {
   }
 
   /** After a palette or dialog closed: the viewer of the active document tab takes the keyboard back. */
-  private refocusDocument() {
+  refocusDocument() {
     const tab = this.active;
     if (tab?.kind !== "document") return;
     requestAnimationFrame(() => {

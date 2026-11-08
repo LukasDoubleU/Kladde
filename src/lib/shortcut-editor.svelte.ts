@@ -39,6 +39,7 @@ function captureKeys(title: string): Promise<string | null> {
       resolve: (sequence) => {
         keyCapture.request = null;
         resolve(sequence);
+        workspace.refocusDocument();
       },
     };
   });

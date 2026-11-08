@@ -62,13 +62,20 @@ export function isDataUrl(value: string): boolean {
 // Functions that take an address (or a string that is one).
 const URL_FUNCTIONS = new Set(["url", "src"]);
 const IMAGE_SET_FUNCTIONS = new Set(["image-set", "-webkit-image-set"]);
+// What may stand inside image-set() besides addresses and resolutions: a type hint and gradients (they are images).
+const imageSetAllows = (name: string) => name === "type" || name.endsWith("gradient");
 
 /**
  * Whether a declaration value refers to anything but `data:` addresses: `url()` and `src()` with another address,
- * and every string inside `image-set()` that is not one (there strings are addresses). Escapes, comments and
- * strings are handled; a malformed value is judged by what the scan can read.
+ * and every string inside `image-set()` that is not one (there strings are addresses). Inside `image-set()` no
+ * function may bring in an address after parsing: `var()`, `env()`, `attr()` and anything unknown count as remote,
+ * because a string they substitute becomes an address there. Escapes, comments and strings are handled; a
+ * malformed value is judged by what the scan can read.
+ *
+ * `stringsAreAddresses`: every string that is not `data:` counts, not only those inside `image-set()`. For custom
+ * properties (`--x: "https://..."`), whose value `var()` pastes into other declarations later.
  */
-export function referencesRemote(value: string): boolean {
+export function referencesRemote(value: string, stringsAreAddresses = false): boolean {
   const text = value;
   let i = 0;
   // Parenthesis depths at which an image-set( was opened: strings inside are addresses.
@@ -81,7 +88,7 @@ export function referencesRemote(value: string): boolean {
       i = end < 0 ? text.length : end + 2;
     } else if (c === '"' || c === "'") {
       const [s, next] = readString(text, i);
-      if (imageSets.length > 0 && !isDataUrl(s)) return true;
+      if ((stringsAreAddresses || imageSets.length > 0) && !isDataUrl(s)) return true;
       i = next;
     } else if (c === "(") {
       depth++;
@@ -119,6 +126,8 @@ export function referencesRemote(value: string): boolean {
         i++;
         depth++;
         imageSets.push(depth);
+      } else if (imageSets.length > 0 && !imageSetAllows(lower)) {
+        return true;
       }
     } else i++;
   }

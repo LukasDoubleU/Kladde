@@ -148,6 +148,10 @@ test("tracked changes and comments are shown as such", async () => {
     assert.ok(state.marker);
     assert.match(state.popover, /Please check this price/);
     assert.equal(state.popoverShown, "none");
+    // The file carries no page count (the generated package has none), and the rendered boxes are no page count:
+    // the status bar shows none.
+    assert.match(await app.eval(`document.querySelector('footer').innerText`), /Word document \(read-only\)/);
+    assert.doesNotMatch(await app.eval(`document.querySelector('footer').innerText`), /\bpages?\b/);
   });
 });
 
@@ -166,13 +170,44 @@ test("the focus is in the viewer, so PageDown scrolls; it returns after the pale
     await app.waitFor(`${PANE}.scrollTop > 100`);
     await app.key("PageDown");
     await sleep(300);
-    const kept = await scrollTop(app);
+    let kept = await scrollTop(app);
     assert.ok(kept > 500, `scrolled ${kept}`);
 
     // The palette takes the focus and gives it back to the document.
     await app.key("Ctrl+Shift+P");
     await app.key("Escape");
     await app.waitFor(`document.activeElement?.classList.contains('pane')`);
+
+    // Dialogs that open after the palette closed give the focus back too: the Windows registration dialog (it opens
+    // when the registry has been read, after the palette's own refocus) and the key capture dialog.
+    await app.key("Ctrl+Shift+P");
+    await app.type("Set Kladde as default editor");
+    await app.waitFor("document.querySelector('.picker [role=option]')");
+    await app.key("Enter");
+    await app.waitFor("document.querySelector('[aria-label=\"Default editor\"]')");
+    await app.key("Escape");
+    await app.waitFor("!document.querySelector('[aria-label=\"Default editor\"]')");
+    await app.waitFor(`document.activeElement?.classList.contains('pane')`);
+    await app.key("Ctrl+Shift+P");
+    await app.type("Change keyboard shortcut");
+    await app.waitFor("document.querySelector('.picker [role=option]')");
+    await app.key("Enter");
+    for (const [placeholder, label] of [["Change the keyboard shortcut of…", "Zoom in"], ["Zoom in", "Set shortcut"]]) {
+      await app.waitFor(`document.querySelector('.picker input')?.placeholder === ${JSON.stringify(placeholder)}`);
+      await app.type(label);
+      await app.waitFor(`document.querySelector('.picker [role=option]')?.textContent.includes(${JSON.stringify(label)})`);
+      await app.key("Enter");
+    }
+    await app.waitFor("document.querySelector('.capture .keys')");
+    await app.key("Escape");
+    await app.waitFor("!document.querySelector('.capture')");
+    await app.waitFor(`document.activeElement?.classList.contains('pane')`);
+    // And the keys work again without a click.
+    const beforeKey = await scrollTop(app);
+    await app.key("PageDown");
+    await app.waitFor(`${PANE}.scrollTop > ${beforeKey}`);
+    await sleep(300);
+    kept = await scrollTop(app);
 
     // Away and back: the place is the same.
     await clickTab(app, "other.txt");
@@ -184,8 +219,10 @@ test("the focus is in the viewer, so PageDown scrolls; it returns after the pale
     // The file changes on disk (here the same document with other text): the viewer follows by itself and stays
     // where it was.
     const path = doc;
-    writeFileSync(path, await makeDocx({ pages: 5, marker: "Reloaded from disk" }));
+    // The page count is the file's own number (Word writes it on save), not the number of rendered boxes.
+    writeFileSync(path, await makeDocx({ pages: 5, marker: "Reloaded from disk", appPages: 12 }));
     await app.waitFor(shows("Reloaded from disk"), 15000);
+    await app.waitFor(`document.querySelector('footer').innerText.includes('12 pages')`);
     await sleep(300);
     assert.ok(Math.abs((await scrollTop(app)) - kept) < 3, `scroll after reload: ${await scrollTop(app)} (was ${kept})`);
 
@@ -218,6 +255,72 @@ test("a file that is half written is read again instead of showing an error", as
     writeFileSync(doc, await makeDocx({ pages: 2, marker: "Second version" }));
     await app.waitFor(shows("Second version"), 15000);
     assert.equal(await app.eval(`!!${VIEW}?.querySelector('.problem')`), false);
+  });
+});
+
+test("a render that finishes while the tab is hidden keeps the fit, the zoom and the place", async () => {
+  // A hidden tab has no layout: measuring the pages there reads 0 and used to throw away the fit to width, and
+  // the place (in px of the old scale) was scaled a second time on return.
+  const doc = put("hidden.docx", await makeDocx({ pages: 5 }));
+  const other = writeFixture(profile, "hidden-other.txt", "just text\n");
+  await session({ port: 9440, paths: [doc, other] }, async (app) => {
+    await app.waitFor(activeIs("hidden-other.txt"));
+    await clickTab(app, "hidden.docx");
+    await app.waitFor(shows("Kladde viewer test document"), 20000);
+    await app.waitFor(`document.activeElement?.classList.contains('pane')`);
+    const HIDDEN = "document.querySelector('.fill.hidden .document-view .host')?.shadowRoot";
+    const look = () =>
+      app.eval(`(() => {
+        const pane = ${PANE};
+        const page = ${ROOT}.querySelector('section.docx').getBoundingClientRect().width;
+        return { scale: parseFloat(${HOST}.dataset.scale ?? '1'), top: pane.scrollTop, page, pane: pane.clientWidth, hscroll: pane.scrollWidth > pane.clientWidth + 1 };
+      })()`);
+    // Away, render (F5 while the viewer is shown, the debounced reload then runs on the hidden tab), and back.
+    const reloadHidden = async () => {
+      await app.eval(`${ROOT}.querySelector('.docx-wrapper').setAttribute('data-probe', '1')`);
+      await app.key("F5");
+      await app.key("Ctrl+Tab");
+      await app.waitFor(activeIs("hidden-other.txt"));
+      // The new rendering is made while the tab is hidden: the probe on the old wrapper is gone.
+      await app.waitFor(`${HIDDEN} && !${HIDDEN}.querySelector('.docx-wrapper[data-probe]')`, 15000);
+      await sleep(500);
+      await app.key("Ctrl+Tab");
+      await app.waitFor(activeIs("hidden.docx"));
+      await app.waitFor(`document.activeElement?.classList.contains('pane')`);
+      await sleep(500);
+    };
+
+    // A narrow window: the pages fit its width.
+    await app.cdp.send("Emulation.setDeviceMetricsOverride", { width: 520, height: 700, deviceScaleFactor: 1, mobile: false });
+    try {
+      await app.waitFor(`parseFloat(${HOST}.dataset.scale) < 0.7`);
+      await app.key("PageDown");
+      await app.key("PageDown");
+      await sleep(300);
+      const before = await look();
+      assert.ok(before.top > 500, `scrolled ${before.top}`);
+      assert.equal(before.hscroll, false);
+      await reloadHidden();
+      const after = await look();
+      assert.ok(Math.abs(after.scale - before.scale) < 0.001, `scale ${before.scale} -> ${after.scale}`);
+      assert.ok(after.page <= after.pane, `page ${after.page} in ${after.pane}`);
+      assert.equal(after.hscroll, false);
+      assert.ok(Math.abs(after.top - before.top) < 3, `place ${before.top} -> ${after.top}`);
+    } finally {
+      await app.cdp.send("Emulation.clearDeviceMetricsOverride");
+    }
+
+    // A wide window with Kladde's zoom: the scale is the zoom's, and the place is not scaled again.
+    await app.waitFor(`${PANE}.clientWidth > 1000 && parseFloat(${HOST}.dataset.scale) > 0.95`);
+    for (let i = 0; i < 3; i++) await app.key("Ctrl+Plus");
+    await app.waitFor(`parseFloat(${HOST}.dataset.scale) > 1.05`);
+    await app.key("PageDown");
+    await sleep(300);
+    const zoomed = await look();
+    await reloadHidden();
+    const back = await look();
+    assert.ok(Math.abs(back.scale - zoomed.scale) < 0.001, `scale ${zoomed.scale} -> ${back.scale}`);
+    assert.ok(Math.abs(back.top - zoomed.top) < 3, `place ${zoomed.top} -> ${back.top}`);
   });
 });
 
@@ -374,17 +477,26 @@ test("a link click reaches openHref: web and mail addresses open, anything else 
 });
 
 test("a document cannot reach the network or draw over Kladde's UI", async () => {
-  // Anything that connects to this port is a leak. The server never answers.
-  const hits = [];
-  const server = net.createServer((socket) => {
-    hits.push(socket.remoteAddress);
-    socket.destroy();
-  });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const { port: remotePort } = server.address();
+  // Anything that connects to one of these ports is a leak. The servers never answer. One per way in, so a failure
+  // says which one got through.
+  const names = ["main", "fontVar", "vmlVar", "fill", "stroke", "picture"];
+  const listeners = Object.fromEntries(
+    await Promise.all(
+      names.map(async (name) => {
+        const hits = [];
+        const server = net.createServer((socket) => {
+          hits.push(socket.remoteAddress);
+          socket.destroy();
+        });
+        await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+        return [name, { server, hits, url: `https://127.0.0.1:${server.address().port}` }];
+      }),
+    ),
+  );
+  const probes = Object.fromEntries(names.filter((n) => n !== "main").map((n) => [n, listeners[n].url]));
   const doc = put(
     "hostile.docx",
-    await makeHostileDocx({ remote: `https://127.0.0.1:${remotePort}`, plain: `http://127.0.0.1:${remotePort}` }),
+    await makeHostileDocx({ remote: listeners.main.url, plain: listeners.main.url.replace("https:", "http:"), probes }),
   );
   const dir = tempProfile("kladde-document-hostile");
   try {
@@ -412,25 +524,45 @@ test("a document cannot reach the network or draw over Kladde's UI", async () =>
           const root = ${ROOT};
           const css = [...root.querySelectorAll('style')].map((s) => s.textContent).join('\\n');
           const attrs = [...root.querySelectorAll('[style]')].map((e) => e.getAttribute('style')).join('\\n');
+          // Every attribute of every element, whatever its name (SVG paint attributes: fill, stroke, ...).
+          const all = [...root.querySelectorAll('*')].flatMap((e) => [...e.attributes].map((a) => a.name + '=' + a.value)).join('\\n');
+          // What the browser computed, which is what it fetches: custom properties pasted into image-set().
+          const computed = [...root.querySelectorAll('*')].map((e) => { const c = getComputedStyle(e); return c.backgroundImage + c.maskImage + c.borderImageSource + c.listStyleImage + c.content; }).join('\\n');
+          const host = getComputedStyle(${HOST});
           return {
             removed: Number(${HOST}.dataset.removed),
             remoteInCss: /https?:/i.test(css),
             remoteInAttributes: /https?:/i.test(attrs),
+            remoteAnywhere: /https?:\\/\\/127\\.0\\.0\\.1/i.test(all),
+            remoteComputed: /https?:/i.test(computed),
+            hostRule: /:host/i.test(css),
+            hostPosition: host.position,
+            hostContain: host.contain,
             images: [...root.querySelectorAll('img')].map((i) => i.getAttribute('src')),
             styled: !!root.querySelector('.docx_evil'),
+            svgShapes: root.querySelectorAll('svg rect, svg g').length,
             fixedKept: [...root.querySelectorAll('svg')].some((s) => s.style.position === 'fixed') || /position:\\s*fixed/.test(css),
+            notice: document.querySelector('.notice')?.textContent ?? null,
           };
         })()`);
-        assert.ok(state.removed >= 3, `only ${state.removed} things were removed`);
+        assert.ok(state.removed >= 8, `only ${state.removed} things were removed`);
         assert.equal(state.remoteInCss, false);
         assert.equal(state.remoteInAttributes, false);
+        assert.equal(state.remoteAnywhere, false);
+        assert.equal(state.remoteComputed, false);
+        // A rule of the document for its host element is gone, and the host is where it was put.
+        assert.equal(state.hostRule, false);
+        assert.notEqual(state.hostPosition, "fixed");
         assert.deepEqual(state.images, []);
         assert.ok(state.styled);
+        assert.ok(state.svgShapes > 0);
         assert.ok(state.fixedKept, "the fixed position is part of what the test needs to contain");
+        // A linked VML picture (its image is not in the file) is no error: the engine measures it a frame later.
+        assert.equal(state.notice, null);
 
-        // No http or https request left the viewer: nothing connected to the port, and the page asked for no
+        // No http or https request left the viewer: nothing connected to any port, and the page asked for no
         // address outside its own origins.
-        assert.deepEqual(hits, []);
+        for (const name of names) assert.deepEqual(listeners[name].hits, [], `${name} was contacted`);
         const foreign = requests.filter((u) => /^https?:/i.test(u) && !/^https?:\/\/(tauri|ipc|asset)\.localhost[:/]/i.test(u));
         assert.deepEqual(foreign, []);
 
@@ -439,14 +571,16 @@ test("a document cannot reach the network or draw over Kladde's UI", async () =>
         const where = await app.eval(`(() => {
           const at = (el) => { const r = el.getBoundingClientRect(); return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); };
           const host = ${HOST};
+          const stage = host.parentElement;
           const tabs = document.querySelector('.tabbar');
           const footer = document.querySelector('footer');
-          const hit = (el) => at(el)?.closest('.tabbar, footer, .document-view')?.className;
           const inside = { x: host.getBoundingClientRect().left + 50, y: host.getBoundingClientRect().top + 50 };
           const contained = { tabs: !!at(tabs)?.closest('.tabbar'), footer: !!at(footer)?.closest('footer'), insideIsDocument: document.elementFromPoint(inside.x, inside.y) === host };
           // Without the containment the same document does cover them: the test can fail.
+          stage.style.contain = 'none';
           host.style.contain = 'none';
           const uncontained = { tabs: !!at(tabs)?.closest('.tabbar'), footer: !!at(footer)?.closest('footer') };
+          stage.style.contain = '';
           host.style.contain = '';
           return { contained, uncontained };
         })()`);
@@ -457,7 +591,7 @@ test("a document cannot reach the network or draw over Kladde's UI", async () =>
       }
     });
   } finally {
-    server.close();
+    for (const { server } of Object.values(listeners)) server.close();
   }
 });
 

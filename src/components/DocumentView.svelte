@@ -13,13 +13,16 @@
     containerOf,
     corruptProblem,
     fitScale,
+    pageCountOf,
     problemFor,
     tooLargeProblem,
     zoomFactor,
     type DocumentProblem,
   } from "../lib/documents";
   import { dirname } from "../lib/links";
+  import { integration } from "../lib/integration.svelte";
   import { settings } from "../lib/settings.svelte";
+  import { keyCapture } from "../lib/shortcut-editor.svelte";
   import { workspace, type Tab } from "../lib/workspace.svelte";
   import ContextMenu, { type MenuItem } from "./ContextMenu.svelte";
 
@@ -72,6 +75,8 @@
 
   // Layout: the pages' width at scale 1, the scale now, the scroll position in px at that scale.
   let natural = 0;
+  let needsMeasure = false;
+  let measured = false;
   let scale = 1;
   let savedTop = 0;
   let userFactor = 1;
@@ -79,7 +84,7 @@
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
   type Outcome =
-    | { ok: true; nodes: Node[]; pages: number; removed: number }
+    | { ok: true; nodes: Node[]; pages: number | null; removed: number }
     | { ok: false; problem: DocumentProblem; transient: boolean };
 
   /** One try to read and render. `again`: there is a rendering to keep, so failures that a save in progress causes are expected. */
@@ -104,8 +109,9 @@
       // Detached nodes: nothing is attached, so nothing is fetched, before the cleaning below has run.
       const nodes = await renderDocument(parsed, OPTIONS);
       const { removed } = cleanDocumentNodes(nodes);
-      const pages = nodes.reduce((n, node) => n + (node instanceof Element ? node.querySelectorAll("section.docx").length : 0), 0);
-      return { ok: true, nodes, pages, removed };
+      // The count the file carries (Word writes it on save), not the rendered boxes: those break only at explicit
+      // page breaks and sections, so a long text without them is one box.
+      return { ok: true, nodes, pages: pageCountOf(parsed.extendedPropsPart?.props?.pages), removed };
     } catch (e) {
       return { ok: false, problem: corruptProblem(e instanceof Error ? e.message : String(e)), transient: again };
     }
@@ -144,21 +150,30 @@
     loading = false;
     rendered = true;
     host.dataset.removed = String(result.removed);
-    workspace.documentPages[tab.id] = result.pages;
+    if (result.pages) workspace.documentPages[tab.id] = result.pages;
+    else delete workspace.documentPages[tab.id];
     // The pane may have been hidden (an error was shown): it needs its layout to be measured.
     await tick();
-    // The pages' width at scale 1: measure unscaled. The place in the document is kept (it is in px of the
-    // scale the old pages had, which is the new one too unless the page size changed).
-    const top = savedTop;
+    // Measured when the pane has a layout: now, or (a render that finished while another tab was shown) when the
+    // tab is shown again. Until then scale, zoom and place stay as they were.
+    needsMeasure = true;
+    applyScale();
+    restoreScroll();
+    if (active) focusViewer();
+  }
+
+  /** The pages' width at scale 1. Needs a layout (a hidden pane has none: every width reads 0). */
+  function measure() {
+    // The place in the document in px at scale 1, so it survives however the scale changes below. (Before the first
+    // measurement it is the session's, in px of the scale it was left at: see applyScale.)
+    if (measured) savedTop /= scale;
+    measured = true;
     host.style.zoom = "1";
     scale = 1;
     natural = 0;
-    for (const page of root.querySelectorAll<HTMLElement>("section.docx")) natural = Math.max(natural, page.offsetWidth);
+    for (const page of root!.querySelectorAll<HTMLElement>("section.docx")) natural = Math.max(natural, page.offsetWidth);
     natural += 48;
-    applyScale();
-    savedTop = top;
-    restoreScroll();
-    if (active) focusViewer();
+    needsMeasure = false;
   }
 
   function restoreScroll() {
@@ -180,7 +195,14 @@
   /** Fit to width (never enlarging), then Kladde's zoom on top. */
   function applyScale() {
     if (!rendered || pane.clientWidth === 0) return;
+    // A place from the session is in px of the scale it had, which a window of the same width gives again.
+    const restored = needsMeasure && !measured ? savedTop : null;
+    if (needsMeasure) measure();
     setScale(fitScale(pane.clientWidth, natural) * userFactor);
+    if (restored !== null) {
+      savedTop = restored;
+      restoreScroll();
+    }
   }
 
   function onScroll() {
@@ -191,7 +213,8 @@
   }
 
   function focusViewer() {
-    if (workspace.picker || workspace.dialog) return;
+    // Not while a dialog of the app is open (a reload finishing behind it must not take its keyboard).
+    if (workspace.picker || workspace.dialog || integration.setup || keyCapture.request) return;
     (problem ? problemBox : pane)?.focus({ preventScroll: true });
   }
 
@@ -342,6 +365,10 @@
   }
   /* As wide as the pages when they are wider than the window (then it scrolls), centered when narrower. */
   .stage {
+    /* A document can position things (VML shapes, floating objects) fixed or absolute: contained in here, they
+       can neither draw over the tabs and bars nor take mouse clicks from them. Here and not on the host: the
+       host is the document's reach (`:host` rules are removed too, but this does not depend on that). */
+    contain: paint;
     display: flex;
     justify-content: center;
     width: max-content;
@@ -349,9 +376,6 @@
   }
   .host {
     width: max-content;
-    /* A document can position things (VML shapes, floating objects) fixed or absolute: contained in here, they
-       can neither draw over the tabs and bars nor take mouse clicks from them. */
-    contain: paint;
     /* What a document without fonts of its own gets, not the UI font. Inherited into the shadow root. */
     font-family: Calibri, Carlito, "Segoe UI", Arial, sans-serif;
     font-size: 11pt;

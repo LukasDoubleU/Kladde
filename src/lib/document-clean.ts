@@ -18,14 +18,28 @@ const FORBIDDEN = new Set([
 // Attributes that hold an address. On links (`a`) the address is only shown and opened by the user's click.
 const ADDRESS_ATTRIBUTES = new Set(["src", "srcset", "href", "xlink:href", "poster", "data", "background", "longdesc", "ping", "action", "formaction", "usemap", "cite"]);
 
+// A custom property is pasted into other declarations by `var()`, so a string in it can become an address (inside
+// `image-set()`) wherever it ends up: judged as if every string were one. (A name with an escape could be any.)
+const isCustomProperty = (name: string) => name.startsWith("--") || name.includes("\\");
+
 /** Removes the declarations of a block that refer to something other than `data:`. */
 function cleanDeclarations(style: CSSStyleDeclaration, stats: CleanStats) {
-  for (const { name, value } of splitDeclarations(style.cssText)) {
-    if (referencesRemote(value)) {
-      style.removeProperty(name);
-      stats.removed++;
-    }
+  const remote = () => splitDeclarations(style.cssText).filter((d) => referencesRemote(d.value, isCustomProperty(d.name)));
+  for (const { name } of remote()) {
+    style.removeProperty(name);
+    stats.removed++;
   }
+  // Whatever could not be removed by name takes the whole block with it.
+  if (remote().length > 0) {
+    style.cssText = "";
+    stats.removed++;
+  }
+}
+
+/** Whether a rule's selector (or the prelude of `@scope`) can reach the shadow host: `:host`, `:host()`, `:host-context()`. */
+function targetsHost(rule: CSSRule): boolean {
+  if (rule.constructor.name === "CSSScopeRule") return true;
+  return rule instanceof CSSStyleRule && /:host/i.test(rule.selectorText);
 }
 
 function cleanRules(rules: CSSRuleList, stats: CleanStats) {
@@ -37,6 +51,12 @@ function cleanRules(rules: CSSRuleList, stats: CleanStats) {
       stats.removed++;
     };
     if (rule instanceof CSSImportRule || rule instanceof CSSPropertyRule) {
+      drop();
+      continue;
+    }
+    // The document's own CSS must not restyle the element it lives in (position, containment, size): the host is
+    // Kladde's.
+    if (targetsHost(rule)) {
       drop();
       continue;
     }
@@ -89,11 +109,21 @@ function cleanElement(el: Element, stats: CleanStats) {
       }
     } else if (tag === "a" && (name === "target" || name === "download")) {
       el.removeAttribute(attr.name);
+    } else if (!isDataUrl(attr.value) && referencesRemote(attr.value)) {
+      // Paint and reference attributes of SVG shapes (`fill`, `stroke`, `filter`, `mask`, `clip-path`, markers): the
+      // engine copies a VML shape's colors into them unchanged, and `url(https://…)` there is fetched.
+      el.removeAttribute(attr.name);
+      stats.removed++;
     }
   }
   // An image without a source of its own has nothing to show (and `src="null"` would ask the app's own origin).
-  if ((tag === "img" && !el.hasAttribute("src")) || (tag === "image" && !el.hasAttribute("href") && !el.hasAttribute("xlink:href"))) {
+  if (tag === "img" && !el.hasAttribute("src")) {
     el.remove();
+    stats.removed++;
+  } else if (tag === "image" && !el.hasAttribute("href") && !el.hasAttribute("xlink:href")) {
+    // An empty group instead of nothing: the engine measures the first child of a VML shape's `<svg>` a frame
+    // later (`getBBox`) and fails on a shape without one.
+    el.replaceWith(document.createElementNS("http://www.w3.org/2000/svg", "g"));
     stats.removed++;
   }
 }

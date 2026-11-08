@@ -66,8 +66,16 @@ The default preset contains deliberate choices; presets (Notepad++, VS Code) and
   change. Its output is not re-colored with the theme (forcing Catppuccin colors onto it breaks documents): the pages
   are white (`--paper`), only the surroundings follow the theme.
 - **No remote content, ever.** A document cannot load anything from the network (linked images, styles, fonts, VML
-  backgrounds): the viewer removes every address that is not `data:` before attaching anything. This follows the
-  privacy rule (nothing leaves the machine unless the user turns it on) and a document is a file from someone else.
+  backgrounds, SVG paint attributes, addresses smuggled through custom properties and `image-set(var())`): the viewer
+  removes every address that is not `data:` before attaching anything. This follows the privacy rule (nothing leaves
+  the machine unless the user turns it on) and a document is a file from someone else.
+- **The cleaner, not an iframe (for now).** A sandboxed `srcdoc` iframe with its own meta CSP (`img-src data:`) would
+  be a boundary that does not depend on knowing every way CSS and SVG can name an address, and it is the stronger
+  design. It was not chosen because the viewer would then need its own scroll, focus, keyboard, selection, zoom and link
+  plumbing across the frame boundary (the shortcuts, Ctrl+A/Ctrl+C and the context-menu rules all rely on the window's
+  listeners), a much larger change than the fix that was needed. The cleaner is therefore the only barrier and is
+  tested with one listener per known way in; a new way in is a bug to fix there, and moving to a frame is the next step
+  if one turns up. Dropping `https:` from `img-src` is not possible: the Markdown preview shows remote images.
 - **Tracked changes and comments are shown**, as markup (insertions underlined, deletions struck through, comments as a
   marker with the text on hover), because the alternative (insertions as plain text, deletions and comments dropped) shows a
   text that is not what the file says.

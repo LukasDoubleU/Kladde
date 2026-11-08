@@ -379,22 +379,40 @@ nothing is read or loaded at startup.
   every `<style>` is parsed by the browser into a constructable `CSSStyleSheet` (not attached, `@import` ignored), its
   rules are walked (CSSOM), `@import` and `@property` rules are dropped and every declaration whose value refers to
   something other than a `data:` address is removed (`css-scan.ts`: a tokenizer, not a regular expression, so CSS
-  escapes such as `u\72l(` and comments cannot hide an address; it also rejects strings in `image-set()`); the same
-  for `style` attributes; `<img>` and SVG `<image>` without a `data:` source are dropped, as are scripts, frames,
+  escapes such as `u\72l(` and comments cannot hide an address); the same for `style` attributes. What counts as an
+  address: `url()` and `src()` with anything but `data:`; every string in `image-set()`; and every function that could
+  bring one in there after parsing (`var()`, `env()`, `attr()`, anything unknown). A custom property (`--x`) is
+  judged as if each of its strings were an address, because `var()` pastes it into other declarations later
+  (`--k: "https://…"` with `image-set(var(--k))` fetched the address once). Rules for the host (`:host`, `:host()`,
+  `:host-context()`, `@scope`) are dropped, so the document cannot restyle the element it lives in. The same scan runs
+  on **every attribute** of every element, not only `style`: the engine copies a VML shape's colors unchanged into SVG
+  `fill` and `stroke`, and `url(https://…)` there is fetched. `<img>` without a `data:` source is dropped; an SVG
+  `<image>` without one becomes an empty `<g>` (the engine measures the first child of a VML shape's `<svg>` a frame
+  later and would fail on a shape without one: an "Unexpected error" notice for a linked picture). Scripts, frames,
   objects, links, forms and media elements, event handler attributes and every address attribute that is not a link's
-  `href`. The check that matters is tested: a document with an external image, a style injected through a font name and
-  a VML background must make no connection (a TCP listener counts, and the page's requests are logged through CDP).
+  `href` go too. This is a deny-list on the browser's parsed output, and it is the only barrier: the page's CSP allows
+  https images, and a shadow root cannot have a CSP of its own (see decisions.md for the iframe alternative). The check
+  that matters is tested, with a listener per way in: an external image, a style injected through a font name, a VML
+  background, `image-set(var())` through a font name and through a VML style, `fillcolor` and `stroke` colors, a
+  linked VML picture and a `:host` rule must make no connection (TCP listeners count, and the page's requests are
+  logged through CDP; the computed styles are checked too, since that is what the browser fetches).
 - **Shadow root and containment.** The pages are rendered into a shadow root, so the document's CSS cannot reach
-  Kladde's UI and its element ids are no window properties. The host has `contain: paint`: a shape that is positioned
-  `fixed` (seen in the spike, it covered the tab bar) is then contained in the viewer and can neither draw over nor take
-  clicks from the app. White pages (`--paper`) on the themed background: forcing Catppuccin colors onto a document
+  Kladde's UI and its element ids are no window properties. The **stage** around the host has `contain: paint`: a shape
+  that is positioned `fixed` (seen in the spike, it covered the tab bar) is then contained in the viewer and can neither
+  draw over nor take clicks from the app. The containment sits on an element of the light DOM that the document cannot
+  style: on the host itself it could be turned off from inside (a `:host` rule with `!important`, injected through a
+  font name), and the cleaner's removal of `:host` rules is a second layer, not the only one. White pages (`--paper`) on the themed background: forcing Catppuccin colors onto a document
   breaks it. A document without fonts of its own gets Calibri/Carlito/Segoe UI, not the UI font.
 - **Layout and zoom:** pages have the document's own size (A4 is 794 px). They are shown at their size, or shrunk to the
   width of the window (fit to width, never enlarged); Kladde's zoom (keys, `Ctrl`+wheel, the same `ui.zoom` as the font
   size) scales them on top, by the same proportion as the font size. Done with the CSS `zoom` of the host; the scroll
-  position scales with it (`overflow-anchor: none`, set by hand).
+  position scales with it (`overflow-anchor: none`, set by hand). The pages' width is measured when the pane has a
+  layout: a render that finishes while another tab is shown (a reload, or the first render of a background tab) has
+  none, every width reads 0, so scale, zoom and place stay as they were and the measurement waits for the tab to be
+  shown again. The place is kept in px at scale 1 across a measurement, so it is not scaled twice.
 - **Focus and keys:** the viewer takes the focus (its pane, `tabindex=0`) when its tab becomes active, after a palette or
-  dialog closed (`workspace.registerDocument`, `refocusDocument`) and after an error is shown, so PageDown and the arrows
+  dialog closed (`workspace.registerDocument`, `refocusDocument`, called by the palette, the dialogs, the Windows
+  registration dialog and the key capture dialog) and after an error is shown, never while one of them is open, so PageDown and the arrows
   scroll without a click. Kladde's shortcuts are handled by the window's capture listener and work as everywhere.
   `Ctrl+A` selects the document only; `Ctrl+C` is the native copy. Links are found with `event.composedPath()` (a click
   in a shadow root is retargeted to its host) and go through `workspace.openHref` (http, https, mailto; `#bookmarks`
@@ -409,8 +427,10 @@ nothing is read or loaded at startup.
   (Word writes in steps or replaces the file: a sharing violation, a missing file, a truncated ZIP) is read again after
   0.3, 0.6, 1.2 and 2.4 s with the old rendering still shown; only then an error appears. On the first read only a
   sharing violation is retried.
-- **Status bar:** "Word document (read-only)", the page count (`section.docx` count, `workspace.documentPages`) and the
-  size.
+- **Status bar:** "Word document (read-only)", the page count and the size. The page count is the file's own
+  (`docProps/app.xml`, `Pages`, which Word writes on save; `pageCountOf` accepts a whole number from 1 to 100000);
+  without one, none is shown. The number of rendered `section.docx` boxes is not a page count: the viewer breaks pages only
+  at explicit page breaks and sections (`ignoreLastRenderedPageBreak`), so a long text without them is one tall box.
 - Not part of it: finding text in a document, printing, `.doc`, `.docm`, `.dotx`, `.odt`, registering Kladde as a `.docx`
   handler.
 

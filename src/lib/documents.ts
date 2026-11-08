@@ -85,6 +85,15 @@ export function tooLargeProblem(size: number): DocumentProblem {
 }
 
 /**
+ * The page count a program wrote into the document (`docProps/app.xml`, `Pages`), or null when there is none. What
+ * the viewer renders is not that: it breaks pages only where the file says so (explicit breaks and sections), so a
+ * long text without them is one tall box. The file's own number is shown, or none.
+ */
+export function pageCountOf(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 100_000 ? value : null;
+}
+
+/**
  * The scale factor of a document for Kladde's zoom (points added to the font size): the zoom keys and
  * Ctrl+wheel change the font size, and a document grows by the same proportion.
  */

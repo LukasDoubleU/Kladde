@@ -44,6 +44,7 @@ class Integration {
   closeSetup() {
     this.setup = null;
     if (workspace.active?.kind === "text") requestAnimationFrame(() => workspace.view?.focus());
+    else workspace.refocusDocument();
   }
 
   /** Registers the chosen types, then sends the user to Windows' settings where the default is picked. */
