@@ -7,6 +7,7 @@
   import { revealItemInDir } from "@tauri-apps/plugin-opener";
   import { onMount, untrack } from "svelte";
   import Compare from "./components/Compare.svelte";
+  import ContextMenu, { type MenuItem } from "./components/ContextMenu.svelte";
   import DefaultEditor from "./components/DefaultEditor.svelte";
   import Dialog from "./components/Dialog.svelte";
   import ImageView from "./components/ImageView.svelte";
@@ -35,6 +36,7 @@
   import { LARGE_COMMANDS } from "./lib/large-edit";
   import { integration } from "./lib/integration.svelte";
   import { keyHint } from "./lib/keyhint.svelte";
+  import { keepsNativeMenu, selectedText } from "./lib/native-menu";
   import { languageNames } from "./lib/languages";
   import { dirname } from "./lib/links";
   import { defaultSettingsJson, loadSettings, settings, SETTINGS_FILE } from "./lib/settings.svelte";
@@ -358,9 +360,15 @@
     workspace.zoom(e.deltaY < 0 ? 1 : -1);
   }
 
+  // WebView2's menu outside of text fields has Refresh and Back (lib/native-menu.ts): never shown there.
+  // Selected text, in the preview or the large file view, gets a menu of our own with Copy.
+  let copyMenu: { x: number; y: number; items: MenuItem[] } | null = $state(null);
+
   function onContextMenu(e: MouseEvent) {
-    const target = e.target as HTMLElement;
-    if (!target.closest(".cm-content, input, textarea, .markdown, .lines")) e.preventDefault();
+    if (e.defaultPrevented || keepsNativeMenu(e.target)) return;
+    e.preventDefault();
+    const text = selectedText(e.target);
+    copyMenu = text ? { x: e.clientX, y: e.clientY, items: [{ label: "Copy", run: () => writeText(text) }] } : null;
   }
 
   // Draggable divider between editor and preview.
@@ -579,6 +587,9 @@
 {#if workspace.picker}<Picker />{/if}
 {#if workspace.dialog}<Dialog />{/if}
 {#if keyCapture.request}<KeyCapture />{/if}
+{#if copyMenu}
+  <ContextMenu x={copyMenu.x} y={copyMenu.y} items={copyMenu.items} onclose={() => (copyMenu = null)} />
+{/if}
 
 <style>
   .app {

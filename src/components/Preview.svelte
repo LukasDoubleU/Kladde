@@ -189,9 +189,33 @@
   .markdown :global(li.task-list-item) {
     list-style: none;
   }
-  .markdown :global(li.task-list-item input) {
+  /* The read-only checkbox of a task list item (markdown.ts renders a span: the sanitizer drops <input>). */
+  .markdown :global(li.task-list-item .task-box) {
+    display: inline-block;
+    box-sizing: border-box;
+    width: 1em;
+    height: 1em;
     margin: 0 0.4em 0 -1.4em;
-    vertical-align: middle;
+    vertical-align: -0.12em;
+    border: 1px solid var(--fg-dim);
+    border-radius: 3px;
+    opacity: 0.8;
+  }
+  .markdown :global(li.task-list-item .task-box[aria-checked="true"]) {
+    border-color: var(--accent);
+    background: var(--accent);
+    position: relative;
+  }
+  .markdown :global(li.task-list-item .task-box[aria-checked="true"]::after) {
+    content: "";
+    position: absolute;
+    left: 0.3em;
+    top: 0.08em;
+    width: 0.25em;
+    height: 0.5em;
+    border: solid var(--accent-fg);
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
   }
   .markdown :global(.mermaid-block) {
     margin: 0 0 1em;

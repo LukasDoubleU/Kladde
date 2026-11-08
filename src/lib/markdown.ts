@@ -66,7 +66,9 @@ function annotate(state: StateCore) {
       if (match && first?.type === "text") {
         first.content = first.content.slice(match[0].length);
         const box = new state.Token("html_inline", "", 0);
-        box.content = `<input type="checkbox" disabled${match[1] === " " ? "" : " checked"}> `;
+        // Not an <input>: the sanitizer drops every form control (see FORBID_TAGS), and a disabled checkbox
+        // needs none. The span is drawn by the preview's CSS.
+        box.content = `<span class="task-box" role="checkbox" aria-disabled="true" aria-checked="${match[1] === " " ? "false" : "true"}"></span> `;
         token.children!.unshift(box);
         tokens[i - 2].attrJoin("class", "task-list-item");
       }
@@ -108,11 +110,23 @@ DOMPurify.addHook("afterSanitizeAttributes", (node) => {
   }
 });
 
+/**
+ * What the sanitizer removes on top of DOMPurify's defaults. The preview is a document, not an application:
+ * a <form> (or a button with formaction) navigates the whole window to its action when it is clicked, and the
+ * CSP's form-action 'none' and the navigation guard in Rust are only the second and third line. <style> stays
+ * out too. The rest is already outside DOMPurify's lists and is named so that a change of defaults cannot let it in.
+ */
+export const FORBID_TAGS = [
+  "style", "form", "input", "button", "select", "option", "optgroup", "datalist", "textarea", "fieldset",
+  "meta", "link", "base", "iframe", "frame", "frameset", "object", "embed", "portal",
+];
+export const FORBID_ATTR = ["formaction", "formmethod", "formtarget", "formenctype", "form"];
+
 /** Renders Markdown to sanitized HTML. `baseDir` resolves relative image paths. */
 export function renderMarkdown(source: string, baseDir: string | null): string {
   currentBaseDir = baseDir;
   const html = md.render(source);
-  return DOMPurify.sanitize(html, { FORBID_TAGS: ["style"], ADD_ATTR: ["target"] });
+  return DOMPurify.sanitize(html, { FORBID_TAGS, FORBID_ATTR, ADD_ATTR: ["target"] });
 }
 
 export function renderSvg(source: string): string {

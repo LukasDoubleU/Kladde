@@ -4,6 +4,7 @@ mod languagetool;
 mod large;
 mod lt_install;
 mod lt_server;
+mod navigation;
 mod pieces;
 mod session;
 mod update;
@@ -38,9 +39,8 @@ fn open_url_log_for(isolated: bool, value: Option<std::ffi::OsString>) -> Option
     value.filter(|v| isolated && !v.is_empty()).map(PathBuf::from)
 }
 
-/// Returns true when the URL went into the test log: the page then does not open the browser.
-#[tauri::command]
-fn open_url_hook(url: String) -> Result<bool, String> {
+/// Returns true when the URL went into the test log: the browser is then not opened.
+fn log_open_url(url: &str) -> Result<bool, String> {
     let Some(log) = open_url_log_for(session::isolated_profile().is_some(), std::env::var_os(OPEN_URL_LOG_ENV)) else {
         return Ok(false);
     };
@@ -48,6 +48,34 @@ fn open_url_hook(url: String) -> Result<bool, String> {
     let mut file = std::fs::OpenOptions::new().create(true).append(true).open(log).map_err(|e| e.to_string())?;
     writeln!(file, "{url}").map_err(|e| e.to_string())?;
     Ok(true)
+}
+
+/// For the page: true when the URL went into the test log, so the page does not open the browser.
+#[tauri::command]
+fn open_url_hook(url: String) -> Result<bool, String> {
+    log_open_url(&url)
+}
+
+/// Hands a link of a cancelled navigation to the system, from a thread of its own: the webview's navigation
+/// callback must return quickly. The opener plugin's function works without the plugin being registered (an
+/// isolated profile does not register it). Failures only go to stderr: the page has no part in this.
+fn open_external(url: String) {
+    std::thread::spawn(move || match log_open_url(&url) {
+        Ok(true) => {}
+        Ok(false) => {
+            if let Err(e) = tauri_plugin_opener::open_url(&url, None::<&str>) {
+                eprintln!("[navigation] could not open {url}: {e}");
+            }
+        }
+        Err(e) => eprintln!("[navigation] could not log {url}: {e}"),
+    });
+}
+
+/// A request that may not stay in the window: web and mail links go to the system, the rest is dropped.
+fn handle_blocked(decision: navigation::Navigation) {
+    if let navigation::Navigation::External(url) = decision {
+        open_external(url);
+    }
 }
 
 #[tauri::command]
@@ -446,7 +474,24 @@ fn create_main_window(app: &AppHandle) -> tauri::Result<()> {
         .find(|w| w.label == "main")
         .cloned()
         .expect("tauri.conf.json defines the main window");
-    let mut window = tauri::WebviewWindowBuilder::from_config(app, &config)?;
+    // Only a `tauri dev` build also trusts the Vite dev server.
+    let dev_url = if cfg!(dev) { app.config().build.dev_url.clone() } else { None };
+    let new_window_dev_url = dev_url.clone();
+    let mut window = tauri::WebviewWindowBuilder::from_config(app, &config)?
+        // The page is Kladde's own origin and nothing else, whatever the Markdown preview or a bug tries
+        // (navigation.rs). Called for every top-level navigation, also those of a script or a form.
+        .on_navigation(move |url| match navigation::classify_navigation(url, dev_url.as_ref()) {
+            navigation::Navigation::Allow => true,
+            other => {
+                handle_blocked(other);
+                false
+            }
+        })
+        // target=_blank, window.open, middle click: never a window of ours, only the system for web links.
+        .on_new_window(move |url, _features| {
+            handle_blocked(navigation::classify_new_window(&url, new_window_dev_url.as_ref()));
+            tauri::webview::NewWindowResponse::Deny
+        });
     let isolated = session::isolated_profile();
     if let Some(dir) = &isolated {
         // A test instance runs next to the user's work and must never take the focus or appear on screen.

@@ -5,8 +5,8 @@
 | Command | What it covers | Needs |
 |---|---|---|
 | `npm run check` | svelte-check (types of all `.ts`/`.svelte`) | — |
-| `npm run test:unit` | Node's test runner on `tests/unit/*.test.mjs`: formatters, keys/presets, grammar text side, themes, settings metadata, update manifest, last-check time format, link finding and heading anchors | — |
-| `cd src-tauri && cargo test` | file I/O and encodings (binary and lossy flags), safe saving, large viewer (index, search, piece table, editing, streaming save, journal), LanguageTool client (local socket), local LanguageTool (hash check, download, atomic install, version cleanup, routing, idle stop, start/stop/crash of a stand-in process, job object), registry code (throwaway key), updater helpers | Rust |
+| `npm run test:unit` | Node's test runner on `tests/unit/*.test.mjs`: formatters, keys/presets, grammar text side, themes, settings metadata, update manifest, last-check time format, link finding and heading anchors, the CSP and the asset scope in `tauri.conf.json` | — |
+| `cd src-tauri && cargo test` | file I/O and encodings (binary and lossy flags), safe saving, large viewer (index, search, piece table, editing, streaming save, journal), LanguageTool client (local socket), local LanguageTool (hash check, download, atomic install, version cleanup, routing, idle stop, start/stop/crash of a stand-in process, job object), registry code (throwaway key), updater helpers, the URL classification of the navigation guard | Rust |
 | `npm run test:e2e` | the real app through the DevTools protocol: `tests/e2e/*.test.mjs` | `npx tauri build --debug --no-bundle` first |
 
 Run all four before merging anything. For e2e prefer `node --test --test-concurrency=1 "tests/e2e/*.test.mjs"`:
@@ -60,6 +60,7 @@ Rules:
 | integration | 9347 |
 | keys | 9350–9351, 9384–9386 |
 | links | 9405–9412 |
+| navigation | 9420–9426 |
 | languagetool-local | 9369–9370, 9374–9375, 9377–9379 |
 | large | 9345, 9391–9393, 9397–9399 (the editing tests reuse earlier ports one app at a time) |
 | preview | 9346, 9376 |
@@ -67,7 +68,7 @@ Rules:
 | theme | 9348, 9381–9383 |
 | update | 9349, 9359–9362, 9366–9368, 9394–9396 |
 
-Free for new files: 9420 and up (9380 and 9390 are taken by hot-exit now).
+Free for new files: 9427 and up (9380 and 9390 are taken by hot-exit now).
 
 ## Environment variables
 
@@ -117,6 +118,14 @@ Free for new files: 9420 and up (9380 and 9390 are taken by hot-exit now).
   Kladde starts the server with the LanguageTool folder inside the profile as its working directory, which Windows
   does not let anyone delete: tests end the server (by killing Kladde, which closes the job object) before
   `removeProfile`, and the `after` hook kills stragglers.
+- **Navigation and the asset protocol** (`navigation.test.mjs`): navigations are started from the page
+  (`location.assign`, `window.open` with a user gesture through `Runtime.evaluate`) and through `Page.navigate`.
+  `KLADDE_OPEN_URL_LOG` records the web and mail links the guard hands to the system; everything else must stay out
+  of it. A `window.__marker` set in the page proves it was not replaced; the tab state, with an unsaved edit, that
+  nothing was lost. What the asset protocol answers is read from `Network.responseReceived` on a *second* DevTools
+  connection (the page's CSP stops a `fetch` of the test, and an `<img>` only tells image from no image). The
+  context menu is tested with synthetic `contextmenu` events: they never open WebView2's native menu, which must not
+  appear on the desktop; a real right click through `Input.dispatchMouseEvent` might.
 - **Large files:** lower `largeFileThresholdMB` in the isolated profile's `settings.json` instead of generating
   huge fixtures; delete generated files. Editing tests focus `.large .input` (the hidden textarea), type with
   `type()`/`key()` and check `.large .line .text`; a kill is only safe once the journal in `data/backup`

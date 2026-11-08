@@ -20,6 +20,7 @@ How Kladde is built and why. For product decisions see [decisions.md](decisions.
 | Module | Responsibility |
 |---|---|
 | `lib.rs` | Tauri commands, plugins, startup (single instance, `--unregister-integration` CLI flag) |
+| `navigation.rs` | What the main webview may navigate to (own origin; web and mail links go to the system; the rest is cancelled) and what a new-window request does: pure URL classification, unit-tested (see "Security and Tauri configuration") |
 | `files.rs` | Reading with encoding detection (BOM → UTF-8 validity → chardetng), BOM and line-ending handling, writing with `write_safely` |
 | `large.rs` | The large file viewer backend: index, search, editing, streaming save, hot-exit journal |
 | `pieces.rs` | The piece table behind large-file editing (pure data structure, no I/O, no encodings) |
@@ -156,6 +157,7 @@ Key mechanisms:
 | `lib/actions.ts`, `keys.ts`, `keymaps.ts`, `editor-actions.ts`, `shortcut-editor.svelte.ts`, `keyhint.svelte.ts` | Commands and keyboard handling (see below) |
 | `lib/languages.ts` | ~145 languages from `@codemirror/language-data` plus own Batch and Log stream parsers; detection by extension, file name, shebang, first line |
 | `lib/markdown.ts`, `math.ts`, `mermaid.ts` | Preview: markdown-it → DOMPurify; KaTeX rules; Mermaid placeholders drawn after insertion |
+| `lib/native-menu.ts` | Which right clicks may show WebView2's native menu (editable text only) and the selected text for our own Copy menu |
 | `lib/links.ts`, `lib/editor-links.ts` | Links: finding them in a line, what an href means, heading anchors and path helpers (pure, unit-tested); the editor extension for Ctrl+click and the hover hint (see "Links") |
 | `lib/format.ts`, `format-xml.ts`, `formatters.ts` | Own JSON and XML formatters; dispatch by language to lazily loaded Prettier and sql-formatter |
 | `lib/compare.ts` | Merge views for compare tabs (`@codemirror/merge`, custom diff for ignore whitespace/case) |
@@ -294,7 +296,10 @@ Key mechanisms:
 
 - markdown-it (`html: true`, linkify) with own rules: `data-line` on blocks (scroll sync from the editor), heading
   ids, task-list checkboxes, highlighted fences using the editor grammars (`highlightCode` + `classHighlighter`).
-- Output is sanitized with DOMPurify; local image `src` are rewritten to the asset protocol (`convertFileSrc`).
+- Output is sanitized with DOMPurify (`FORBID_TAGS` in `markdown.ts`: no `form`, `input`, `button`, `select`, `textarea`,
+  `style`, `iframe`, `meta`, … and no `formaction`); local image `src` are rewritten to the asset protocol
+  (`convertFileSrc`). Task list checkboxes are therefore not `<input>`s but `<span class="task-box" role="checkbox"
+  aria-checked>` drawn by the preview's CSS.
   Links go through `workspace.openHref` like those of the editor (see "Links").
 - Mermaid: fences become placeholders; `renderDiagrams` draws them after insertion (`securityLevel: "strict"`),
   caches SVGs by source and theme, keeps the stale SVG while re-rendering, shows errors inline.
@@ -383,11 +388,47 @@ Key mechanisms:
 
 ## Security and Tauri configuration
 
+- A Markdown file is untrusted input: with `html: true` it can contain a `<form action="https://…">`, and clicking its
+  button would replace the whole window with that page (unsaved edits are only as safe as the last backup). Three
+  layers keep that from happening, each sufficient for the form case: the sanitizer drops the elements, the CSP's
+  `form-action 'none'` (a directive that does not fall back to `default-src`) refuses the submission, and the
+  navigation guard cancels any navigation to another origin.
 - CSP in `tauri.conf.json`: scripts `'self'`, styles `'self' 'unsafe-inline'` (CodeMirror injects styles;
   `dangerousDisableAssetCspModification: ["style-src"]` keeps Tauri from adding hashes that would disable
   `unsafe-inline`), images from `asset:`/https/data. HTTP requests to arbitrary servers are therefore done in Rust
   (LanguageTool), not in the page.
-- The asset protocol scope is `**` so the preview can show local images anywhere.
+- `form-action 'none'` and `base-uri 'none'` are set explicitly: neither falls back to `default-src`.
+- The asset protocol scope is one glob per image extension (`**/*.png`, …: the image tab's types from
+  `IMAGE_EXTENSIONS` plus `svg`; `tests/unit/security-config.test.mjs` keeps the two lists equal), so images load from
+  anywhere but nothing else does. Tauri matches scope globs case-insensitively (the `glob` crate's default options), so
+  `PHOTO.PNG` loads too; `tests/e2e/navigation.test.mjs` pins that. Why it matters: the protocol takes the content type
+  from the file's content first and falls back to *HTML* for an unknown extension, so with the old `**` scope an HTML
+  file named `x.pdf` was served as a live page without a CSP. What the scope cannot do: a file named `x.png` whose
+  content is HTML is still sniffed as `text/html`, and an uppercase `.SVG` is answered as `text/html` too (so it does
+  not render in the preview either). Such a response is harmless as an `<img>`; the navigation guard below is what
+  keeps it from ever being a page.
+- **Navigation guard** (`navigation.rs`, wired in `create_main_window`): the main webview may only be at Kladde's own
+  origin: `http://tauri.localhost` (what Tauri serves on Windows), `tauri://localhost` on other platforms, and the Vite
+  dev server (`devUrl`) only in a `tauri dev` build (`cfg!(dev)`; a `--debug` build is not one). `on_navigation` cancels
+  everything else. `http`, `https` and `mailto` targets are handed to the system with the opener crate's `open_url`
+  (the same rules as `workspace.openHref`: nothing else is ever opened; the hosts of Tauri's own protocols,
+  `tauri.localhost`, `asset.localhost` and `ipc.localhost`, never); `file:`, `javascript:`, `data:`, `blob:`, `asset:`,
+  `about:` and unknown schemes are dropped. `on_new_window` (`target=_blank`, `window.open`, a middle click) always
+  answers *Deny*, with the same hand-over for web links. It is done in Rust and not by an event to the page: it needs no
+  frontend that may itself be the confused party, works before the page has loaded, and the rules are plain unit
+  tests (`classify_navigation`, `classify_new_window`). An isolated profile does not register the opener plugin: the
+  URL goes into `KLADDE_OPEN_URL_LOG` instead, like for links the page opens. A reload is a navigation to the own
+  origin and is allowed (F5 is swallowed and the native menu is gone, see below).
+- A cancelled navigation's request may still reach the server (WebView2 reports `NavigationStarting` after the request
+  was prepared; a form post is already on its way), so the guard is the last line, the sanitizer and the CSP the first.
+- **Context menu**: WebView2's native menu depends on the target. On text you can type into it is Cut/Copy/Paste and
+  spelling; anywhere else it is the page menu with Back, Forward, Refresh, Save as, Print and "Open link in new window",
+  which would reload Kladde or navigate it. `App.svelte` therefore prevents `contextmenu` everywhere except on editable
+  text (`keepsNativeMenu` in `native-menu.ts`: contenteditable such as CodeMirror, and enabled, writable text inputs and
+  textareas). Selected text elsewhere (preview, large file view, compare view) gets a small menu of our own with Copy
+  (the existing `ContextMenu`); Ctrl+C works as before. The tab bar keeps its own menu. Not verified, because tests
+  cannot open native menus: that the native menu of an editable field has no navigation entries (it has none in the
+  WebView2 versions we know).
 - Capabilities (`capabilities/default.json`) grant window show/focus/title/destroy/theme, dialogs, opener.
 - Tauri's `dragDropEnabled: true` delivers file drops but disables HTML5 drag and drop in the page: tab reordering
   uses pointer events instead.
