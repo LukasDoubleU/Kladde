@@ -141,6 +141,68 @@ export async function makeHostileDocx({ remote, plain = remote, probes = {} }) {
   return Buffer.from(await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" }));
 }
 
+/**
+ * A document that tries every way out it can: for the test that runs with the viewer's cleaning switched off, so
+ * the frame's own policy is all that stands between the document and the network. `at(name)` is the address of
+ * the listener of that way in (a failure then says which one got through).
+ *
+ * The renderer pastes font names into the generated CSS, so a name can carry declarations (`Arial;x:y`) or close
+ * the rule and add whole rules and at-rules (`Arial}@font-face{...}.x{`): the CSS ways are those, one style each.
+ * VML shapes copy `fillcolor` and the stroke color into SVG attributes and a linked picture becomes an SVG
+ * `<image href>`; a linked drawing becomes an `<img src>`.
+ */
+export const ESCAPE_CSS_WAYS = {
+  background: (at) => `Arial;background-image:url(${at("background")})`,
+  imageSet: (at) => `Arial;background-image:image-set('${at("imageSet")}' 1x)`,
+  imageSetVar: (at) => `Arial;--k:'${at("imageSetVar")}';background-image:image-set(var(--k))`,
+  borderImage: (at) => `Arial;border-image-source:url(${at("borderImage")})`,
+  listStyle: (at) => `Arial;display:list-item;list-style-image:url(${at("listStyle")})`,
+  cursor: (at) => `Arial;cursor:url(${at("cursor")}),auto`,
+  mask: (at) => `Arial;-webkit-mask-image:url(${at("mask")})`,
+  filter: (at) => `Arial;filter:url(${at("filter")}#f)`,
+  clipPath: (at) => `Arial;clip-path:url(${at("clipPath")}#c)`,
+  shapeOutside: (at) => `Arial;float:left;shape-outside:url(${at("shapeOutside")})`,
+  content: (at) => `Arial}p::before{content:url(${at("content")})}.x{`,
+  fontFace: (at) => `Arial}@font-face{font-family:Probe;src:url(${at("fontFace")})}p{font-family:Probe}.x{`,
+  importRule: (at) => `Arial}@import url(${at("importRule")});.x{`,
+  importStyle: (at) => `Arial}@import '${at("importStyle")}' screen;.x{`,
+};
+
+const xml = (text) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+export async function makeEscapeDocx({ at }) {
+  const zip = await JSZip.loadAsync(await makeDocx({ pages: 1, marker: "Escape document text" }));
+  const ways = Object.entries(ESCAPE_CSS_WAYS);
+  const styleId = (name) => `Way${name[0].toUpperCase()}${name.slice(1)}`;
+  const styles = ways
+    .map(([name, way]) => `<w:style w:type="character" w:customStyle="1" w:styleId="${styleId(name)}"><w:name w:val="${styleId(name)}"/><w:rPr><w:rFonts w:ascii="${xml(way(at))}" w:hAnsi="Arial"/></w:rPr></w:style>`)
+    .join("");
+  zip.file("word/styles.xml", (await zip.file("word/styles.xml").async("string")).replace("</w:styles>", `${styles}</w:styles>`));
+
+  let rels = await zip.file("word/_rels/document.xml.rels").async("string");
+  const image = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+  rels = rels.replace(
+    "</Relationships>",
+    `<Relationship Id="rIdLinked" Type="${image}" Target="${xml(at("img"))}" TargetMode="External"/><Relationship Id="rIdPicture" Type="${image}" Target="${xml(at("svgImage"))}" TargetMode="External"/></Relationships>`,
+  );
+  zip.file("word/_rels/document.xml.rels", rels);
+
+  const vml = 'xmlns:v="urn:schemas-microsoft-com:vml"';
+  const paragraphs = [
+    ...ways.map(([name]) => `<w:p><w:r><w:rPr><w:rStyle w:val="${styleId(name)}"/></w:rPr><w:t>Way ${name}</w:t></w:r></w:p>`),
+    `<w:p><w:r><w:pict><v:rect ${vml} style="width:80pt;height:40pt" fillcolor="url(${xml(at("svgFill"))}#g)" stroked="f"/></w:pict></w:r></w:p>`,
+    `<w:p><w:r><w:pict><v:rect ${vml} style="width:80pt;height:40pt" fillcolor="red"><v:stroke color="url(${xml(at("svgStroke"))}#g)"/></v:rect></w:pict></w:r></w:p>`,
+    `<w:p><w:r><w:pict><v:rect ${vml} style="width:80pt;height:40pt;fill:url(${xml(at("svgStyleFill"))}#g)" fillcolor="red" stroked="f"/></w:pict></w:r></w:p>`,
+    `<w:p><w:r><w:pict><v:shape ${vml} xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" style="width:80pt;height:40pt"><v:imagedata r:id="rIdPicture"/></v:shape></w:pict></w:r></w:p>`,
+    `<w:p><w:r><w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" distT="0" distB="0" distL="0" distR="0"><wp:extent cx="952500" cy="952500"/><wp:docPr id="99" name="Linked"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="0" name="linked.png"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:link="rIdLinked" r:embed="rIdLinked"/></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="952500" cy="952500"/></a:xfrm><a:prstGeom prst="rect"/></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`,
+  ].join("");
+  let body = await zip.file("word/document.xml").async("string");
+  const sect = body.match(/<w:sectPr[\s\S]*?<\/w:sectPr>/)?.[0] ?? "";
+  body = body.replace(sect, "").replace("</w:body>", `${paragraphs}${sect}</w:body>`);
+  zip.file("word/document.xml", body);
+  return Buffer.from(await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" }));
+}
+
 /** What Word saves for a password-protected or rights-managed file: an OLE compound file. */
 export function makeEncryptedSignature() {
   const bytes = Buffer.alloc(4096);

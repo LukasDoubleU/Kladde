@@ -12,8 +12,10 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 import { launch, removeProfile, tempProfile, writeFixture } from "./kladde.mjs";
 import {
+  ESCAPE_CSS_WAYS,
   makeCorrupt,
   makeDocx,
+  makeEscapeDocx,
   makeEncryptedSignature,
   makeHostileDocx,
   makeTrackedDocx,
@@ -36,11 +38,15 @@ function put(name, content) {
   return path;
 }
 
-// The view of the shown document tab (others are kept alive but hidden), its shadow root and the page text.
+// The view of the shown document tab (others are kept alive but hidden), its frame (an iframe: the document lives in
+// its own document, which scrolls itself; the page's test hooks `data-removed` and `data-scale` are on the iframe
+// element) and the page text.
 const VIEW = "document.querySelector('.fill:not(.hidden) .document-view')";
-const HOST = `${VIEW}?.querySelector('.host')`;
-const ROOT = `${HOST}?.shadowRoot`;
-const PANE = `${VIEW}?.querySelector('.pane')`;
+const FRAME = `${VIEW}?.querySelector('.frame')`;
+const HOST = FRAME;
+const ROOT = `${FRAME}?.contentDocument`;
+const PANE = `${ROOT}?.scrollingElement`;
+const FOCUSED = `document.activeElement === ${FRAME}`;
 const TEXT = `${ROOT}?.querySelector('.docx-wrapper')?.innerText ?? ''`;
 const activeIs = (title) => `document.querySelector('.tab.active .title')?.textContent === ${JSON.stringify(title)}`;
 const shows = (text) => `(${TEXT}).includes(${JSON.stringify(text)})`;
@@ -79,14 +85,17 @@ async function clickAt(app, { x, y }) {
   await sleep(150);
 }
 
-/** The center of the first element in the document that matches, in window coordinates. */
-const centerOf = (app, selector) =>
+/** The center of the first element in the document that matches, in the frame's coordinates. */
+const centerInFrame = (app, selector) =>
   app.eval(`(() => {
     const el = ${ROOT}?.querySelector(${JSON.stringify(selector)});
     if (!el) return null;
     const r = el.getBoundingClientRect();
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
   })()`);
+
+/** The frame's box in the page: what turns the frame's coordinates into window coordinates. */
+const frameBox = (app) => app.eval(`(() => { const r = ${FRAME}.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height }; })()`);
 
 test("a .docx opens in the viewer, before the large file check, and shows its text", async () => {
   const doc = put("basic.docx", await makeDocx({ pages: 4 }));
@@ -99,7 +108,7 @@ test("a .docx opens in the viewer, before the large file check, and shows its te
       large: !!document.querySelector('.large'),
       status: document.querySelector('footer').innerText.replace(/\\s+/g, ' '),
       pages: ${ROOT}.querySelectorAll('section.docx').length,
-      font: getComputedStyle(${HOST}).fontFamily,
+      font: getComputedStyle(${ROOT}.getElementById('host')).fontFamily,
       pageBackground: getComputedStyle(${ROOT}.querySelector('section.docx')).backgroundColor,
       table: ${TEXT}.includes('Cell B1'),
     })`);
@@ -118,6 +127,36 @@ test("a .docx opens in the viewer, before the large file check, and shows its te
     assert.ok(state.table);
     // The document is a view: nothing to save, no dirty mark.
     assert.deepEqual((await app.state()).dirty, []);
+
+    // It lives in a sandboxed srcdoc frame with a policy of its own, set before anything else in it. The sandbox
+    // attribute comes before srcdoc: it has to be there when the frame loads. A script put into it does not run.
+    const frame = await app.eval(`(() => {
+      const f = ${FRAME};
+      const d = f.contentDocument;
+      const names = [...f.attributes].map((a) => a.name);
+      const script = d.createElement('script');
+      script.textContent = 'window.__ran = 1';
+      d.body.append(script);
+      return {
+        sandbox: f.getAttribute('sandbox'),
+        sandboxFirst: names.indexOf('sandbox') < names.indexOf('srcdoc'),
+        href: f.contentWindow.location.href,
+        sameOrigin: f.contentWindow.origin === window.origin,
+        head: [...d.head.children].map((e) => e.localName),
+        csp: d.head.children[1]?.getAttribute('http-equiv') === 'Content-Security-Policy' ? d.head.children[1].content : null,
+        ran: d.defaultView.__ran === 1,
+      };
+    })()`);
+    assert.equal(frame.sandbox, "allow-same-origin");
+    assert.equal(frame.sandboxFirst, true);
+    assert.equal(frame.href, "about:srcdoc");
+    assert.equal(frame.sameOrigin, true, "the page drives the frame, so it keeps the page's origin");
+    assert.deepEqual(frame.head, ["meta", "meta", "style"]);
+    assert.match(frame.csp, /default-src 'none'/);
+    assert.match(frame.csp, /img-src data:(;|$)/);
+    assert.match(frame.csp, /font-src data:(;|$)/);
+    assert.doesNotMatch(frame.csp, /https?:|\*/);
+    assert.equal(frame.ran, false);
   });
 });
 
@@ -148,6 +187,21 @@ test("tracked changes and comments are shown as such", async () => {
     assert.ok(state.marker);
     assert.match(state.popover, /Please check this price/);
     assert.equal(state.popoverShown, "none");
+    // The engine registers the ranges of comments on the page's global; they belong in the frame's own registry, where
+    // the nodes are, and nowhere else (two document tabs would take each other's).
+    const highlight = await app.eval(`(() => {
+      const f = ${FRAME};
+      const found = f.contentWindow.CSS.highlights.get('docx-comments');
+      const ranges = found ? [...found] : [];
+      return {
+        text: ranges.map((r) => r.toString()),
+        inFrame: ranges.every((r) => r.commonAncestorContainer.ownerDocument === f.contentDocument),
+        onPage: CSS.highlights.has('docx-comments'),
+      };
+    })()`);
+    assert.deepEqual(highlight.text, ["Commented words"]);
+    assert.equal(highlight.inFrame, true);
+    assert.equal(highlight.onPage, false);
     // The file carries no page count (the generated package has none), and the rendered boxes are no page count:
     // the status bar shows none.
     assert.match(await app.eval(`document.querySelector('footer').innerText`), /Word document \(read-only\)/);
@@ -164,7 +218,7 @@ test("the focus is in the viewer, so PageDown scrolls; it returns after the pale
     // Activating the document tab (a real click) is all the test does: the viewer must take the focus itself.
     await clickTab(app, "long.docx");
     await app.waitFor(shows("Kladde viewer test document"), 20000);
-    await app.waitFor(`document.activeElement?.classList.contains('pane')`);
+    await app.waitFor(FOCUSED);
     assert.equal(await scrollTop(app), 0);
     await app.key("PageDown");
     await app.waitFor(`${PANE}.scrollTop > 100`);
@@ -176,7 +230,7 @@ test("the focus is in the viewer, so PageDown scrolls; it returns after the pale
     // The palette takes the focus and gives it back to the document.
     await app.key("Ctrl+Shift+P");
     await app.key("Escape");
-    await app.waitFor(`document.activeElement?.classList.contains('pane')`);
+    await app.waitFor(FOCUSED);
 
     // Dialogs that open after the palette closed give the focus back too: the Windows registration dialog (it opens
     // when the registry has been read, after the palette's own refocus) and the key capture dialog.
@@ -187,7 +241,7 @@ test("the focus is in the viewer, so PageDown scrolls; it returns after the pale
     await app.waitFor("document.querySelector('[aria-label=\"Default editor\"]')");
     await app.key("Escape");
     await app.waitFor("!document.querySelector('[aria-label=\"Default editor\"]')");
-    await app.waitFor(`document.activeElement?.classList.contains('pane')`);
+    await app.waitFor(FOCUSED);
     await app.key("Ctrl+Shift+P");
     await app.type("Change keyboard shortcut");
     await app.waitFor("document.querySelector('.picker [role=option]')");
@@ -201,7 +255,7 @@ test("the focus is in the viewer, so PageDown scrolls; it returns after the pale
     await app.waitFor("document.querySelector('.capture .keys')");
     await app.key("Escape");
     await app.waitFor("!document.querySelector('.capture')");
-    await app.waitFor(`document.activeElement?.classList.contains('pane')`);
+    await app.waitFor(FOCUSED);
     // And the keys work again without a click.
     const beforeKey = await scrollTop(app);
     await app.key("PageDown");
@@ -214,7 +268,7 @@ test("the focus is in the viewer, so PageDown scrolls; it returns after the pale
     await app.waitFor(`!document.querySelector('.fill:not(.hidden) .document-view')`);
     await clickTab(app, "long.docx");
     await app.waitFor(`Math.abs(${PANE}.scrollTop - ${kept}) < 3`);
-    await app.waitFor(`document.activeElement?.classList.contains('pane')`);
+    await app.waitFor(FOCUSED);
 
     // The file changes on disk (here the same document with other text): the viewer follows by itself and stays
     // where it was.
@@ -267,8 +321,8 @@ test("a render that finishes while the tab is hidden keeps the fit, the zoom and
     await app.waitFor(activeIs("hidden-other.txt"));
     await clickTab(app, "hidden.docx");
     await app.waitFor(shows("Kladde viewer test document"), 20000);
-    await app.waitFor(`document.activeElement?.classList.contains('pane')`);
-    const HIDDEN = "document.querySelector('.fill.hidden .document-view .host')?.shadowRoot";
+    await app.waitFor(FOCUSED);
+    const HIDDEN = "document.querySelector('.fill.hidden .document-view .frame')?.contentDocument";
     const look = () =>
       app.eval(`(() => {
         const pane = ${PANE};
@@ -286,7 +340,7 @@ test("a render that finishes while the tab is hidden keeps the fit, the zoom and
       await sleep(500);
       await app.key("Ctrl+Tab");
       await app.waitFor(activeIs("hidden.docx"));
-      await app.waitFor(`document.activeElement?.classList.contains('pane')`);
+      await app.waitFor(FOCUSED);
       await sleep(500);
     };
 
@@ -328,11 +382,12 @@ test("Ctrl+A selects the document only, Ctrl+C copies, the context menu is Kladd
   const doc = put("select.docx", await makeDocx({ pages: 2 }));
   await session({ port: 9431, paths: [doc] }, async (app) => {
     await app.waitFor(shows("Kladde viewer test document"), 20000);
-    await app.waitFor(`document.activeElement?.classList.contains('pane')`);
+    await app.waitFor(FOCUSED);
     // What the page would learn from a copy event.
-    await app.eval(`window.__copied = null; document.addEventListener('copy', (e) => { window.__copied = { text: getSelection().toString(), prevented: e.defaultPrevented }; });`);
+    // The selection and the copy event are the frame's own.
+    await app.eval(`window.__copied = null; (() => { const d = ${ROOT}; d.addEventListener('copy', (e) => { window.__copied = { text: d.getSelection().toString(), prevented: e.defaultPrevented }; }); })()`);
     await app.key("Ctrl+A");
-    const selected = await app.eval(`getSelection().toString()`);
+    const selected = await app.eval(`${ROOT}.getSelection().toString()`);
     assert.match(selected, /Kladde viewer test document/);
     assert.match(selected, /Page 2 line 12/);
     // Not the tab bar, the status bar or anything else around it.
@@ -343,18 +398,22 @@ test("Ctrl+A selects the document only, Ctrl+C copies, the context menu is Kladd
     assert.match(await app.eval(`window.__copied.text`), /Kladde viewer test document/);
 
     // The context menu: ours, with Copy, while text is selected; the WebView's own never (the event is cancelled).
-    const point = await centerOf(app, "section.docx p");
+    const point = await centerInFrame(app, "section.docx p");
+    const box = await frameBox(app);
     const asked = () => app.eval(`(() => {
       const target = ${ROOT}.querySelector('section.docx p');
       const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, composed: true, clientX: ${point.x}, clientY: ${point.y} });
       const notPrevented = target.dispatchEvent(event);
       // The menu is drawn a moment later.
-      return new Promise((resolve) => setTimeout(() => resolve({ prevented: !notPrevented, menu: [...document.querySelectorAll('.menu button')].map((b) => b.textContent) }), 150));
+      return new Promise((resolve) => setTimeout(() => resolve({ prevented: !notPrevented, menu: [...document.querySelectorAll('.menu button')].map((b) => b.textContent), at: (() => { const m = document.querySelector('.menu'); return m ? { x: parseFloat(m.style.left), y: parseFloat(m.style.top) } : null; })() }), 150));
     })()`);
     const withSelection = await asked();
     assert.equal(withSelection.prevented, true);
     assert.deepEqual(withSelection.menu, ["Copy"]);
-    await app.eval(`getSelection().removeAllRanges()`);
+    // Where the pointer is in the window, not in the frame: the frame's coordinates are moved by the frame's place.
+    assert.ok(box.left + box.top > 0, "the frame sits below the tab bar");
+    assert.ok(Math.abs(withSelection.at.x - (box.left + point.x)) < 2 && Math.abs(withSelection.at.y - (box.top + point.y)) < 2, `menu at ${JSON.stringify(withSelection.at)}, pointer in the window at ${box.left + point.x},${box.top + point.y}`);
+    await app.eval(`${ROOT}.getSelection().removeAllRanges()`);
     await app.key("Escape");
     await app.waitFor(`!document.querySelector('.menu')`);
     const without = await asked();
@@ -368,23 +427,25 @@ test("Kladde's shortcuts keep working while the viewer has the focus", async () 
   const other = writeFixture(profile, "keys-other.txt", "text\n");
   await session({ port: 9432, paths: [other, doc] }, async (app) => {
     await app.waitFor(shows("Kladde viewer test document"), 20000);
-    await app.waitFor(`document.activeElement?.classList.contains('pane')`);
+    await app.waitFor(FOCUSED);
+    // The keys go to the frame (it has the focus), and Kladde's handling of them is what runs.
+    assert.equal(await app.eval(`document.activeElement === ${FRAME} && ${ROOT}.hasFocus()`), true);
     await app.key("Ctrl+Shift+P");
     assert.equal(await app.eval(`!!document.querySelector('.picker')`), true);
     // Other tabs' commands are listed; the document's own one too.
     assert.equal(await app.eval(`[...document.querySelectorAll('.picker [role=option] span:first-child')].some((e) => e.textContent === 'Open as text')`), true);
     await app.key("Escape");
-    await app.waitFor(`document.activeElement?.classList.contains('pane')`);
+    await app.waitFor(FOCUSED);
     await app.key("Ctrl+Tab");
     await app.waitFor(activeIs("keys-other.txt"));
     await app.key("Ctrl+Tab");
     await app.waitFor(activeIs("keys.docx"));
-    await app.waitFor(`document.activeElement?.classList.contains('pane')`);
+    await app.waitFor(FOCUSED);
     await app.key("Alt+Left");
     await app.waitFor(activeIs("keys-other.txt"));
     await app.key("Alt+Right");
     await app.waitFor(activeIs("keys.docx"));
-    await app.waitFor(`document.activeElement?.classList.contains('pane')`);
+    await app.waitFor(FOCUSED);
     // Closing with the key while the viewer has the focus.
     await app.key("Ctrl+W");
     await app.waitFor(activeIs("keys-other.txt"));
@@ -396,7 +457,7 @@ test("zoom keys and Ctrl+wheel scale the pages, and they fit a narrow window", a
   const doc = put("zoom.docx", await makeDocx({ pages: 2 }));
   await session({ port: 9433, paths: [doc] }, async (app) => {
     await app.waitFor(shows("Kladde viewer test document"), 20000);
-    await app.waitFor(`document.activeElement?.classList.contains('pane')`);
+    await app.waitFor(FOCUSED);
     const scale = () => app.eval(`parseFloat(${HOST}.dataset.scale ?? '1')`);
     const pageWidth = () => app.eval(`${ROOT}.querySelector('section.docx').getBoundingClientRect().width`);
     const base = await scale();
@@ -407,8 +468,15 @@ test("zoom keys and Ctrl+wheel scale the pages, and they fit a narrow window", a
     await app.waitFor(`parseFloat(${HOST}.dataset.scale) > ${base} + 0.1`);
     assert.ok((await pageWidth()) > baseWidth * 1.1);
     const zoomed = await scale();
+    // The pointer is over the document: the wheel event belongs to the frame and has to reach Kladde's zoom.
+    assert.equal(await app.eval(`document.elementFromPoint(500, 300) === ${FRAME}`), true);
     await app.wheel(-120, { x: 500, y: 300, modifiers: 2 });
     await app.waitFor(`parseFloat(${HOST}.dataset.scale) > ${zoomed}`);
+    // Without Ctrl the wheel scrolls the document and does not zoom.
+    const scaled = await scale();
+    await app.wheel(300, { x: 500, y: 300 });
+    await app.waitFor(`${PANE}.scrollTop > 0`);
+    assert.equal(await scale(), scaled);
     await app.key("Ctrl+0");
     await app.waitFor(`Math.abs(parseFloat(${HOST}.dataset.scale) - ${base}) < 0.001`);
     await app.key("Ctrl+Minus");
@@ -453,7 +521,8 @@ test("a link click reaches openHref: web and mail addresses open, anything else 
       app.eval(`(() => {
         const a = [...${ROOT}.querySelectorAll('a')].find((a) => a.textContent === ${JSON.stringify(text)});
         const r = a.getBoundingClientRect();
-        return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        const f = ${FRAME}.getBoundingClientRect();
+        return { x: f.left + r.left + r.width / 2, y: f.top + r.top + r.height / 2 };
       })()`);
     await clickAt(app, await linkPoint("Web link"));
     for (let i = 0; i < 40 && urls().length < 1; i++) await sleep(50);
@@ -466,7 +535,7 @@ test("a link click reaches openHref: web and mail addresses open, anything else 
     await sleep(400);
     assert.equal(urls().length, 2);
     // The page around it is still Kladde.
-    assert.equal(await app.eval(`!!document.querySelector('.tabbar') && !!${HOST}`), true);
+    assert.equal(await app.eval(`!!document.querySelector('.tabbar') && !!${FRAME}`), true);
 
     // A link to a bookmark scrolls to it.
     const before = await scrollTop(app);
@@ -514,7 +583,7 @@ test("a document cannot reach the network or draw over Kladde's UI", async () =>
       try {
         // The document is rendered after the listener is in: render again (F5), whatever came first.
         await app.waitFor(shows("Hostile document text"), 20000);
-        await app.waitFor(`document.activeElement?.classList.contains('pane')`);
+        await app.waitFor(FOCUSED);
         await app.key("F5");
         await app.waitFor(`${HOST}.dataset.removed !== undefined`);
         await sleep(2500);
@@ -528,7 +597,7 @@ test("a document cannot reach the network or draw over Kladde's UI", async () =>
           const all = [...root.querySelectorAll('*')].flatMap((e) => [...e.attributes].map((a) => a.name + '=' + a.value)).join('\\n');
           // What the browser computed, which is what it fetches: custom properties pasted into image-set().
           const computed = [...root.querySelectorAll('*')].map((e) => { const c = getComputedStyle(e); return c.backgroundImage + c.maskImage + c.borderImageSource + c.listStyleImage + c.content; }).join('\\n');
-          const host = getComputedStyle(${HOST});
+          const host = getComputedStyle(root.getElementById('host'));
           return {
             removed: Number(${HOST}.dataset.removed),
             remoteInCss: /https?:/i.test(css),
@@ -566,26 +635,23 @@ test("a document cannot reach the network or draw over Kladde's UI", async () =>
         const foreign = requests.filter((u) => /^https?:/i.test(u) && !/^https?:\/\/(tauri|ipc|asset)\.localhost[:/]/i.test(u));
         assert.deepEqual(foreign, []);
 
-        // `position: fixed` stays inside the viewer: the tab bar and the status bar are still what a click
-        // hits, while the document itself is covered.
+        // `position: fixed` (and a shape that covers the screen) stays inside the frame, which clips it: the tab bar
+        // and the status bar are still what a click hits, and the frame is what a click inside it hits.
         const where = await app.eval(`(() => {
           const at = (el) => { const r = el.getBoundingClientRect(); return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); };
-          const host = ${HOST};
-          const stage = host.parentElement;
+          const frame = ${FRAME};
+          const box = frame.getBoundingClientRect();
           const tabs = document.querySelector('.tabbar');
           const footer = document.querySelector('footer');
-          const inside = { x: host.getBoundingClientRect().left + 50, y: host.getBoundingClientRect().top + 50 };
-          const contained = { tabs: !!at(tabs)?.closest('.tabbar'), footer: !!at(footer)?.closest('footer'), insideIsDocument: document.elementFromPoint(inside.x, inside.y) === host };
-          // Without the containment the same document does cover them: the test can fail.
-          stage.style.contain = 'none';
-          host.style.contain = 'none';
-          const uncontained = { tabs: !!at(tabs)?.closest('.tabbar'), footer: !!at(footer)?.closest('footer') };
-          stage.style.contain = '';
-          host.style.contain = '';
-          return { contained, uncontained };
+          const cover = [...frame.contentDocument.querySelectorAll('*')].find((e) => getComputedStyle(e).position === 'fixed');
+          return {
+            tabs: !!at(tabs)?.closest('.tabbar'),
+            footer: !!at(footer)?.closest('footer'),
+            inside: document.elementFromPoint(box.left + 50, box.top + 50) === frame,
+            hasFixed: !!cover,
+          };
         })()`);
-        assert.deepEqual(where.contained, { tabs: true, footer: true, insideIsDocument: true });
-        assert.deepEqual(where.uncontained, { tabs: false, footer: false });
+        assert.deepEqual(where, { tabs: true, footer: true, inside: true, hasFixed: true });
       } finally {
         ws.close();
       }
@@ -624,7 +690,7 @@ test("encrypted, corrupt, not-a-document and too large files show an error with 
       assert.match(shown.text, new RegExp(`${title} cannot be shown`));
       assert.deepEqual(shown.buttons, ["Open in default app", "Open as text"], title);
       // The page of the document itself is not shown next to the message.
-      assert.equal(await app.eval(`getComputedStyle(${PANE}).display`), "none", title);
+      assert.equal(await app.eval(`getComputedStyle(${FRAME}).display`), "none", title);
       assert.equal(shown.focused, true, title);
     }
 
@@ -681,7 +747,7 @@ test("the session restores a document tab by its path, with its place, and the f
     let app = await launch({ port: 9438, profile: dir, files: [other, doc] });
     try {
       await app.waitFor(shows("Kladde viewer test document"), 20000);
-      await app.waitFor(`document.activeElement?.classList.contains('pane')`);
+      await app.waitFor(FOCUSED);
       await app.key("PageDown");
       await app.key("PageDown");
       await app.waitFor(`${PANE}.scrollTop > 500`);
@@ -708,4 +774,213 @@ test("the session restores a document tab by its path, with its place, and the f
   } finally {
     await removeProfile(dir);
   }
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// The frame is the barrier: with the viewer's cleaning switched off, nothing a document can name leaves it.
+
+/** Elements a document cannot make through the engine but a cleaner that let something through could leave in. */
+const ELEMENT_WAYS = {
+  elImg: (at) => `<img src="${at("elImg")}">`,
+  elSrcset: (at) => `<img srcset="${at("elSrcset")} 1x" alt="">`,
+  elPicture: (at) => `<picture><source srcset="${at("elPicture")}"><img alt=""></picture>`,
+  elLinkStyle: (at) => `<link rel="stylesheet" href="${at("elLinkStyle")}">`,
+  elLinkPreload: (at) => `<link rel="preload" as="image" href="${at("elLinkPreload")}">`,
+  elLinkIcon: (at) => `<link rel="icon" href="${at("elLinkIcon")}">`,
+  elIframe: (at) => `<iframe src="${at("elIframe")}"></iframe>`,
+  elNested: (at) => `<iframe srcdoc="&lt;img src=&quot;${at("elNested")}&quot;&gt;"></iframe>`,
+  elObject: (at) => `<object data="${at("elObject")}"></object>`,
+  elEmbed: (at) => `<embed src="${at("elEmbed")}">`,
+  elVideo: (at) => `<video src="${at("elVideo")}" poster="${at("elPoster")}" preload="auto"></video>`,
+  elAudio: (at) => `<audio src="${at("elAudio")}" preload="auto"></audio>`,
+  elSvgImage: (at) => `<svg width="40" height="40"><image href="${at("elSvgImage")}" width="40" height="40"/></svg>`,
+  elSvgFill: (at) => `<svg width="40" height="40"><rect width="40" height="40" fill="url(${at("elSvgFill")}#g)"/></svg>`,
+  elSvgUse: (at) => `<svg width="40" height="40"><use href="${at("elSvgUse")}#x"/></svg>`,
+  elInput: (at) => `<input type="image" src="${at("elInput")}">`,
+  elTable: (at) => `<table background="${at("elTable")}"><tr><td>x</td></tr></table>`,
+  elStyleAttr: (at) => `<div style="background:url(${at("elStyleAttr")})">x</div>`,
+  elStyle: (at) => `<style>@import url(${at("elStyle")}); p { background: url(${at("elStyleRule")}) }</style>`,
+  elPing: (at) => `<a id="ping" href="${at("elPingHref")}" ping="${at("elPing")}">ping</a>`,
+  elForm: (at) => `<form id="form" action="${at("elForm")}"><input name="a"></form>`,
+  elRefresh: (at) => `<meta http-equiv="refresh" content="0;url=${at("elRefresh")}">`,
+};
+// Addresses that belong to an element above and have no way of their own.
+const ELEMENT_ADDRESSES = ["elPoster", "elStyleRule", "elPingHref"];
+
+test("with the cleaning switched off, the frame alone keeps a document from the network", async () => {
+  // One listener per way out, so a failure names it. They never answer; a connection is a leak.
+  const names = [
+    ...Object.keys(ESCAPE_CSS_WAYS),
+    ...["img", "svgImage", "svgFill", "svgStroke", "svgStyleFill"],
+    ...Object.keys(ELEMENT_WAYS),
+    ...ELEMENT_ADDRESSES,
+  ];
+  const listeners = {};
+  for (const name of names) {
+    const hits = [];
+    const server = net.createServer((socket) => {
+      hits.push(socket.remoteAddress);
+      socket.destroy();
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    listeners[name] = { server, hits, url: `https://127.0.0.1:${server.address().port}/${name}` };
+  }
+  const at = (name) => listeners[name].url;
+  const contacted = () => names.filter((name) => listeners[name].hits.length > 0);
+  const doc = put("escape.docx", await makeEscapeDocx({ at }));
+  const dir = tempProfile("kladde-document-escape");
+  try {
+    await session({ port: 9445, paths: [doc], dir, env: { KLADDE_DOCUMENT_NO_CLEAN: "1" } }, async (app) => {
+      await app.waitFor(shows("Escape document text"), 20000);
+      await app.waitFor(`${HOST}.dataset.removed !== undefined`);
+
+      // The hook took effect (nothing was cleaned), and the material is live: the browser parsed the addresses
+      // into the rules and attributes of the frame's document.
+      const material = await app.eval(`(() => {
+        const d = ${ROOT};
+        const css = [...d.querySelectorAll('style')].map((s) => s.textContent).join('\\n');
+        const attrs = [...d.querySelectorAll('*')].flatMap((e) => [...e.attributes].map((a) => a.value)).join('\\n');
+        const way = [...d.querySelectorAll('span')].find((e) => e.textContent === 'Way background');
+        return {
+          removed: ${HOST}.dataset.removed,
+          cssNamesAddresses: (css.match(/https:\\/\\/127\\.0\\.0\\.1:\\d+\\//g) ?? []).length,
+          attributeAddresses: (attrs.match(/https:\\/\\/127\\.0\\.0\\.1:\\d+\\//g) ?? []).length,
+          computed: way ? d.defaultView.getComputedStyle(way).backgroundImage : null,
+          images: d.querySelectorAll('img').length,
+        };
+      })()`);
+      assert.equal(material.removed, "0", "the cleaning must be off for this test");
+      assert.ok(material.cssNamesAddresses >= Object.keys(ESCAPE_CSS_WAYS).length - 2, `the CSS names ${material.cssNamesAddresses} addresses`);
+      assert.ok(material.attributeAddresses >= 4, `the attributes name ${material.attributeAddresses} addresses`);
+      assert.match(material.computed, /https:\/\/127\.0\.0\.1:/);
+      assert.ok(material.images >= 1);
+
+      // What a cleaner that missed something would leave in the frame: elements, put into the live document.
+      await app.eval(`(() => {
+        const d = ${ROOT};
+        const html = ${JSON.stringify(Object.values(ELEMENT_WAYS).map((make) => make(at)))}.join('');
+        d.getElementById('host').insertAdjacentHTML('beforeend', html);
+        d.getElementById('ping')?.click();
+        d.getElementById('form')?.requestSubmit?.();
+      })()`);
+      await sleep(3000);
+      assert.deepEqual(contacted(), [], "the frame let a request through");
+      // Still the same document: nothing navigated it (the refresh and the form went nowhere).
+      assert.equal(await app.eval(`${FRAME}.contentWindow.location.href`), "about:srcdoc");
+
+      // The control: the same material in a frame without a policy of its own (the page's policy still applies,
+      // which allows https images) is fetched, so the listeners do see what a leak looks like.
+      await app.eval(`(() => {
+        const d = ${ROOT};
+        const control = document.createElement('iframe');
+        control.id = 'control';
+        control.setAttribute('sandbox', 'allow-same-origin');
+        control.style.cssText = 'position:fixed;left:-5000px;top:0;width:800px;height:600px';
+        const styles = [...d.head.querySelectorAll('style')].map((s) => s.outerHTML).join('');
+        control.srcdoc = '<!doctype html><html><head>' + styles + '</head><body>' + d.body.innerHTML + '</body></html>';
+        document.body.append(control);
+      })()`);
+      const expected = ["background", "imageSet", "imageSetVar", "borderImage", "listStyle", "content", "elImg", "elStyleAttr"];
+      try {
+        for (let i = 0; i < 100 && !expected.every((n) => listeners[n].hits.length > 0); i++) await sleep(100);
+      } finally {
+        await app.eval(`document.getElementById('control')?.remove()`);
+      }
+      const missing = expected.filter((n) => listeners[n].hits.length === 0);
+      assert.deepEqual(missing, [], "the control frame should have fetched these: the test could not see a leak otherwise");
+    });
+  } finally {
+    for (const { server } of Object.values(listeners)) server.close();
+  }
+});
+
+test("the frame never navigates, whatever the document or the page asks for", async () => {
+  const doc = put("frame-nav.docx", await makeDocx({ pages: 2 }));
+  await session({ port: 9446, paths: [doc] }, async (app) => {
+    await app.waitFor(shows("Kladde viewer test document"), 20000);
+    await app.eval(`window.__fdoc = ${ROOT}; window.__marker = 1`);
+    const still = async (what) => {
+      const state = await app.eval(`(() => {
+        const f = ${FRAME};
+        return { href: f.contentWindow.location.href, sameDocument: f.contentDocument === window.__fdoc, text: !!f.contentDocument.querySelector('.docx-wrapper'), page: window.__marker === 1 && !!document.querySelector('.tabbar') };
+      })()`);
+      assert.deepEqual(state, { href: "about:srcdoc", sameDocument: true, text: true, page: true }, what);
+    };
+
+    // The page's own policy allows these targets (the same origin, `about:`), and so does the sandbox: only the
+    // frame navigation guard of the app stands in the way.
+    const targets = ["about:blank", "http://tauri.localhost/index.html", "http://tauri.localhost/other.html"];
+    for (const target of targets) {
+      await app.eval(`${FRAME}.contentWindow.location.assign(${JSON.stringify(target)})`);
+      await sleep(800);
+      await still(`after location.assign(${target})`);
+    }
+    // A refresh the document would have to ask for itself (a `<meta>` is not something the engine makes).
+    await app.eval(`(() => {
+      const d = ${ROOT};
+      const meta = d.createElement('meta');
+      meta.httpEquiv = 'refresh';
+      meta.content = '0;url=http://tauri.localhost/index.html';
+      d.head.append(meta);
+    })()`);
+    await sleep(1200);
+    await still("after a meta refresh");
+    // The guard says so (it is Kladde's, not the browser's policy).
+    const stderr = app.stderr();
+    for (const target of targets) {
+      assert.ok(stderr.includes(`[navigation] cancelled frame navigation to ${target}`), `the guard did not log ${target}: ${stderr.slice(-600)}`);
+    }
+    // And the frame still works as before: a key reaches Kladde from it.
+    await app.waitFor(FOCUSED);
+    await app.key("Ctrl+Shift+P");
+    assert.equal(await app.eval(`!!document.querySelector('.picker')`), true);
+  });
+});
+
+test("the frame follows the theme, also when it changes while the document is shown", async () => {
+  const doc = put("themed.docx", await makeTrackedDocx());
+  await session({ port: 9447, paths: [doc], settings: { theme: "latte" } }, async (app) => {
+    await app.waitFor(shows("Commented words"), 20000);
+    const names = ["--bg-alt", "--fg-dim", "--paper", "--paper-text", "--paper-insert", "--paper-delete"];
+    const look = () =>
+      app.eval(`(() => {
+        const d = ${ROOT};
+        const page = getComputedStyle(document.documentElement);
+        const inner = d.defaultView.getComputedStyle(d.documentElement);
+        const color = (el) => d.defaultView.getComputedStyle(el);
+        return {
+          same: ${JSON.stringify(names)}.map((n) => [n, page.getPropertyValue(n).trim(), inner.getPropertyValue(n).trim()]),
+          desk: inner.backgroundColor,
+          appDesk: getComputedStyle(${VIEW}).backgroundColor,
+          paper: color(d.querySelector('section.docx')).backgroundColor,
+          insert: color(d.querySelector('ins span')).color,
+        };
+      })()`);
+    const latte = await look();
+    for (const [name, outer, inner] of latte.same) {
+      assert.ok(outer, `${name} is set in the app`);
+      assert.equal(inner, outer, name);
+    }
+    assert.equal(latte.desk, latte.appDesk);
+
+    // A flavor change and a live-edited theme.css both end in this event.
+    await app.eval(`(() => {
+      document.documentElement.dataset.theme = 'mocha';
+      document.documentElement.style.setProperty('--paper', 'rgb(255, 251, 230)');
+      document.documentElement.style.setProperty('--paper-insert', 'rgb(1, 2, 3)');
+      window.dispatchEvent(new Event('kladde-theme'));
+    })()`);
+    const mocha = await look();
+    for (const [name, outer, inner] of mocha.same) assert.equal(inner, outer, name);
+    assert.equal(mocha.desk, mocha.appDesk);
+    assert.notEqual(mocha.desk, latte.desk, "the desk changed with the flavor");
+    assert.equal(mocha.paper, "rgb(255, 251, 230)");
+    assert.equal(mocha.insert, "rgb(1, 2, 3)");
+
+    // Closing the tab takes the frame (and with it the comment ranges) away; the page's registry never had them.
+    await app.waitFor(FOCUSED);
+    await app.key("Ctrl+W");
+    await app.waitFor(`!document.querySelector('.document-view')`);
+    assert.equal(await app.eval(`CSS.highlights.has('docx-comments')`), false);
+  });
 });
