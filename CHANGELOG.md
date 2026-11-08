@@ -2,6 +2,39 @@
 
 All notable changes to Kladde. Versions follow [Semantic Versioning](https://semver.org), commit messages
 [Conventional Commits](https://www.conventionalcommits.org).
+## [0.9.0](https://github.com/LukasDoubleU/Kladde/releases/tag/v0.9.0) – 2026-11-08
+
+### 🚀 Features
+
+- **files:** Read documents as raw bytes with a size limit ([5df4f3c](https://github.com/LukasDoubleU/Kladde/commit/5df4f3c159fd7e68d17bb7750f4464a670cbe55e))
+- **ui:** Read-only viewer for Word documents ([41cd5e8](https://github.com/LukasDoubleU/Kladde/commit/41cd5e8e90993cef996198e87f7cf24a0c86f73b))
+- **ui:** Cancel frame navigations and add the document no-clean test hook ([2322121](https://github.com/LukasDoubleU/Kladde/commit/232212121aab1815db0790bd0bb3d4b290bfff6c))
+- **ui:** Show documents in a sandboxed frame with a policy of its own ([27ea4b0](https://github.com/LukasDoubleU/Kladde/commit/27ea4b0ac9b0ecad9b442cfda129cc2bf2428e6e))
+
+### 🐛 Bug fixes
+
+- **files:** Do not rewrite unchanged files, open binary files read-only ([a13624a](https://github.com/LukasDoubleU/Kladde/commit/a13624ae6e32828ff76f52d942bc9777ccf3a8a0))
+- **files:** Close the gaps found in review of the read-only and no-op save work ([0cf5334](https://github.com/LukasDoubleU/Kladde/commit/0cf5334658e5b048f486575f5306840bd3421edc))
+- **preview:** Keep forms and navigations from replacing the window ([d1ea8bd](https://github.com/LukasDoubleU/Kladde/commit/d1ea8bd6100929fc720b09bea350a6db0de1fb3a))
+- **preview:** Close the image map and unparseable-address gaps in the navigation guard ([d61acac](https://github.com/LukasDoubleU/Kladde/commit/d61acac0a3296e02307d7decbd5358c02b89ad8b))
+- **ui:** Close the leaks in the document viewer after review ([7812a01](https://github.com/LukasDoubleU/Kladde/commit/7812a01aaa071b8ffbb089f7686d62c5ac523823))
+- **ui:** Make the engine's nodes in the frame and keep the place across tab switches ([6c41f2d](https://github.com/LukasDoubleU/Kladde/commit/6c41f2d113898054f71aa299c597aec7b32073e8))
+- **ui:** Survive a frame that is moved, release its waiters, and settle the place once ([4be47d5](https://github.com/LukasDoubleU/Kladde/commit/4be47d5bfeea9c8051367b46d21211d2337ab8b0))
+
+### 📚 Documentation
+
+- Describe the Word document viewer ([ecea1e9](https://github.com/LukasDoubleU/Kladde/commit/ecea1e91b225573a2d1855cbeac09a66ebe065f8))
+- Describe the document frame, its guard and the no-clean hook ([b4612dd](https://github.com/LukasDoubleU/Kladde/commit/b4612ddb99abe30c3ff5daa1dde15c0e6183d167))
+- Nodes made by the frame's document, and the nested-frame gap ([d350553](https://github.com/LukasDoubleU/Kladde/commit/d350553e1cd593e6933e41e2cd397a83a7252a9b))
+- Say what the frame guard adds, and which gaps only the cleaner holds ([2f7f72e](https://github.com/LukasDoubleU/Kladde/commit/2f7f72e5b797f740f3bf705836a11d3d6e30b0d7))
+
+### 🧪 Tests
+
+- **e2e:** Cover the document viewer ([298f156](https://github.com/LukasDoubleU/Kladde/commit/298f1563ea6009174cd9621fd443bd59b5f009c6))
+- **e2e:** Read the theme.css template from disk ([e9378d3](https://github.com/LukasDoubleU/Kladde/commit/e9378d32da585000d3410a68888794e9557ba2cc))
+- **e2e:** Prove the frame keeps a document from the network and bridges the page ([a53ecfb](https://github.com/LukasDoubleU/Kladde/commit/a53ecfbd35e72813887735fbe6dce7bb8a4faba9))
+- **e2e:** Count the nodes the page makes and keep the frame's one known gap honest ([bec1909](https://github.com/LukasDoubleU/Kladde/commit/bec1909ebf7d16f42f640ce45c4f342444876bc8))
+- **e2e:** Reorder, history buttons, quick switching, and a control that means something ([8a6197c](https://github.com/LukasDoubleU/Kladde/commit/8a6197cfb3686d89f2c06ae25ee172f3988876e0))
 ## [0.8.0](https://github.com/LukasDoubleU/Kladde/releases/tag/v0.8.0) – 2026-11-06
 
 ### 🚀 Features
