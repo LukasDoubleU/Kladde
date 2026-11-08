@@ -223,3 +223,42 @@ export function mouseInit(e: MouseEvent, frame: { left: number; top: number }): 
 export function isSelectAll(e: { key: string; ctrlKey: boolean; shiftKey: boolean; altKey: boolean }): boolean {
   return e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "a";
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Where the engine's nodes are made. docx-preview builds its DOM with a function of its own (`h`) that creates every
+// element with the page's global `document`, and an element can start loading (`<img src>`, `<image href>`, media)
+// the moment the attribute is set, even before it is attached: under the page's policy, which allows https images.
+// The option `h` replaces that function, so the nodes are made by the frame's document from the first moment and
+// the frame's policy applies to them from the first attribute.
+
+type Made = Node | string | { tagName: string; ns?: string; className?: string; style?: string | Record<string, string>; children?: Made[]; [prop: string]: unknown };
+
+/**
+ * The engine's default `h` (text, `#fragment`, `#comment`, elements with `ns`, `className`, `style` as text or object,
+ * other keys as properties, children made by the same function), creating everything with `doc`. A node that is already
+ * made passes through; it is recognized by `nodeType` and not by `instanceof Node`, because a node of the frame is not
+ * an instance of the page's `Node`.
+ */
+export function makeH(doc: Document): (elem: Made) => Node {
+  const h = (elem: Made): Node => {
+    if (typeof elem === "string") return doc.createTextNode(elem);
+    if (typeof (elem as Node).nodeType === "number") return elem as Node;
+    const { ns, tagName, className, style, children, ...props } = elem as Exclude<Made, Node | string>;
+    if (tagName === "#fragment") {
+      const fragment = doc.createDocumentFragment();
+      children?.forEach((c) => fragment.appendChild(h(c)));
+      return fragment;
+    }
+    if (tagName === "#comment") return doc.createComment(children ? String(children[0]) : "");
+    const result = (ns ? doc.createElementNS(ns, tagName) : doc.createElement(tagName)) as HTMLElement;
+    if (className) result.setAttribute("class", className);
+    if (style) {
+      if (typeof style === "string") result.setAttribute("style", style);
+      else Object.assign(result.style, style);
+    }
+    for (const [key, value] of Object.entries(props)) if (value !== undefined) (result as unknown as Record<string, unknown>)[key] = value;
+    children?.forEach((c) => result.appendChild(h(c)));
+    return result;
+  };
+  return h;
+}

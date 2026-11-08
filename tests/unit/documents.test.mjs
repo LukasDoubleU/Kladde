@@ -16,6 +16,7 @@ import {
   isDocumentPath,
   isSelectAll,
   keyboardInit,
+  makeH,
   mouseInit,
   pageCountOf,
   problemFor,
@@ -236,4 +237,57 @@ test("only Ctrl+A on its own selects the document", () => {
   assert.equal(key({ shiftKey: true }), false);
   assert.equal(key({ altKey: true }), false);
   assert.equal(key({ key: "b" }), false);
+});
+
+// A document of a few methods, enough to see which one made which node and what was set on it.
+function fakeDocument(label) {
+  const node = (props) => ({ owner: label, children: [], appendChild(c) { this.children.push(c); return c; }, ...props });
+  return {
+    createTextNode: (text) => node({ nodeType: 3, text }),
+    createComment: (text) => node({ nodeType: 8, text }),
+    createDocumentFragment: () => node({ nodeType: 11 }),
+    createElement: (tag) => node({ nodeType: 1, tag, ns: null, attrs: {}, style: {}, setAttribute(k, v) { this.attrs[k] = v; } }),
+    createElementNS: (ns, tag) => node({ nodeType: 1, tag, ns, attrs: {}, style: {}, setAttribute(k, v) { this.attrs[k] = v; } }),
+  };
+}
+
+test("the engine's nodes are all made by the document it is given", () => {
+  const h = makeH(fakeDocument("frame"));
+  const ready = h({ tagName: "p", children: ["text"] });
+  const tree = h({
+    tagName: "section",
+    className: "docx",
+    style: { color: "red" },
+    id: "a",
+    title: undefined,
+    children: [
+      "hello",
+      { tagName: "#comment", children: ["note"] },
+      { tagName: "#fragment", children: ["in a fragment", { tagName: "svg", ns: "http://www.w3.org/2000/svg", style: "fill:red", children: [{ tagName: "image", href: "data:image/png;base64,AA==" }] }] },
+      ready,
+    ],
+  });
+  const owners = new Set();
+  const walk = (n) => (owners.add(n.owner), n.children.forEach(walk));
+  walk(tree);
+  assert.deepEqual([...owners], ["frame"], "nothing is made by another document");
+  assert.equal(tree.tag, "section");
+  assert.equal(tree.attrs.class, "docx");
+  assert.equal(tree.style.color, "red");
+  assert.equal(tree.id, "a");
+  assert.ok(!("title" in tree), "an undefined property is not set");
+  const [text, comment, fragment, same] = tree.children;
+  assert.equal(text.text, "hello");
+  assert.equal(comment.nodeType, 8);
+  assert.equal(comment.text, "note");
+  assert.equal(fragment.nodeType, 11);
+  assert.equal(fragment.children[0].text, "in a fragment");
+  const svg = fragment.children[1];
+  assert.equal(svg.ns, "http://www.w3.org/2000/svg");
+  assert.equal(svg.attrs.style, "fill:red", "a style given as text is an attribute");
+  assert.equal(svg.children[0].href, "data:image/png;base64,AA==");
+  // A node that is already made passes through, whatever its class.
+  assert.equal(same, ready);
+  // Another document, another owner.
+  assert.equal(makeH(fakeDocument("page"))("x").owner, "page");
 });

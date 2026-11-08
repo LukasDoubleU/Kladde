@@ -16,8 +16,10 @@
   // The document is untrusted and is shown in a frame of its own: a sandboxed `srcdoc` iframe whose document has a
   // CSP that allows nothing but `data:` images and fonts (`FRAME_CSP`), so "a document cannot make a request" holds
   // by construction, whatever the document's CSS or SVG says. The engine builds the DOM element by element (no HTML
-  // parsing) and `cleanDocumentNodes` still removes everything that could fetch another resource before the nodes are
-  // moved into the frame: a second layer, which also keeps the DOM small. The frame is Kladde's to drive (same
+  // parsing), with the frame's own document (`makeH`: its default makes nodes with the page's, where an element that
+  // starts loading when its attribute is set would be held only by the page's policy, which allows https images), and
+  // `cleanDocumentNodes` still removes everything that could fetch another resource before the nodes are attached to
+  // the frame's tree: a second layer, which also keeps the DOM small. The frame is Kladde's to drive (same
   // origin): the page puts listeners on its window and document and bridges what Kladde needs from there (keys,
   // wheel, mouse buttons, context menu, links, theme). See docs/architecture.md.
   //
@@ -39,6 +41,7 @@
     frameSrcdoc,
     isSelectAll,
     keyboardInit,
+    makeH,
     mouseInit,
     pageCountOf,
     problemFor,
@@ -119,9 +122,11 @@
 
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-  // The viewport of the frame's document: both are 0 while the tab is hidden (the frame has no layout then).
-  const viewWidth = () => fdoc?.documentElement.clientWidth ?? 0;
-  const viewHeight = () => fdoc?.documentElement.clientHeight ?? 0;
+  // The viewport of the frame's document: both are 0 while the tab is hidden. Asked of the iframe element, whose box
+  // is gone then: the frame's own document keeps reporting its last size for a while (and its scroll position
+  // resets), so reading it would take that reset for the user's scrolling.
+  const viewWidth = () => (frame.clientHeight > 0 ? (fdoc?.documentElement.clientWidth ?? 0) : 0);
+  const viewHeight = () => (frame.clientHeight > 0 ? (fdoc?.documentElement.clientHeight ?? 0) : 0);
   const scroller = () => fdoc?.scrollingElement ?? null;
 
   type Outcome =
@@ -152,10 +157,15 @@
     try {
       const { parseAsync, renderDocument } = await import("docx-preview");
       const parsed = await parseAsync(bytes, OPTIONS);
-      // Detached nodes: nothing is attached, so nothing is fetched, before the cleaning below has run (and the frame's
-      // CSP holds whatever the cleaning misses).
+      // The engine makes its nodes with the frame's document (`makeH`), so they are born under the frame's policy: an
+      // element that starts loading when its attribute is set, detached or not, is held by it. The frame has to
+      // be there first.
+      await frameReady;
+      const doc = fdoc;
+      if (!doc) throw new Error("the viewer was closed");
+      const options = { ...OPTIONS, h: makeH(doc) };
       const { nodes, highlight } = await inTurn(async () => {
-        const nodes = await renderDocument(parsed, OPTIONS);
+        const nodes = await renderDocument(parsed, options);
         // The engine registered the comment ranges on the page; they belong to the frame's window, where the nodes
         // will be. Taken out here, in the same turn, so no other render can take them.
         const highlight = CSS.highlights?.get(COMMENTS) ?? null;
@@ -262,6 +272,13 @@
     const restored = needsMeasure && !measured ? savedTop : null;
     if (needsMeasure) measure();
     setScale(fitScale(viewWidth(), natural) * userFactor);
+    // A vertical scrollbar that the new scale brings or takes away changes the width to fit into, without any
+    // resize event: measure again (a step or two settles it).
+    for (let i = 0; i < 3; i++) {
+      const next = fitScale(viewWidth(), natural) * userFactor;
+      if (Math.abs(next - scale) < 0.0005) break;
+      setScale(next);
+    }
     if (restored !== null) {
       savedTop = restored;
       restoreScroll();
@@ -314,13 +331,20 @@
     if (!active) return;
     untrack(() => {
       settling = true;
-      requestAnimationFrame(() => {
+      // The frame's layout comes back a frame or two after the tab is shown, and a place set before the content has
+      // its height is clamped: put it back until it stays (the scroll events meanwhile are not the user's).
+      let frames = 0;
+      let steady = 0;
+      const settle = () => {
         applyScale();
         restoreScroll();
-        focusViewer();
-        // The scroll events of the restore itself arrive within the next frame.
-        requestAnimationFrame(() => (settling = false));
-      });
+        if (frames === 0) focusViewer();
+        const there = viewHeight() > 0 && Math.abs((scroller()?.scrollTop ?? 0) - savedTop) < 1;
+        steady = there ? steady + 1 : 0;
+        if (++frames < 30 && steady < 3) requestAnimationFrame(settle);
+        else settling = false;
+      };
+      requestAnimationFrame(settle);
     });
   });
 

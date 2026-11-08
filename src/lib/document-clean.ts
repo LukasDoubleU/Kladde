@@ -2,8 +2,7 @@
 // A document is untrusted text, and the viewer's renderer builds CSS and style attributes from it (font names are
 // pasted into rules, VML shapes copy their `style` unchanged). This is the second layer: the first is the policy of
 // the frame the document is shown in (`FRAME_CSP`, nothing but `data:` images and fonts), which holds whatever this
-// misses. It still runs, on nodes that are not attached yet, so nothing has been fetched when it starts, and it keeps
-// the DOM small. The CSS is judged through the browser's own parser (CSSOM) and `css-scan.ts`.
+// misses. It still runs, on nodes that are not attached yet, and it keeps the DOM small. The CSS is judged through the browser's own parser (CSSOM) and `css-scan.ts`.
 import { isDataUrl, referencesRemote, splitDeclarations } from "./css-scan";
 
 export interface CleanStats {
@@ -127,18 +126,19 @@ function cleanElement(el: Element, stats: CleanStats) {
   } else if (tag === "image" && !el.hasAttribute("href") && !el.hasAttribute("xlink:href")) {
     // An empty group instead of nothing: the engine measures the first child of a VML shape's `<svg>` a frame
     // later (`getBBox`) and fails on a shape without one.
-    el.replaceWith(document.createElementNS("http://www.w3.org/2000/svg", "g"));
+    el.replaceWith(el.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "g"));
     stats.removed++;
   }
 }
 
-/** Cleans the nodes a renderer returned (detached), in place. */
+/** Cleans the nodes a renderer returned (made by the frame's document, not attached yet), in place. */
 export function cleanDocumentNodes(nodes: Node[]): CleanStats {
   const stats: CleanStats = { removed: 0 };
   for (const node of nodes) {
-    if (!(node instanceof Element)) continue;
+    // Not `instanceof Element`: the nodes are made by the frame's document, whose classes are not the page's.
+    if (node.nodeType !== Node.ELEMENT_NODE) continue;
     // The tree is walked before changing it, so removing an element does not disturb the walk.
-    const all = [node, ...node.querySelectorAll("*")];
+    const all = [node as Element, ...(node as Element).querySelectorAll("*")];
     for (const el of all) cleanElement(el, stats);
   }
   return stats;
