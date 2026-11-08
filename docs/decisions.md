@@ -84,8 +84,11 @@ The default preset contains deliberate choices; presets (Notepad++, VS Code) and
   from the page's `img-src` is still not possible: the Markdown preview shows remote images. Two choices worth knowing:
   `allow-same-origin` is granted because the page drives the frame (without it the frame's document is unreachable
   from the page); that is safe because no script can run in the frame (no `allow-scripts`, and the policy forbids
-  them). And the Rust guard exists because sandbox flags and the page's `frame-src` do not cover a `<meta>` refresh
-  or a script-free `location` change in the way a navigation guard does.
+  them). And the Rust guard exists because neither the sandbox nor the policies refuse a navigation of the frame to the
+  app's own origin or to `about:` (Chromium does refuse a `<meta>` refresh in a frame sandboxed without
+  `allow-scripts`), and `on_navigation` only sees the top-level frame. The guarantee is "no *request*": a nested
+  frame or a resource hint can still open a connection, which only the cleaner (and the engine, which emits neither)
+  prevents; see architecture.md.
 - **Tracked changes and comments are shown**, as markup (insertions underlined, deletions struck through, comments as a
   marker with the text on hover), because the alternative (insertions as plain text, deletions and comments dropped) shows a
   text that is not what the file says.

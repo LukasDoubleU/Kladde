@@ -54,7 +54,7 @@ Rules:
 | smoke | 9340 |
 | compare | 9371–9373 |
 | format | 9343, 9363–9365 |
-| document | 9427–9440, 9445–9447 |
+| document | 9427–9440, 9445–9447, 9449–9451 |
 | grammar | 9387–9389 |
 | binary-save | 9413–9419 (one app at a time; every port is reused once or twice) |
 | hot-exit | 9344, 9354–9358, 9380, 9390, 9400–9404 |
@@ -69,7 +69,7 @@ Rules:
 | theme | 9348, 9381–9383 |
 | update | 9349, 9359–9362, 9366–9368, 9394–9396 |
 
-Free for new files: 9448 and up (9380 and 9390 are taken by hot-exit now).
+Free for new files: 9452 and up (9448 is free) (9380 and 9390 are taken by hot-exit now).
 
 ## Environment variables
 
@@ -146,15 +146,21 @@ Free for new files: 9448 and up (9380 and 9390 are taken by hot-exit now).
   DevTools connection, and the computed styles are searched for addresses. It fails when the cleaning in
   `lib/document-clean.ts` and `lib/css-scan.ts` is removed *and* the frame's policy is too; the next test is the one
   that isolates the frame. **The cleaner-off test** starts the app with `KLADDE_DOCUMENT_NO_CLEAN=1`
-  (`makeEscapeDocx`: fourteen CSS ways through font names, SVG paint attributes, a linked picture and a linked
-  drawing, one listener each), then puts 22 kinds of element into the live frame (`ELEMENT_WAYS`: images, `link`s,
-  frames, media, SVG, forms, `a ping`, a `<meta>` refresh) and waits: no listener may be contacted. It asserts that the
+  (`makeEscapeDocx`: twelve CSS ways through font names, SVG paint attributes, a linked picture and a linked
+  drawing, one listener each), then puts 25 kinds of element into the live frame (`ELEMENT_WAYS`: images, `link`s
+  including preconnect and dns-prefetch, `@import` as a first rule, frames, media, SVG, forms, `a ping` (clicked for
+  real), a `<meta>` refresh) and waits: no listener may be contacted. It asserts that the
   cleaner really was off (`data-removed` is 0, the addresses are in the CSS and the attributes, the computed style
   holds one) and ends with a **control**: the same material in a frame *without* the meta policy (only the page's
-  policy applies, which allows https images) must reach a set of listeners, so a passing run cannot be a test that is
-  unable to see a leak. It also counts the nodes the page's and the frame's `Document` make during a second render (F5): none by the page's. A nested `<iframe>` is the one element it tolerates: WebView2 opens a connection before any policy or guard can act (architecture.md, "Known gap"), so the test asserts the guard's cancellation instead of silence for it. The frame-navigation test points the frame at `about:blank` and at the app's own origin with
+  policy applies, which allows https images) must reach every listener of `LIVE_WITHOUT_POLICY`, so a passing run cannot be a test that is
+  unable to see a leak. It also counts the nodes the page's and the frame's `Document` make during a second render (F5): none by the page's. A nested `<iframe>` and `rel=preconnect` are the elements it tolerates: WebView2 opens a connection before any policy or guard can act (architecture.md, "Gaps that only the cleaner holds"), so the test asserts the guard's cancellation instead of silence for the frame. The frame-navigation test points the frame at `about:blank` and at the app's own origin with
   `location.assign` (the policies do not refuse these; only the Rust guard stands in the way) and adds a `<meta>`
-  refresh, then expects the same document object and the guard's stderr lines. The theme test changes the flavor and a
+  refresh (which the sandbox refuses: the guard is not what is asserted there), then expects the same document object
+  and the guard's stderr lines for the `location.assign` targets. The reorder test drags a tab over another (real mouse
+  events) with two documents shown and expects the same frame documents and places, then moves a `.fill` in the DOM by
+  hand, which makes the browser load the frame again, and expects the document to render again with its place. The
+  history test presses the mouse's back and forward buttons over the document. The quick-switch test sends Ctrl+Tab
+  four times without waiting and expects the place in the view and in the saved session. The theme test changes the flavor and a
   variable the way the app does (`kladde-theme`) and compares the frame's copies of the variables and what is painted.
   The hidden-render test narrows the window, scrolls, reloads the document while another tab is shown (F5, then
   Ctrl+Tab within the 300 ms debounce) and checks fit, zoom and place after returning, once fitted and once with

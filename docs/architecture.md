@@ -391,15 +391,17 @@ nothing is read or loaded at startup.
     `allow-scripts` is safe here because nothing in the frame can run: the combination is only dangerous when the framed
     document can remove its own sandbox. The listeners the page registers on the frame's window and document fire as
     on any page (click, keydown, wheel, contextmenu, scroll, selection).
-  - **The frame never navigates.** Sandbox flags do not stop a frame from navigating itself (`<meta http-equiv=refresh>`,
-    a link's default action, `location`), and `on_navigation` only sees the top-level frame. `create_main_window`
-    registers a `FrameNavigationStarting` handler (WebView2 COM, the same style as the unparseable-URL guard) that cancels
-    every frame navigation except `about:srcdoc` (`navigation::cancels_frame_navigation`, unit-tested). Kladde has no
-    other frames (the Markdown sanitizer drops `iframe`, Mermaid draws inline SVG), so nothing else needs to pass. The
-    page cancels link clicks itself (see "Focus and keys"); the guard and the page's policy (`frame-src` falls back to
-    `default-src 'self'`) are the layers behind that. The test points the frame at `about:blank` and at the app's own
-    origin (neither is refused by the policies) and adds a `<meta>` refresh: the frame must stay the same document, and
-    the guard logs the cancellations.
+  - **The frame never navigates.** The page cancels every link click itself (see "Focus and keys"). Behind that,
+    Chromium refuses a `<meta http-equiv=refresh>` in a frame sandboxed without `allow-scripts`, and the policies cover
+    other origins, but neither refuses a navigation to the app's own origin or to `about:` (from the page itself, or
+    from a link's default action that the click handler misses: an event it does not see, an SVG `<a>`), and
+    `on_navigation` only sees the top-level frame. `create_main_window` registers a `FrameNavigationStarting` handler
+    (WebView2 COM, the same style as the unparseable-URL guard) that cancels every frame navigation except
+    `about:srcdoc` (`navigation::cancels_frame_navigation`, unit-tested) and logs each cancellation. Kladde has no other
+    frames (the Markdown sanitizer drops `iframe`, Mermaid draws inline SVG), so nothing else needs to pass. The test
+    points the frame at `about:blank` and two pages of the app's own origin with `location.assign` and expects the same
+    document object afterwards and the guard's log line for each of them; it also adds a `<meta>` refresh and expects
+    the document to stay (the guard is not what is asserted there).
   - **The nodes are born in the frame.** The engine's default `h` creates every element with the page's global `document`,
     and an element can start loading the moment an attribute is set (`<img src>`, SVG `<image href>`, media), even
     detached, under the *page's* policy, which allows https images. The engine reads `options.h`, so the viewer passes
@@ -420,26 +422,39 @@ nothing is read or loaded at startup.
     elements, event handler attributes and every address attribute that is not a link's `href` go too. `:host` rules are
     dropped as before, although the frame has no host. The guarantee does not rest on the cleaner any more.
   - **Test hook:** with an isolated profile and `KLADDE_DOCUMENT_NO_CLEAN=1`, the viewer skips the cleaner
-    (`document_no_clean` in `lib.rs`, one cached call per run; `no_clean_for` is unit-tested to need the isolated
+    (`document_no_clean` in `lib.rs`, asked once per viewer; `no_clean_for` is unit-tested to need the isolated
     profile, so a stray variable can never switch the cleaner off in a normal installation). The e2e test renders a
     document that tries every known way out (testing.md) that way and listens for any connection.
   - What the checks cover (`document.test.mjs`): with the cleaner on, the per-way listeners (font-name injection,
     `image-set(var())` through a font name and a VML style, VML fill and stroke, a linked picture) and the computed
-    styles; with it off, fourteen CSS ways (`url()`, `image-set()` also through `var()`, `border-image`,
-    `list-style-image`, `cursor`, `mask`, `filter`, `clip-path`, `shape-outside`, `content`, `@font-face`, two kinds of
-    `@import`), SVG paint attributes and a linked SVG `<image>`, a linked `<img>`, and 22 kinds of element put into the
-    live frame (`img`, `srcset`, `picture`, three `link`s, nested frames, `object`, `embed`, `video`/`audio` with a poster,
-    SVG `image`/`use`/`fill`, `input type=image`, `table background`, a `style` attribute and element, `a ping`, a form
-    submission and a `<meta>` refresh). A control frame without a policy of its own gets the same material and does
-    fetch it, so the listeners can see a leak. The test was also run once with `img-src https: http:` added to the
+    styles; with it off, twelve CSS ways (`url()`, `image-set()` also through `var()`, `border-image`,
+    `list-style-image`, `cursor`, `mask`, `filter`, `clip-path`, `shape-outside`, `content`, `@font-face`), SVG paint
+    attributes and a linked SVG `<image>`, a linked `<img>`, and 25 kinds of element put into the live frame (`img`,
+    `srcset`, `picture`, `link`s for styles, preload, icon, preconnect and dns-prefetch, nested frames, `object`,
+    `embed`, `video`/`audio` with a poster, SVG `image`/`use`/`fill`, `input type=image`, `table background`, a `style`
+    attribute, `@import` as the first rule of a style of its own (as a URL and as a string), `a ping` (really clicked), a
+    form submission and a `<meta>` refresh; the icon and the refresh cannot fetch in any frame and are kept as
+    tripwires). A control frame without a policy of its own gets the same material and must fetch every item of
+    `LIVE_WITHOUT_POLICY` (24 ways: everything that is live under the page's policy alone), so the listeners can see a
+    leak. The rest of the material (`image-set()` with a string, `filter`, `@font-face`, the linked `img` and `svgImage`,
+    media, `use`, `object`, `embed`) is not fetched even then, and is only attempted. The test was also run once with `img-src https: http:` added to the
     frame's policy, and fails with the listeners it names (checked by hand, not kept).
-  - **Known gap: a nested frame opens a connection.** Found by that test: WebView2 opens a TCP connection when a frame
-    starts to navigate, before any policy check (the frame's, and the page's own, were both tried, also `frame-src
-    'none'`) and before the frame guard cancels the navigation. No HTTP request is sent (a plain HTTP listener saw only the
-    connection), but for `https:` the connection starts a TLS handshake that names the host. Nothing a document can do
-    makes the engine emit a frame (`renderAltChunks: false`), and the cleaner removes every `iframe`, `frame`, `object`
-    and `embed`, so this is a fallback that is weaker than for images; the test lists it as tolerated and asserts that the
-    guard cancelled the navigation.
+  - **Gaps that only the cleaner holds: connections and lookups, not requests.** The policy stops every *request* of
+    the kinds above. Two things it cannot stop, found by the cleaner-off test:
+    - *A nested frame opens a connection.* WebView2 opens a TCP connection when a frame starts to navigate, before any
+      policy check (the frame's and the page's own were both tried, also `frame-src 'none'`) and before the frame guard
+      cancels the navigation. No HTTP request is sent (a plain HTTP listener saw only the connection), but for `https:`
+      the connection starts a TLS handshake that names the host. The test lists it as tolerated and asserts that the
+      guard cancelled the navigation.
+    - *Resource hints.* No CSP governs `rel=preconnect` and `rel=dns-prefetch` (`elPreconnect` is tolerated by the test if
+      it connects; a lookup of an IP address cannot be observed, so the `x-dns-prefetch-control: off` meta that the frame
+      and `index.html` carry is asserted instead). Chromium also preconnects when the user presses a link, which is the
+      user's own act (the click opens that address anyway).
+
+    Nothing a document can do makes the engine emit a frame or a `<link>` (`renderAltChunks: false`, no such
+    elements in the engine's output), and the cleaner removes every `iframe`, `frame`, `object`, `embed` and `link`, so
+    these are held by the cleaner and the engine, not by construction: "a document cannot make a network *request*" is
+    what the frame guarantees.
 - **Layout and zoom:** pages have the document's own size (A4 is 794 px). They are shown at their size, or shrunk to the
   width of the window (fit to width, never enlarged); Kladde's zoom (keys, `Ctrl`+wheel, the same `ui.zoom` as the font
   size) scales them on top, by the same proportion as the font size. Done with the CSS `zoom` of the host element inside
@@ -490,7 +505,14 @@ nothing is read or loaded at startup.
   explicit save and restore), reloads and the session.
 - **Reloading:** `checkExternalChanges` notices a new mtime (the active tab every two seconds while the window has
   the focus, every tab when it gets the focus) and bumps `tab.revision`; F5 does too. The viewer waits 300 ms, reads again and
-  swaps the new nodes in at once, so the old rendering stays until the new one is complete. A file that is being saved
+  swaps the new nodes in at once, so the old rendering stays until the new one is complete. A frame whose document the
+  browser threw away (an iframe moved in the page's DOM loads its `srcdoc` again, empty) is rendered again the same way,
+  keeping place and zoom; `App.svelte` lists the shown document views in the order they were first shown, not the tab
+  order, so dragging tabs does not move frames. A tab closed before its frame loaded releases whatever waits for it
+  (`frameReady` resolves false), and a frame that has not loaded after 10 s shows "The viewer could not start." instead of
+  "Loading…". Coming back to a hidden tab restores the place in a loop that belongs to that activation (an earlier
+  one stops, only the latest ends the suppression of the scroll events) and ends as soon as the user's wheel, key or
+  pointer input arrives in the frame. A file that is being saved
   (Word writes in steps or replaces the file: a sharing violation, a missing file, a truncated ZIP) is read again after
   0.3, 0.6, 1.2 and 2.4 s with the old rendering still shown; only then an error appears. On the first read only a
   sharing violation is retried.
