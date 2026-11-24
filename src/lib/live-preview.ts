@@ -12,6 +12,7 @@ import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { buildLivePreview, type LiveSpec, type Span, type WidgetData } from "./live-preview-core";
 import { localImagePath } from "./links";
+import { blockExtension, blocksField, holdSelection, MathWidget } from "./live-preview-blocks";
 
 /** The folder of the Markdown file (null: untitled), for the relative addresses of images. */
 const baseDir = Facet.define<string | null, string | null>({ combine: (values) => values[0] ?? null });
@@ -166,6 +167,8 @@ function widgetFor(data: WidgetData, folder: string | null) {
       return new RuleWidget();
     case "image":
       return new ImageWidget(imageUrl(data.src, folder), data.alt, data.editing);
+    case "math":
+      return new MathWidget(data.tex, data.display, false);
   }
 }
 
@@ -235,19 +238,21 @@ const livePreviewPlugin = ViewPlugin.fromClass(
         selection,
         visible: this.view.visibleRanges,
         editable: !state.readOnly && state.facet(EditorView.editable),
+        blocks: state.field(blocksField),
       });
       return toDecorations(specs, state.facet(baseDir));
     }
 
     update(update: ViewUpdate) {
       const state = update.state;
-      const asked = update.transactions.some((tr) => tr.effects.some((e) => e.is(refresh)));
+      const asked = update.transactions.some((tr) => tr.effects.some((e) => e.is(refresh) || e.is(holdSelection)));
       const rebuild =
         update.docChanged ||
         update.viewportChanged ||
         update.selectionSet ||
         asked ||
         syntaxTree(update.startState) !== syntaxTree(state) ||
+        update.startState.field(blocksField) !== state.field(blocksField) ||
         update.startState.readOnly !== state.readOnly ||
         update.startState.facet(baseDir) !== state.facet(baseDir);
       if (!rebuild) return;
@@ -265,7 +270,10 @@ const livePreviewPlugin = ViewPlugin.fromClass(
 
     down() {
       clearTimeout(this.release);
-      if (!this.frozen) this.frozen = this.view.state.selection.ranges.map((r) => ({ from: r.from, to: r.to }));
+      if (this.frozen) return;
+      this.frozen = this.view.state.selection.ranges.map((r) => ({ from: r.from, to: r.to }));
+      // The state field that draws the blocks holds its selection too.
+      this.view.dispatch({ effects: holdSelection.of(this.frozen) });
     }
 
     /** After CodeMirror's own handler of the same event has made its last selection change. */
@@ -274,9 +282,8 @@ const livePreviewPlugin = ViewPlugin.fromClass(
       clearTimeout(this.release);
       this.release = window.setTimeout(() => {
         this.frozen = null;
-        if (!this.pending || !this.view.dom.isConnected) return;
         this.pending = false;
-        this.view.dispatch({ effects: refresh.of(null) });
+        if (this.view.dom.isConnected) this.view.dispatch({ effects: holdSelection.of(null) });
       }, 0);
     };
   },
@@ -411,6 +418,7 @@ const theme = EditorView.theme({
 export function livePreview(folder: string | null): Extension {
   return [
     baseDir.of(folder),
+    blockExtension,
     livePreviewPlugin,
     theme,
     EditorView.editorAttributes.of({ class: "cm-live-preview" }),

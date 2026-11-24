@@ -5,17 +5,23 @@
 // The output is plain HTML (no MathML), so it passes through DOMPurify unchanged.
 
 import MarkdownIt, { type StateBlock, type StateInline } from "markdown-it";
+import { matchInlineMath } from "./math-scan.ts";
 
 type Katex = typeof import("katex").default;
 
 let katex: Katex | null = null;
 let loading: Promise<void> | null = null;
+/** Everyone who asked for a formula while KaTeX was still loading (the preview, the editor's Live Preview). */
+const waiting = new Set<() => void>();
 
 function load(onLoaded: () => void) {
+  waiting.add(onLoaded);
   loading ??= Promise.all([import("katex"), import("katex/dist/katex.min.css")])
     .then(([module]) => {
       katex = module.default;
-      onLoaded();
+      const callbacks = [...waiting];
+      waiting.clear();
+      for (const callback of callbacks) callback();
     })
     .catch(() => {
       loading = null; // allow another attempt on the next render
@@ -24,62 +30,59 @@ function load(onLoaded: () => void) {
 
 const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
+/** What KaTeX makes of a formula: its HTML, the reason it refused, or "pending" while it is still loading. */
+export type TexResult = { kind: "ok"; html: string } | { kind: "error"; message: string } | { kind: "pending" };
+
+const MAX_CACHED = 400;
+const rendered = new Map<string, TexResult>();
+
+/**
+ * Renders TeX with KaTeX (the one place that decides its options), cached by formula. `onLoaded` runs once the lazily
+ * loaded KaTeX has arrived, when the answer was "pending". Shared by the preview and the editor's Live Preview.
+ */
+export function texToHtml(tex: string, display: boolean, onLoaded: () => void): TexResult {
+  if (!katex) {
+    load(onLoaded);
+    return { kind: "pending" };
+  }
+  const key = `${display ? "d" : "i"}${tex}`;
+  const hit = rendered.get(key);
+  if (hit) return hit;
+  let result: TexResult;
+  try {
+    const html = katex.renderToString(tex, { displayMode: display, output: "html", throwOnError: true, strict: "ignore" });
+    result = { kind: "ok", html };
+  } catch (e) {
+    result = { kind: "error", message: String((e as Error).message ?? e).replace(/^KaTeX parse error: /, "") };
+  }
+  if (rendered.size >= MAX_CACHED) rendered.delete(rendered.keys().next().value!);
+  rendered.set(key, result);
+  return result;
+}
+
 /** Renders TeX to HTML; shows the source (and the error) when KaTeX is not ready or rejects it. */
 function renderTex(tex: string, display: boolean, line: string | null, onLoaded: () => void): string {
   // Only block-level formulas get a div; $ inside a paragraph stays a span.
   const tag = line === null ? "span" : "div";
   const attrs = line === null ? "" : ` data-line="${line}"`;
-  if (!katex) {
-    load(onLoaded);
-    return `<${tag} class="math ${line === null ? "math-inline" : "math-block"} math-pending"${attrs}>${escapeHtml(tex)}</${tag}>`;
-  }
-  try {
-    const html = katex.renderToString(tex, { displayMode: display, output: "html", throwOnError: true, strict: "ignore" });
-    return `<${tag} class="math ${line === null ? "math-inline" : "math-block"}"${attrs}>${html}</${tag}>`;
-  } catch (e) {
-    const message = escapeHtml(String((e as Error).message ?? e).replace(/^KaTeX parse error: /, ""));
-    return `<${tag} class="math math-error ${line === null ? "math-inline" : "math-block"}" title="${message.replace(/"/g, "&quot;")}"${attrs}>${escapeHtml(tex)}</${tag}>`;
-  }
-}
-
-/** Index of the closing "$" for an inline formula that opens before `start`, or -1. */
-function findInlineEnd(src: string, start: number, max: number): number {
-  for (let i = start; i < max; i++) {
-    const c = src.charCodeAt(i);
-    if (c === 0x5c /* \ */) {
-      i++; // skip the escaped character
-    } else if (c === 0x24 /* $ */) {
-      // "$5 and $10": the closing $ needs non-space before it and no digit after it
-      const before = src.charCodeAt(i - 1);
-      const after = src.charCodeAt(i + 1);
-      if (before === 0x20 || before === 0x09 || before === 0x0a) return -1;
-      if (after >= 0x30 && after <= 0x39) return -1;
-      return i;
-    }
-  }
-  return -1;
+  const kind = line === null ? "math-inline" : "math-block";
+  const result = texToHtml(tex, display, onLoaded);
+  if (result.kind === "pending") return `<${tag} class="math ${kind} math-pending"${attrs}>${escapeHtml(tex)}</${tag}>`;
+  if (result.kind === "ok") return `<${tag} class="math ${kind}"${attrs}>${result.html}</${tag}>`;
+  const message = escapeHtml(result.message);
+  return `<${tag} class="math math-error ${kind}" title="${message.replace(/"/g, "&quot;")}"${attrs}>${escapeHtml(tex)}</${tag}>`;
 }
 
 function inlineRule(state: StateInline, silent: boolean): boolean {
   const { src, pos, posMax } = state;
-  if (src.charCodeAt(pos) !== 0x24) return false;
-
-  // $$ inside a paragraph is display math that stays in the text flow.
-  if (src.charCodeAt(pos + 1) === 0x24) {
-    const end = src.indexOf("$$", pos + 2);
-    if (end < 0 || end >= posMax || end === pos + 2) return false;
-    if (!silent) state.push("math_inline", "", 0).content = src.slice(pos + 2, end);
-    if (!silent) state.tokens[state.tokens.length - 1].meta = { display: true };
-    state.pos = end + 2;
-    return true;
+  const found = matchInlineMath(src, pos, posMax);
+  if (!found) return false;
+  if (!silent) {
+    const token = state.push("math_inline", "", 0);
+    token.content = found.content;
+    if (found.display) token.meta = { display: true };
   }
-
-  const next = src.charCodeAt(pos + 1);
-  if (pos + 1 >= posMax || next === 0x20 || next === 0x09 || next === 0x0a) return false;
-  const end = findInlineEnd(src, pos + 1, posMax);
-  if (end < 0 || end === pos + 1) return false;
-  if (!silent) state.push("math_inline", "", 0).content = src.slice(pos + 1, end);
-  state.pos = end + 1;
+  state.pos = found.end;
   return true;
 }
 

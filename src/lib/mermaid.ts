@@ -9,7 +9,8 @@ import { stripActive } from "./markdown";
 
 type Mermaid = typeof import("mermaid").default;
 
-type Result = { svg: string } | { error: string };
+export type DiagramResult = { svg: string } | { error: string };
+type Result = DiagramResult;
 
 const MAX_CACHED = 60;
 const cache = new Map<string, Promise<Result>>();
@@ -105,13 +106,13 @@ const lastSvg: string[] = [];
 /** The source of each placeholder, kept because drawing the SVG replaces the code block that held it. */
 const sources = new WeakMap<HTMLElement, string>();
 
-function show(el: HTMLElement, result: Result, index: number) {
+/** Puts a finished diagram (or its error, as the preview shows it) into an element. */
+export function drawDiagram(el: HTMLElement, result: Result) {
   if ("svg" in result) {
     el.className = "mermaid-block";
     // Mermaid's "strict" mode only runs DOMPurify with its default settings, which keep forms and buttons in a
     // label (and a diagram's init directive could change that): they are removed here too (markdown.ts).
     el.replaceChildren(stripActive(result.svg));
-    lastSvg[index] = result.svg;
   } else {
     el.className = "mermaid-block mermaid-failed";
     const box = document.createElement("div");
@@ -122,8 +123,21 @@ function show(el: HTMLElement, result: Result, index: number) {
     message.textContent = result.error;
     box.append(title, message);
     el.replaceChildren(box);
-    lastSvg[index] = "";
   }
+}
+
+function show(el: HTMLElement, result: Result, index: number) {
+  drawDiagram(el, result);
+  lastSvg[index] = "svg" in result ? result.svg : "";
+}
+
+/**
+ * Renders one diagram source with the current theme: the same queue, cache, Mermaid configuration and security level
+ * as the preview. For the editor's Live Preview, which draws the result itself (`drawDiagram`).
+ */
+export function renderDiagram(source: string): Promise<Result> {
+  const { vars, signature } = themeVariables();
+  return cached(source, vars, signature);
 }
 
 /** Turns the diagram placeholders under `root` into SVGs. Resolves after the last one was drawn. */

@@ -12,6 +12,8 @@
 
 import type { Text } from "@codemirror/state";
 import type { SyntaxNode, Tree } from "@lezer/common";
+import type { MathBlock } from "./live-preview-math.ts";
+import { scanInlineMath } from "./math-scan.ts";
 
 export interface Span {
   from: number;
@@ -27,6 +29,8 @@ export type WidgetData =
    */
   | { type: "checkbox"; checked: boolean; offset: number; editable: boolean }
   | { type: "hr" }
+  /** An inline formula (`$x$`, or `$$x$$` inside a paragraph, which is `display`). */
+  | { type: "math"; tex: string; display: boolean }
   /** `src` is the address as written in the document; the extension resolves it. `editing`: the markup is shown. */
   | { type: "image"; alt: string; src: string; editing: boolean };
 
@@ -47,6 +51,11 @@ export interface LiveInput {
   selection: readonly Span[];
   /** The parts of the document to decorate (the visible ranges of the view). */
   visible: readonly Span[];
+  /**
+   * The display math, math fences and diagrams of the document (`findMathBlocks`, kept by a state field: they are drawn
+   * as block widgets, which a view plugin cannot do). Nothing is decorated inside the ones that are drawn.
+   */
+  blocks?: readonly MathBlock[];
   /** False in a read-only tab: the task boxes are drawn as not clickable and do nothing when clicked. */
   editable: boolean;
 }
@@ -89,12 +98,53 @@ function unangle(url: string): string {
   return url.startsWith("<") && url.endsWith(">") ? url.slice(1, -1) : url;
 }
 
-export function buildLivePreview({ doc, tree, selection, visible, editable }: LiveInput): LiveSpec[] {
+/** Nodes in which a `$` does not start a formula (the rest of the inline rules of markdown-it are in math-scan.ts). */
+const NOT_INLINE_MATH = new Set([
+  "InlineCode", "CodeText", "FencedCode", "CodeBlock", "HTMLBlock", "HTMLTag", "CommentBlock", "Comment",
+  "ProcessingInstructionBlock", "URL", "LinkTitle", "Autolink", "Table",
+]);
+
+function mathAllowedAt(tree: Tree, pos: number): boolean {
+  for (let node: SyntaxNode | null = tree.resolveInner(pos, 1); node; node = node.parent) {
+    if (NOT_INLINE_MATH.has(node.name)) return false;
+  }
+  return true;
+}
+
+export function buildLivePreview({ doc, tree, selection, visible, editable, blocks = [] }: LiveInput): LiveSpec[] {
   const specs: LiveSpec[] = [];
   const seen = new Set<string>();
   const skipUntil = frontMatterEnd(doc);
 
+  // Where nothing else is decorated: the formulas themselves (touched or not: their source is plain text), display
+  // math (also while its source shows), and the fences and diagrams that are drawn.
+  const owned: Span[] = blocks.filter((b) => b.kind === "display" || !touches(selection, b.from, b.to));
+  const inOwned = (from: number, to: number) => owned.some((s) => from >= s.from && to <= s.to);
+
+  for (const range of visible) {
+    for (let pos = range.from; pos <= range.to; ) {
+      const line = doc.lineAt(pos);
+      pos = line.to + 1;
+      if (line.from < skipUntil || !line.text.includes("$")) continue;
+      for (const m of scanInlineMath(line.text)) {
+        const from = line.from + m.from;
+        const to = line.from + m.end;
+        if (blocks.some((b) => from >= b.from && to <= b.to) || tree.length < to || !mathAllowedAt(tree, from)) continue;
+        owned.push({ from, to });
+        const key = `math:${from}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        specs.push(
+          touches(selection, from, to)
+            ? { kind: "mark", from, to, cls: "cm-lp-math-src" }
+            : { kind: "widget", from, to, widget: { type: "math", tex: m.content, display: m.display } },
+        );
+      }
+    }
+  }
+
   const add = (spec: LiveSpec) => {
+    if (inOwned(spec.from, spec.to)) return;
     // A node that spans several visible ranges is visited once per range.
     const key = `${spec.kind}:${spec.from}:${spec.to}:${spec.kind === "mark" || spec.kind === "line" ? spec.cls : spec.kind === "widget" ? spec.widget.type : ""}`;
     if (seen.has(key)) return;
