@@ -287,6 +287,11 @@ const livePreviewPlugin = ViewPlugin.fromClass(
         if (event.button === 0) this.down();
         return false;
       },
+      // A release that never arrived (a drag that ended outside the page): do not stay frozen.
+      mousemove(event) {
+        if (this.frozen && event.buttons === 0) this.onUp();
+        return false;
+      },
     },
   },
 );
