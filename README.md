@@ -65,7 +65,8 @@ it, but I may decline requests that don't fit how I work, and there is no promis
   the raw Markdown that is saved, but headings are sized, bold, italic, strikethrough and code are styled, links show only
   their text, images are drawn, bullets, task boxes, quotes, rules and code blocks look like in the preview, and the
   markup characters appear only where the cursor or a selection touches. A click on a task box toggles it (one undo
-  step). `Ctrl+E` switches the tab to **Source** and back; the choice is remembered per tab. It only changes the view:
+  step). Formulas (`$x$`, `$$…$$`, ```` ```math ````) and Mermaid diagrams are drawn too, and their source shows when
+  the cursor is in them. `Ctrl+E` switches the tab to **Source** and back; the choice is remembered per tab. It only changes the view:
   never the text, never the unsaved state.
 - GitHub-flavoured: tables, task lists, autolinks, heading anchors, highlighted code blocks; local images
   resolve relative to the file.

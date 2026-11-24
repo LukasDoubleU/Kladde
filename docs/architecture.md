@@ -172,7 +172,7 @@ Key mechanisms:
 | `lib/languages.ts` | ~145 languages from `@codemirror/language-data` plus own Batch and Log stream parsers; detection by extension, file name, shebang, first line; `saveAsName` (the extension Save As proposes for an untitled tab) |
 | `lib/markdown-detect.ts` | `looksLikeMarkdown(text)`: the pure, conservative detector behind the Markdown switch of a first paste (see "Tabs and the editor"); rules in the file's header, corpus in `tests/unit/markdown-detect.test.mjs` |
 | `lib/markdown.ts`, `math.ts`, `mermaid.ts` | Preview: markdown-it → DOMPurify; KaTeX rules; Mermaid placeholders drawn after insertion |
-| `lib/live-preview-core.ts`, `lib/live-preview.ts` | Live Preview of Markdown tabs: the pure decision (which ranges are hidden, styled or drawn instead, from the tree and the selection; unit-tested) and the extension that draws it (see "Live Preview") |
+| `lib/live-preview-core.ts`, `lib/live-preview.ts`, `lib/live-preview-math.ts`, `lib/live-preview-blocks.ts`, `lib/math-scan.ts` | Live Preview of Markdown tabs: the pure decision (which ranges are hidden, styled or drawn instead, from the tree and the selection; unit-tested) and the extension that draws it (see "Live Preview") |
 | `lib/native-menu.ts` | Which right clicks may show WebView2's native menu (editable text only) and the selected text for our own Copy menu |
 | `lib/links.ts`, `lib/editor-links.ts` | Links: finding them in a line, what an href means, heading anchors and path helpers (pure, unit-tested); the editor extension for Ctrl+click and the hover hint (see "Links") |
 | `lib/format.ts`, `format-xml.ts`, `formatters.ts` | Own JSON and XML formatters; dispatch by language to lazily loaded Prettier and sql-formatter |
@@ -462,7 +462,7 @@ spell check and the grammar marks work on the raw text.
   untitled tab, where the alt text is shown) and, while the markup is touched, the markup plus a small picture behind
   it; bullets `-`, `*`, `+` as dots by nesting depth, numbers styled; task items as boxes; quotes with a bar per level
   (a line decoration); rules; fenced and indented code as one shaded block with the nested highlighting of the editor;
-  escapes without the backslash. Tables (their cells included, so the pipes stay in line), HTML blocks, math and Mermaid are untouched (math and Mermaid are step 2). A YAML front matter at the
+  escapes without the backslash. Tables (their cells included, so the pipes stay in line), HTML blocks are untouched (math and Mermaid: see "Formulas and diagrams" below). A YAML front matter at the
   top (`---` … `---`) is skipped, because Lezer reads it as a rule and a heading.
 - **Task boxes.** A click on a box (its own `mousedown`/`click` handlers; the widget tells CodeMirror to ignore the
   event) changes the one character in the brackets as its own history event (`isolateHistory`) without a selection, so
@@ -471,6 +471,37 @@ spell check and the grammar marks work on the raw text.
 - **Links.** `editor-links.ts` is unchanged: it searches the raw line, so Ctrl+click and the Ctrl-hover underline work
   on the rendered text (the hover mark is a decoration over the hidden ranges too). A plain click only places the cursor,
   which reveals the markup.
+- **Formulas and diagrams** (step 2). `$x$` and `$$x$$` inside a paragraph, display math (a line that starts with `$$`
+  up to the next line that ends in `$$`, or one line `$$ x $$`), ```` ```math ```` fences and ```` ```mermaid ````
+  fences are drawn while no selection touches them. Touched, the source shows and the drawing stays below it (display
+  source shaded like code); a click on a drawn formula or diagram puts the cursor into the source, because
+  the widgets let CodeMirror handle mouse events. Nothing else is decorated inside a drawn formula or block.
+  - *Why a scan and not a Lezer extension:* an extra parser would change the syntax tree that highlighting,
+    `grammar-text.ts`'s masking, `editor-links.ts` and Live Preview itself read. The rules are the preview's:
+    `math-scan.ts` (pure, no imports) holds the dollar rules, `math.ts` calls it too, and
+    `tests/unit/live-math.test.mjs` checks that the editor and markdown-it find the same inline formulas (`$5 and $6`,
+    `\$`, code spans, `$$x$$` stay as they are in the preview). Inline formulas are found per line, left to right
+    (escapes and code spans skipped) and only where the tree says the text is not code, HTML, a URL or a table.
+  - *Blocks* replace whole lines, which a view plugin may not do, so they live in a state field
+    (`live-preview-blocks.ts`: `blocksField` holds the ranges, a second field the decorations for the current
+    selection). `findMathBlocks` (`live-preview-math.ts`, pure) decides what a block is: display math only where the
+    parser has got to and the line is not in a code fence or block, HTML, a table or a quotation (the opening line of
+    a display block is the only one checked; an unclosed one is searched for at most 2000 lines); fences from the
+    tree's `FencedCode` nodes, closed ones only (an unclosed fence would turn the rest of the document into a
+    diagram while its first line is typed), at the start of a line (so not in a quotation). Both fields are
+    rebuilt on a change of the text or tree; `holdSelection` (an effect the plugin sends on mouse down and up) keeps
+    the field's selection frozen too while a button is held.
+  - *Rendering:* `texToHtml` (`math.ts`: lazy KaTeX and its CSS, the preview's options, cached by formula, errors as
+    the preview shows them: the source, class `math-error`, the message as title; until KaTeX is loaded the source in
+    `math-pending`) and `renderDiagram`/`drawDiagram` (`mermaid.ts`: lazy Mermaid, one render queue, cache by source
+    and theme, `stripActive`, the same configuration and `securityLevel: "strict"`, the preview's error box). Widgets
+    have `eq()`, so typing elsewhere does not redraw them; a diagram widget reused for edited source keeps showing the
+    old drawing until the new one arrives (`updateDOM`); heights of drawn formulas and diagrams are remembered by
+    source so a widget made again reserves its space (`estimatedHeight`, `min-height` while a diagram is drawn).
+    Diagrams redraw on the `kladde-theme` event, like the preview.
+  - *Limits:* inline formulas are found on one line (the preview also finds `$$…$$` across the lines of a paragraph);
+    a multi-line `$$` block inside a quotation or after a list marker is not drawn; Mermaid's drawing below a touched
+    diagram follows each pause in typing (the old drawing stays meanwhile).
 - **Known limits.** Per-element revealing is complete for the inline elements above; the setext underline is an
   empty line while not under the cursor; an image whose markup is touched shows a thumbnail behind the markup (an
   inline widget: a block widget would need a state field); a syntax tree that is not parsed yet (a big file just
