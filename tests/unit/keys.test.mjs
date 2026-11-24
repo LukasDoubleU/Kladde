@@ -148,6 +148,9 @@ test("owner defaults stay", () => {
   assert.equal(at("Alt+Right"), "tab.forward");
   assert.equal(at("Ctrl+W"), "file.close");
   assert.equal(at("Ctrl+Shift+T"), "file.reopenClosed");
+  // Move to the Recycle Bin; CodeMirror's own Delete bindings (Delete, Ctrl+Delete) are different keys.
+  assert.equal(at("Ctrl+Shift+Delete"), "file.recycle");
+  assert.equal(at("Ctrl+Delete"), undefined);
   // The settings page has IntelliJ's key; "save all" moved next to it.
   assert.equal(at("Ctrl+Alt+S"), "settings.show");
   assert.equal(at("Ctrl+Alt+Shift+S"), "file.saveAll");

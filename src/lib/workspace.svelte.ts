@@ -1202,6 +1202,82 @@ class Workspace {
     }
   }
 
+  // ---------------------------------------------------------------- Recycle Bin
+
+  private recycling = false;
+
+  /** Whether the tab's file can be moved to the Recycle Bin: a tab of a file that is still there. */
+  canRecycle(tab: Tab | undefined = this.active): boolean {
+    if (!tab?.path || !(tab.kind === "text" || tab.kind === "large" || tab.kind === "image" || tab.kind === "document")) return false;
+    // A file that is gone (the "deleted or moved" banner) has nothing to move.
+    return tab.external !== "deleted" && !this.runtime.get(tab.id)?.gone;
+  }
+
+  /**
+   * Moves the tab's file to the Recycle Bin and closes the tab, with a notice that offers Restore. It only ever
+   * recycles: when Windows cannot (a network share, a drive without a bin, a file too big for it) Rust refuses,
+   * nothing is deleted and the tab stays. Unsaved changes are asked about first, with Cancel as the default.
+   */
+  async recycleTab(tab: Tab | undefined = this.active) {
+    if (!tab || !this.canRecycle(tab) || this.recycling) return;
+    const path = tab.path!;
+    const title = tab.title;
+    // The same file can be open twice (a document and its text): all of them go.
+    const same = this.tabs.filter((t) => t.path && samePath(t.path, path));
+    const unsaved = same.find((t) => t.dirty || t.journal);
+    this.recycling = true;
+    try {
+      if (unsaved) {
+        this.activate(unsaved.id);
+        const choice = await this.ask(
+          `${unsaved.title} has unsaved changes. Move the file to the Recycle Bin anyway?`,
+          [
+            { id: "recycle", label: "Move to Recycle Bin" },
+            { id: "cancel", label: "Cancel", primary: true },
+          ],
+          "The unsaved changes are lost.",
+        );
+        if (choice !== "recycle" || !this.tabs.includes(tab)) return;
+      }
+      let id: number;
+      try {
+        id = await api.recycleFile(path);
+      } catch (e) {
+        this.showNotice("error", `Could not move ${title} to the Recycle Bin: ${e instanceof Error ? e.message : e} Nothing was deleted.`);
+        return;
+      }
+      // Not "Reopen closed tab": the file is not at its path any more.
+      const at = this.tabs.indexOf(tab);
+      const index = at < 0 ? this.tabs.length : this.tabs.filter((t, i) => i < at && !same.includes(t)).length;
+      for (const t of same) this.removeTab(t.id);
+      // Not the throttle: the session must not name the file (and an edited tab's backup) when Kladde ends now.
+      void this.saveSession();
+      this.showNotice(
+        "info",
+        `Moved ${title} to the Recycle Bin.`,
+        { label: "Restore", run: () => void this.restoreRecycled(id, path, title, index) },
+        10_000,
+      );
+    } finally {
+      this.recycling = false;
+    }
+  }
+
+  /** Puts the file back and reopens it at its old place in the tab strip. Whatever is at the path is never replaced. */
+  private async restoreRecycled(id: number, path: string, title: string, index: number) {
+    try {
+      await api.recycleRestore(id);
+    } catch (e) {
+      this.showNotice("error", `Could not restore ${title}: ${e instanceof Error ? e.message : e}`);
+      return;
+    }
+    await this.openPath(path);
+    const tab = this.tabs.find((t) => t.path && samePath(t.path, path));
+    if (!tab) return;
+    this.moveTab(this.tabs.indexOf(tab), Math.min(index, this.tabs.length - 1));
+    this.activate(tab.id);
+  }
+
   moveTab(from: number, to: number) {
     if (from === to || from < 0 || to < 0 || from >= this.tabs.length || to >= this.tabs.length) return;
     const [tab] = this.tabs.splice(from, 1);
@@ -1866,12 +1942,15 @@ class Workspace {
 
   // ---------------------------------------------------------------- dialogs
 
-  /** An optional action adds a button and keeps the notice longer: there is something to decide, and no focus is moved for it. */
-  showNotice(kind: "info" | "error", text: string, action?: NoticeAction) {
+  /**
+   * An optional action adds a button and keeps the notice longer: there is something to decide, and no focus is
+   * moved for it. `ms` overrides how long it stays (Restore after a move to the Recycle Bin: 10 s).
+   */
+  showNotice(kind: "info" | "error", text: string, action?: NoticeAction, ms?: number) {
     if (kind === "error") void invoke("frontend_log", { message: text });
     this.notice = { kind, text, action };
     clearTimeout(this.noticeTimer);
-    this.noticeTimer = window.setTimeout(() => (this.notice = null), action ? 8_000 : kind === "error" ? 10_000 : 5_000);
+    this.noticeTimer = window.setTimeout(() => (this.notice = null), ms ?? (action ? 8_000 : kind === "error" ? 10_000 : 5_000));
   }
 
   /** The button of the notice: closes it, then runs its action. */

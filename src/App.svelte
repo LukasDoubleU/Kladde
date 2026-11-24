@@ -136,6 +136,14 @@
       run: () => revealItemInDir(workspace.active!.path!),
       enabled: () => !!workspace.active?.path,
     },
+    // Only ever the Recycle Bin, never a permanent delete; the notice offers Restore (workspace.recycleTab).
+    {
+      id: "file.recycle",
+      label: "Move to Recycle Bin",
+      keys: ["Ctrl+Shift+Delete"],
+      run: () => workspace.recycleTab(),
+      enabled: () => workspace.canRecycle(),
+    },
     { id: "tab.next", label: "Next tab", keys: ["Ctrl+Tab", "Ctrl+PageDown"], run: () => workspace.cycle(1) },
     { id: "tab.previous", label: "Previous tab", keys: ["Ctrl+Shift+Tab", "Ctrl+PageUp"], run: () => workspace.cycle(-1) },
     // Also on the mouse's back/forward buttons.

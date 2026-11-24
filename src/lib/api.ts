@@ -189,6 +189,10 @@ export const api = {
   readDocument: (path: string) => invoke<ArrayBuffer>("read_document", { path }),
   /** Opens a document in the program Windows associates with it (only the types the viewer shows). */
   openInDefaultApp: (path: string) => invoke<void>("open_in_default_app", { path }),
+  /** Moves a file to the Recycle Bin (never a permanent delete; rejects with the reason when that is not possible). Returns the id for `recycleRestore`. */
+  recycleFile: (path: string) => invoke<number>("recycle_file", { path }),
+  /** Puts a recycled file back where it was (never overwrites); returns its path. */
+  recycleRestore: (id: number) => invoke<string>("recycle_restore", { id }),
   statFile: (path: string) => invoke<FileStat>("stat_file", { path }),
   statFiles: (paths: string[]) => invoke<FileStat[]>("stat_files", { paths }),
 

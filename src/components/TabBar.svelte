@@ -65,6 +65,7 @@
         { label: "Copy full path", run: () => writeText(tab.path!), disabled: !tab.path },
         { label: "Copy file name", run: () => writeText(tab.title) },
         { label: "Reveal in Explorer", run: () => revealItemInDir(tab.path!), disabled: !tab.path },
+        { label: "Move to Recycle Bin", run: () => workspace.recycleTab(tab), disabled: !workspace.canRecycle(tab) },
         { separator: true },
         { label: "Reload from disk", run: () => workspace.reload(tab), disabled: !tab.path },
       ],
