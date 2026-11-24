@@ -14,7 +14,7 @@
 //!
 //! The recycled item is remembered by its path inside the bin (`C:\$Recycle.Bin\<sid>\$R…`, what
 //! `psiNewlyCreated` names) under an id that the page keeps for its Restore button. Restore finds that item in the
-//! bin's own folder and runs its "undelete" verb, the one Explorer's Restore uses.
+//! bin's own folder (the shell namespace) and moves it back with `IFileOperation`, which is a restore.
 //!
 //! Tests never touch the real bin: with an isolated profile `KLADDE_RECYCLE_DIR=<folder>` moves the file into that
 //! folder instead, `KLADDE_RECYCLE_REFUSE=1` simulates a location without a bin, and an isolated profile without
@@ -183,8 +183,13 @@ impl Recycler {
     }
 }
 
+/// Whether the shell's name for the restored file is the path asked for. Compared by what the file system says
+/// (case, `\?\` prefixes and short names do not matter), not by text, where it can.
 fn same_path(a: &str, b: &Path) -> bool {
-    a.eq_ignore_ascii_case(&b.to_string_lossy())
+    match (fs::canonicalize(a), fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a.eq_ignore_ascii_case(&b.to_string_lossy()),
+    }
 }
 
 /// The bin keeps `$I<id><ext>` (where the file came from, its size, the time) next to `$R<id><ext>` (the file).
