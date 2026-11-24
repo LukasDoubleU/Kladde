@@ -5,7 +5,7 @@
 | Command | What it covers | Needs |
 |---|---|---|
 | `npm run check` | svelte-check (types of all `.ts`/`.svelte`) | — |
-| `npm run test:unit` | Node's test runner on `tests/unit/*.test.mjs`: formatters, keys/presets, the Markdown detector for pasted text (corpus of positives and negatives) and the Save As file name, grammar text side, themes, settings metadata, update manifest, last-check time format, link finding and heading anchors, the CSP and the asset scope in `tauri.conf.json`, the document viewer's pure parts (container signatures, zoom and fit, the frame's policy, sandbox and starting document, the copies of keyboard, wheel and mouse events, the CSS scan for addresses in declarations, escapes included) | — |
+| `npm run test:unit` | Node's test runner on `tests/unit/*.test.mjs`: formatters, keys/presets, the Markdown detector for pasted text (corpus of positives and negatives) and the Save As file name, grammar text side, themes, settings metadata, update manifest, last-check time format, link finding and heading anchors, the pure part of Live Preview (hidden, styled and drawn ranges for a Markdown document, by cursor, selection and visible range), the CSP and the asset scope in `tauri.conf.json`, the document viewer's pure parts (container signatures, zoom and fit, the frame's policy, sandbox and starting document, the copies of keyboard, wheel and mouse events, the CSS scan for addresses in declarations, escapes included) | — |
 | `cd src-tauri && cargo test` | the Recycle Bin module (the test hooks' gating, which locations can have a bin, the test folder's recycle and restore, nothing overwritten, the bin's metadata cleanup), file I/O and encodings (binary and lossy flags), safe saving, atomic writes of Kladde's own files (a writer killed 30 times must leave the old or the new file), large viewer (index, search, piece table, editing, streaming save, journal), LanguageTool client (local socket), local LanguageTool (hash check, download, atomic install, version cleanup, routing, idle stop, start/stop/crash of a stand-in process, job object), registry code (throwaway key), updater helpers, the URL classification of the navigation guard and the frame guard's decision (`about:srcdoc` only), the isolated-profile check of the document cleaner hook, the size limit of the document reader | Rust |
 | `npm run test:e2e` | the real app through the DevTools protocol: `tests/e2e/*.test.mjs` | `npx tauri build --debug --no-bundle` first |
 
@@ -67,6 +67,7 @@ Rules:
 | integration | 9347 |
 | keys | 9350–9351, 9384–9386 |
 | links | 9405–9412 |
+| live-preview | 9468–9470 |
 | markdown-paste | 9452–9458 |
 | navigation | 9420–9426, 9441–9444 |
 | languagetool-local | 9369–9370, 9374–9375, 9377–9379 |
@@ -77,7 +78,7 @@ Rules:
 | theme | 9348, 9381–9383 |
 | update | 9349, 9359–9362, 9366–9368, 9394–9396 |
 
-Free for new files: 9468 and up (9448 is free) (9380 and 9390 are taken by hot-exit now).
+Free for new files: 9471 and up (9448 is free) (9380 and 9390 are taken by hot-exit now).
 
 ## Environment variables
 
@@ -187,6 +188,11 @@ Free for new files: 9468 and up (9448 is free) (9380 and 9390 are taken by hot-e
   else through. It first proves with a harmless command that the calls do pass through the wrapper, because a real dialog
   must never open. `waitFor` with an element as its result fails quietly (the element cannot be sent as a value): write
   `!!document.querySelector(…)`.
+- **Live Preview (`live-preview.test.mjs`):** the editor's view is reached through `document.querySelector('.cm-content').cmTile.view`
+  (CodeMirror 6.43 keeps its tile tree on the DOM node; older versions used `cmView`), which sets the selection without
+  the mouse. Task boxes and links are clicked with real mouse events over CDP; the image is a 1x1 PNG next to the
+  document; the read-only tab is a file with a NUL byte. Marks are asserted through `.cm-line` text content, because
+  hidden ranges are not in the DOM.
 - **Recycle Bin (`recycle.test.mjs`):** the move goes into `<profile>/recycle` (`KLADDE_RECYCLE_DIR`), never the real bin;
   the tests read that folder to see that the file left with the same bytes and came back with the same bytes. The context
   menu is opened with a synthetic `contextmenu` event on the tab (as in the navigation test). The restart test waits for

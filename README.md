@@ -61,6 +61,12 @@ it, but I may decline requests that don't fit how I work, and there is no promis
 **Markdown**
 - Live preview side by side or full size (`Ctrl+Shift+V`), following the editor as you scroll. Links work in the
   preview and, with `Ctrl`+click, in the editor.
+- **Live Preview** (`Ctrl+E`, or the status bar item): Markdown tabs are edited formatted, like in Obsidian. The text stays
+  the raw Markdown that is saved, but headings are sized, bold, italic, strikethrough and code are styled, links show only
+  their text, images are drawn, bullets, task boxes, quotes, rules and code blocks look like in the preview, and the
+  markup characters appear only where the cursor or a selection touches. A click on a task box toggles it (one undo
+  step). `Ctrl+E` switches the tab to **Source** and back; the choice is remembered per tab. It only changes the view:
+  never the text, never the unsaved state.
 - GitHub-flavoured: tables, task lists, autolinks, heading anchors, highlighted code blocks; local images
   resolve relative to the file.
 - Mermaid diagrams (```` ```mermaid ````) and math with KaTeX (`$inline$`, `$$block$$`, ```` ```math ````), in the
@@ -208,6 +214,7 @@ Kladde refreshes an existing registration silently at the next start.
 | `Ctrl+Shift+[` / `Ctrl+Shift+]` / `Ctrl+Alt+[` / `Ctrl+Alt+]` | Fold, unfold, fold all, unfold all |
 | `F7` / `Shift+F7` | In a compare tab: next / previous change |
 | `Ctrl+Shift+V` | Markdown preview: side by side, preview only, off |
+| `Ctrl+E` | Markdown: Live Preview or Source for the tab |
 | `Shift+Alt+F` | Format document or selection |
 | `Alt+Z` | Toggle word wrap |
 | `Ctrl+Plus` / `Ctrl+Minus` / `Ctrl+0` | Zoom in, out, reset |

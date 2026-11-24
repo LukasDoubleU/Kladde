@@ -172,6 +172,7 @@ Key mechanisms:
 | `lib/languages.ts` | ~145 languages from `@codemirror/language-data` plus own Batch and Log stream parsers; detection by extension, file name, shebang, first line; `saveAsName` (the extension Save As proposes for an untitled tab) |
 | `lib/markdown-detect.ts` | `looksLikeMarkdown(text)`: the pure, conservative detector behind the Markdown switch of a first paste (see "Tabs and the editor"); rules in the file's header, corpus in `tests/unit/markdown-detect.test.mjs` |
 | `lib/markdown.ts`, `math.ts`, `mermaid.ts` | Preview: markdown-it → DOMPurify; KaTeX rules; Mermaid placeholders drawn after insertion |
+| `lib/live-preview-core.ts`, `lib/live-preview.ts` | Live Preview of Markdown tabs: the pure decision (which ranges are hidden, styled or drawn instead, from the tree and the selection; unit-tested) and the extension that draws it (see "Live Preview") |
 | `lib/native-menu.ts` | Which right clicks may show WebView2's native menu (editable text only) and the selected text for our own Copy menu |
 | `lib/links.ts`, `lib/editor-links.ts` | Links: finding them in a line, what an href means, heading anchors and path helpers (pure, unit-tested); the editor extension for Ctrl+click and the hover hint (see "Links") |
 | `lib/format.ts`, `format-xml.ts`, `formatters.ts` | Own JSON and XML formatters; dispatch by language to lazily loaded Prettier and sql-formatter |
@@ -292,7 +293,7 @@ Key mechanisms:
   after it left a journal that no restore asked for and the next save pruned (issue #26: the edits of a large file
   made right after opening it were lost).
 - Data folder layout: `session.json` (tab list, active tab, wrap, spell check, zoom, per-tab language/encoding/eol/
-  preview/cursor/scroll, `hasBackup`, optional `languageChosen` and `binary`/`lossy` for a file that is gone), `backup/<id>.txt` (current text of dirty or untitled tabs) and
+  preview/cursor/scroll, `hasBackup`, optional `languageChosen`, `markdownSource` and `binary`/`lossy` for a file that is gone), `backup/<id>.txt` (current text of dirty or untitled tabs) and
   `backup/<id>.<n>.txt` (up to 5 older versions, at least 5 minutes apart; a new version is a copy of
   `<id>.txt`, so the current backup never leaves its place, and restore falls back to the newest version if
   `<id>.txt` is missing), plus marker files
@@ -417,6 +418,63 @@ the command is neither in the palette nor bound.
 - Math: own markdown-it rules (`$…$`, `$$…$$`, ```` ```math ````) rendered by KaTeX once its chunk is loaded;
   `$5 and $10` stays text. A re-render is triggered when a lazy dependency finishes loading.
 - SVG files get an image preview; pasting an image into a saved Markdown file writes it to `pasteImageFolder`.
+
+### Live Preview
+
+A hybrid mode for Markdown tabs, like Obsidian's Live Preview (issue #30, step 1): the document is the raw Markdown
+that is saved, but it is shown formatted while it is edited. It is a **view**: rendering and switching never change
+the text, never make the tab dirty and never add an undo step; saving writes the same bytes; copy, undo, search,
+spell check and the grammar marks work on the raw text.
+
+- **On by default** in every Markdown text tab (opened `.md` files, untitled tabs that become Markdown through the
+  language picker or the paste detection), off for other languages, and not in compare tabs, the large file view or the
+  document viewer. `Ctrl+E` (`view.toggleLivePreview`, "Toggle Live Preview (Markdown)") and the status bar item
+  ("Live Preview" / "Source") switch the shown tab. The side-by-side preview (`Ctrl+Shift+V`) and its scroll sync are
+  independent and work alongside.
+- **Where the state lives.** The extension sits in the `liveView` compartment of `editor.ts`, so switching is a
+  reconfiguration. `workspace.loadLanguage` fills it together with the language (`liveViewExtension`: Markdown and not
+  `tab.markdownSource`), `toggleLivePreview` and Save As (the folder for images changed) refill it. `Tab.markdownSource`
+  is the exception to the default: it is saved in the session as the optional field `markdownSource: true` (absent
+  otherwise, so old sessions keep working and a new session says nothing about tabs in the default mode) and is reset
+  when the language is not Markdown any more. There is no setting.
+- **Two files.** `live-preview-core.ts` is a pure function `buildLivePreview({ doc, tree, selection, visible,
+  editable })` that returns sorted specs (`mark`: a class on text; `line`: a line class; `hide`: text that is not shown;
+  `widget`: a replacement or an inserted widget); it runs in Node, `tests/unit/live-preview.test.mjs` tests it. It walks
+  the Lezer Markdown tree (`@codemirror/lang-markdown` with `base: markdownLanguage`) only inside the visible ranges.
+  `live-preview.ts` is the extension: a `ViewPlugin` that turns the specs into decorations (rebuilt on a document
+  change, viewport change, selection change, an advanced syntax tree, a read-only change and a new folder), the widgets
+  (`eq()` keeps their DOM across updates), the theme (em units, so the editor zoom scales headings; colors only from
+  theme variables) and the class `cm-live-preview` on the editor. Hidden text is a replace decoration inside one line
+  (a stretch that would contain a line break is left visible), so the plugin needs no state field.
+- **The reveal rule.** Inline elements (emphasis, strikethrough, inline code, links, images, backslash escapes) show
+  their marks while any selection range touches the element (`from <= element.to && to >= element.from`); every
+  cursor of a multi-cursor selection reveals its own elements, nested emphasis reveals the element the cursor is in.
+  Block markers go per line: heading `#` and `##`, quote `>`, a rule, a setext underline show while a selection touches
+  that line; fence lines are muted until a selection is anywhere in the code block; a list bullet and a task box turn
+  back into text while the selection touches the marker or the space after it. While a mouse button is held the plugin
+  keeps the decorations of the selection at the button press (`frozen`) and refreshes on release (a `setTimeout(0)`
+  after the window's `mouseup`, so CodeMirror's own last selection change comes first), because text that shifts under
+  the pointer breaks drag selection.
+- **Elements.** Headings (ATX and setext) sized `1.8/1.5/1.25/1.1/1/0.9em`; bold, italic, strikethrough, inline code;
+  links `[text](url "title")` and `<url>` show the text in the link color (reference links `[a][b]` and links with an
+  empty label stay raw); images are a widget (the address by the rules of the preview, `localImagePath` in `links.ts`:
+  relative to the file through the asset protocol, https as it is, `data:` images; nothing for other schemes or in an
+  untitled tab, where the alt text is shown) and, while the markup is touched, the markup plus a small picture behind
+  it; bullets `-`, `*`, `+` as dots by nesting depth, numbers styled; task items as boxes; quotes with a bar per level
+  (a line decoration); rules; fenced and indented code as one shaded block with the nested highlighting of the editor;
+  escapes without the backslash. Tables, HTML blocks, math and Mermaid are untouched (step 2). A YAML front matter at the
+  top (`---` … `---`) is skipped, because Lezer reads it as a rule and a heading.
+- **Task boxes.** A click on a box (its own `mousedown`/`click` handlers; the widget tells CodeMirror to ignore the
+  event) changes the one character in the brackets as its own history event (`isolateHistory`) without a selection, so
+  the cursor does not move into the line; in a read-only tab (`state.readOnly`) the box is drawn without hover and does
+  nothing.
+- **Links.** `editor-links.ts` is unchanged: it searches the raw line, so Ctrl+click and the Ctrl-hover underline work
+  on the rendered text (the hover mark is a decoration over the hidden ranges too). A plain click only places the cursor,
+  which reveals the markup.
+- **Known limits.** Per-element revealing is complete for the inline elements above; the setext underline is a thin
+  empty line while not under the cursor; an image whose markup is touched shows a thumbnail behind the markup (an
+  inline widget: a block widget would need a state field); a syntax tree that is not parsed yet (a big file just
+  opened) shows the raw text until it is; the text keeps the editor's monospace font.
 
 ### Links
 

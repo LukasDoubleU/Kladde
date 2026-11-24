@@ -66,6 +66,10 @@ The default preset contains deliberate choices; presets (Notepad++, VS Code) and
 - `Shift+Alt+F` formats by language; `Ctrl+Shift+V` cycles the Markdown preview; `F7`/`Shift+F7` move between
   changes in compare tabs; `Ctrl+Shift+P`/`F1` open the command palette, which lists every command with its keys;
   the owner also wants `Ctrl+Shift+A` (IntelliJ's "Find Action") and `Ctrl+3` (Eclipse's "Quick Access") for it.
+- `Ctrl+E` switches a Markdown tab between Live Preview and Source (issue #30). It was free in every preset and in
+  CodeMirror's Windows keymaps (CodeMirror binds it only on macOS, as "line end"); VS Code's `Ctrl+E` is Quick Open,
+  which Kladde does not have. Live Preview is on by default for Markdown and has no setting: the per-tab switch and the
+  session field `markdownSource` (stored only for the exception) are all the configuration.
 
 ## Documents
 
