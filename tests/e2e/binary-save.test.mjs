@@ -10,7 +10,7 @@ import { appendFileSync, existsSync, readdirSync, readFileSync, renameSync, stat
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { matchesIn, readable } from "./fake-lt.mjs";
-import { launch, removeProfile, tempProfile, writeFixture } from "./kladde.mjs";
+import { launch, profileState, removeProfile, tempProfile, writeFixture } from "./kladde.mjs";
 import { makeZip } from "./zip.mjs";
 
 const profile = tempProfile("kladde-binary-save");
@@ -565,6 +565,8 @@ test("a large binary file edited after Edit anyway comes back editable after a c
     await app.key("Ctrl+Home");
     await app.type("ONE ");
     await until(() => journalAdded(dir) === 4, "the journal of the edit");
+    // A journal is never on disk before the session names its tab, so killing right now must restore it.
+    assert.ok(sessionTab(dir, "crash.bin"), `the session names the tab of the journal\n${profileState(dir)}`);
   } finally {
     await app.kill();
   }
@@ -604,6 +606,8 @@ test("discarding the journal of a large binary file makes it read-only again", a
     await app.key("Ctrl+Home");
     await app.type("ONE ");
     await until(() => journalAdded(dir) === 4, "the journal of the edit");
+    // A journal is never on disk before the session names its tab, so killing right now must restore it.
+    assert.ok(sessionTab(dir, "discard.bin"), `the session names the tab of the journal\n${profileState(dir)}`);
   } finally {
     await app.kill();
   }

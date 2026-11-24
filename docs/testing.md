@@ -70,13 +70,13 @@ Rules:
 | markdown-paste | 9452–9458 |
 | navigation | 9420–9426, 9441–9444 |
 | languagetool-local | 9369–9370, 9374–9375, 9377–9379 |
-| large | 9345, 9391–9393, 9397–9399 (the editing tests reuse earlier ports one app at a time) |
+| large | 9345, 9391–9393, 9397–9399, 9459–9460 (the editing tests reuse earlier ports one app at a time) |
 | preview | 9346, 9376 |
 | settings | 9352–9353 |
 | theme | 9348, 9381–9383 |
 | update | 9349, 9359–9362, 9366–9368, 9394–9396 |
 
-Free for new files: 9459 and up (9448 is free) (9380 and 9390 are taken by hot-exit now).
+Free for new files: 9461 and up (9448 is free) (9380 and 9390 are taken by hot-exit now).
 
 ## Environment variables
 
@@ -187,7 +187,9 @@ Free for new files: 9459 and up (9448 is free) (9380 and 9390 are taken by hot-e
 - **Large files:** lower `largeFileThresholdMB` in the isolated profile's `settings.json` instead of generating
   huge fixtures; delete generated files. Editing tests focus `.large .input` (the hidden textarea), type with
   `type()`/`key()` and check `.large .line .text`; a kill is only safe once the journal in `data/backup`
-  (`*.large.json`, `addedLen`) has caught up with the edits. Real-size measurements: `cargo test --release
+  (`*.large.json`, `addedLen`) has caught up with the edits. That is the moment the crash tests kill the app: a
+  journal on disk must come back, so they assert that the session already names its tab instead of waiting for
+  more. Real-size measurements: `cargo test --release
   perf_200mb -- --ignored --nocapture` (generates and deletes a ~190 MB file in the temp folder).
 - **Files that are not text:** `binary-save.test.mjs` compares SHA-256 (and mtime, to prove nothing was written)
   of generated files before and after Ctrl+S: a binary blob with lone CR bytes, a .docx-like stored zip (`zip.mjs`),
@@ -203,7 +205,11 @@ Free for new files: 9459 and up (9448 is free) (9380 and 9390 are taken by hot-e
   session written, backup slow) and check the restore. They fail with the old order (backup first): the first
   with the "fewer tabs after the restart" timeout that used to show up as a flaky CI failure. A session that names
   missing and older backups is also written by hand and restored. In the plain crash test, "the backups exist"
-  now implies "the session lists them", which it asserts before the kill: that was the CI race.
+  now implies "the session lists them", which it asserts before the kill: that was the CI race. The same holds
+  for a large tab's journal (issue #26): `large.test.mjs` opens a 900 KB text file first, which stretches the
+  throttle to 2.1 s, edits the large file before the first session write and holds every session write back
+  (`KLADDE_SESSION_DELAY_MS`). When the first journal of a tab that the session does not list yet is written
+  before a session that names it, the kill leaves no session at all and the restart comes back without the edit.
 
 ## Known flakiness
 

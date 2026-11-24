@@ -5,9 +5,9 @@
 //   npx tauri build --debug --no-bundle && node --test tests/e2e/large.test.mjs
 import assert from "node:assert/strict";
 import { appendFileSync, existsSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { after, test } from "node:test";
-import { launch, removeProfile, tempProfile, writeFixture } from "./kladde.mjs";
+import { launch, profileState, removeProfile, tempProfile, writeFixture } from "./kladde.mjs";
 
 const profile = tempProfile("kladde-large");
 after(() => removeProfile(profile));
@@ -272,6 +272,16 @@ const journalFiles = (dir) => {
   return existsSync(folder) ? readdirSync(folder).filter((n) => n.endsWith(".large.json") || n.endsWith(".add")) : [];
 };
 
+/** The titles of the tabs `session.json` lists right now (it is replaced atomically, so it is always whole). */
+function sessionTitles(dir) {
+  try {
+    return JSON.parse(readFileSync(join(dir, "data", "session.json"), "utf8")).tabs.map((t) => t.title);
+  } catch (e) {
+    if (e.code === "ENOENT") return [];
+    throw e;
+  }
+}
+
 async function until(condition, what, timeout = 8000) {
   const end = Date.now() + timeout;
   while (Date.now() < end) {
@@ -416,6 +426,8 @@ async function editAndCrash(port, dir, file) {
     assert.equal((await dirtyTabs(app)).length, 1);
     // Throttled like normal backups: the journal catches up while typing goes on, then it is complete.
     await until(() => journalOf(dir)?.addedLen === "ONE END".length, "the journal of the edits");
+    // A journal is never on disk before the session names its tab, so killing right now must restore it.
+    assert.deepEqual(sessionTitles(dir), [basename(file)], `the session names the tab of the journal\n${profileState(dir)}`);
   } finally {
     await app.kill();
   }
@@ -511,6 +523,51 @@ test("a large file that changed since the crash is not edited without asking", a
     await app.waitFor(`!document.querySelector('.banner') && !document.querySelector('.tab.dirty')`, 10000);
     await until(() => journalFiles(dir).length === 0, "the journal to be removed");
     assert.equal(readFileSync(file, "utf8"), before);
+  } finally {
+    await app.kill();
+    await removeProfile(dir);
+  }
+});
+
+// The first session write after opening a file comes with the throttle, so edits made before it go into the
+// tab's first journal. The session must name the tab before that journal reaches the disk: the restore only asks
+// for the journals of the tabs the session lists, and the next save prunes every other one (issue #26).
+test("a large file edited right after it was opened survives a crash before the session names it", async () => {
+  const dir = tempProfile("kladde-large-fresh");
+  writeFixture(join(dir, "data"), "settings.json", JSON.stringify({ largeFileThresholdMB: 1 }));
+  // A text tab of 900 KB opened first stretches the throttle to 2.1 s (300 ms plus size/500): the time the test has
+  // to edit the large file before the first session write. KLADDE_SESSION_DELAY_MS holds every session write back,
+  // so the journal is written well before a session that the app would only write after it.
+  const notes = writeFixture(dir, "notes.txt", Array.from({ length: 30000 }, (_, i) => `note ${String(i).padStart(5, "0")} ${"n".repeat(18)}`).join("\n"));
+  const lines = rows(40000, row) + "\r\n";
+  const file = writeFixture(dir, "fresh.txt", lines);
+  let app = await launch({ port: 9459, profile: dir, files: [notes, file], env: { KLADDE_SESSION_DELAY_MS: "2000" } });
+  try {
+    await app.waitFor(`document.querySelector('.large .line')`, 10000);
+    await waitIndexed(app);
+    await focusView(app);
+    await app.key("Ctrl+Home");
+    await app.type("NEW ");
+    assert.deepEqual(await dirtyTabs(app), ["fresh.txt"]);
+    assert.equal(existsSync(join(dir, "data", "session.json")), false, "the edit comes before the first session write");
+    await until(() => journalOf(dir)?.addedLen === "NEW ".length, "the journal of the edit", 15000);
+  } finally {
+    await app.kill();
+  }
+  assert.equal(readFileSync(file, "utf8"), lines);
+
+  app = await launch({ port: 9460, profile: dir });
+  try {
+    await app.waitFor(`document.querySelector('.tab.dirty') && !document.querySelector('footer').textContent.includes('Restoring')`, 10000);
+    await waitIndexed(app);
+    assert.deepEqual(await dirtyTabs(app), ["fresh.txt"]);
+    await shownIs(app, [`NEW ${row(0)}`, row(1)]);
+    // Saving writes the edit and removes the journal.
+    await focusView(app);
+    await app.key("Ctrl+S");
+    await saved(app);
+    assert.equal(readFileSync(file, "utf8"), "NEW " + lines);
+    await until(() => journalFiles(dir).length === 0, "the journal to be removed");
   } finally {
     await app.kill();
     await removeProfile(dir);
