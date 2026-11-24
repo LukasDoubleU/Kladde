@@ -2,6 +2,27 @@
 
 All notable changes to Kladde. Versions follow [Semantic Versioning](https://semver.org), commit messages
 [Conventional Commits](https://www.conventionalcommits.org).
+## [0.11.0](https://github.com/LukasDoubleU/Kladde/releases/tag/v0.11.0) – 2026-11-24
+
+### 🚀 Features
+
+- **markdown:** Live Preview for Markdown tabs ([14d0baf](https://github.com/LukasDoubleU/Kladde/commit/14d0bafc37deca5e9fcb75d7687d9ac6ec963227))
+- **markdown:** Math and Mermaid in Live Preview ([6bcd072](https://github.com/LukasDoubleU/Kladde/commit/6bcd0728b5dcc521405b267ea1c3f27e3554381d))
+
+### 🐛 Bug fixes
+
+- **markdown:** Do not stay frozen after a lost mouse release in Live Preview ([4cebc0d](https://github.com/LukasDoubleU/Kladde/commit/4cebc0d85fff5ddd95ba8efa4905878eca194a7a))
+- **markdown:** Leave tables raw, keep the setext underline line, align scaled images left ([202501c](https://github.com/LukasDoubleU/Kladde/commit/202501c49c27094be177d3a67f7531e5255fe1c0))
+- **markdown:** Sanitize formulas in Live Preview like the preview does ([a098492](https://github.com/LukasDoubleU/Kladde/commit/a0984924a9440e60daa1b9e1c6c9436131d4b4c2))
+
+### 📚 Documentation
+
+- Math and Mermaid in Live Preview ([8b76748](https://github.com/LukasDoubleU/Kladde/commit/8b7674839ad5e4d2aff987b6e78ef76ec7b13946))
+
+### 🧪 Tests
+
+- **e2e:** Live Preview of Markdown tabs ([ebd7265](https://github.com/LukasDoubleU/Kladde/commit/ebd72654185d6ee2c453e0327723cc11206b8667))
+- **e2e:** Read the Markdown source where tests assert the raw text ([caff82d](https://github.com/LukasDoubleU/Kladde/commit/caff82d16e051e9c7b86614066a2c182f99980cc))
 ## [0.10.0](https://github.com/LukasDoubleU/Kladde/releases/tag/v0.10.0) – 2026-11-24
 
 ### 🚀 Features
