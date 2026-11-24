@@ -6,6 +6,7 @@ mod lt_install;
 mod lt_server;
 mod navigation;
 mod pieces;
+mod recycle;
 mod session;
 mod update;
 
@@ -151,6 +152,26 @@ async fn write_binary(path: String, base64: String) -> Result<(), String> {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     std::fs::write(path, bytes).map_err(|e| e.to_string())
+}
+
+/// Moves a tab's file to the Recycle Bin and returns the id that `recycle_restore` takes. Only ever recycles: when
+/// the bin cannot take the file it fails and the file stays (see recycle.rs). On a worker thread of its own: the
+/// shell's file operation needs a COM apartment, and a big file takes a moment.
+#[tauri::command]
+async fn recycle_file(path: String, state: State<'_, recycle::Recycler>) -> Result<u32, String> {
+    let recycler = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || recycler.recycle(&recycle::backend(), Path::new(&path)))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Puts a recycled file back where it was; returns its path. Never overwrites anything.
+#[tauri::command]
+async fn recycle_restore(id: u32, state: State<'_, recycle::Recycler>) -> Result<String, String> {
+    let recycler = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || recycler.restore(id).map(|p| p.to_string_lossy().into_owned()))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -726,6 +747,7 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(large::LargeFiles::default())
+        .manage(recycle::Recycler::default())
         .manage(update::Pending::default())
         .manage(lt_install::Installer::default())
         .setup(|app| {
@@ -749,6 +771,8 @@ pub fn run() {
             read_file,
             write_file,
             write_binary,
+            recycle_file,
+            recycle_restore,
             stat_file,
             stat_files,
             large_open,
