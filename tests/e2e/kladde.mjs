@@ -156,6 +156,9 @@ export async function launch({ exe = DEBUG_EXE, port = 9341, profile = tempProfi
       ...inherited,
       KLADDE_DATA_DIR: join(profile, "data"),
       KLADDE_DEVTOOLS_PORT: String(port),
+      // "Move to Recycle Bin" moves files into this folder instead of the user's real bin (an isolated profile
+      // never reaches the real one: without this variable the move is refused).
+      KLADDE_RECYCLE_DIR: join(profile, "recycle"),
       ...env,
     },
     stdio: ["ignore", "ignore", "pipe"],
