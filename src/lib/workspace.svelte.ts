@@ -30,9 +30,10 @@ import { frontMatterLanguage, isPublicServer, LANGUAGES, normalizeLanguage } fro
 import { formatterFor, formattableLanguages, formatWith, mapCursor, type Formatter } from "./formatters";
 import { localLanguageTool as localLt } from "./languagetool-local.svelte";
 import { isDocumentPath } from "./documents";
-import { allLanguages, detectLanguage, extensionOf, findLanguage, IMAGE_EXTENSIONS, isMarkdown } from "./languages";
+import { allLanguages, detectLanguage, extensionOf, findLanguage, IMAGE_EXTENSIONS, isMarkdown, saveAsName } from "./languages";
 import { linkAtPos, linkExtension } from "./editor-links";
 import { classifyHref, dirname, headingAnchors, resolvePath } from "./links";
+import { looksLikeMarkdown, SNIFF_CHARS } from "./markdown-detect";
 import { renderMarkdown, renderSvg, setLanguageLoadedHandler } from "./markdown";
 import { settings, updateSettingsFile } from "./settings.svelte";
 
@@ -54,6 +55,11 @@ export interface Tab {
   bom: boolean;
   eol: Eol;
   language: string | null;
+  /**
+   * The user picked this tab's language, Plain Text included (`chooseLanguage`). The Markdown detection of the first
+   * paste into an empty untitled tab leaves such a tab alone. Saved with the session.
+   */
+  languageChosen: boolean;
   mtime: number;
   size: number;
   /** NUL bytes in the file: probably not text. */
@@ -102,6 +108,18 @@ interface Runtime {
   diskIgnored?: string;
 }
 
+/** A button on a notice (`showNotice`), e.g. to take back what the app just did on its own. */
+export interface NoticeAction {
+  label: string;
+  run: () => void;
+}
+
+export interface Notice {
+  kind: "info" | "error";
+  text: string;
+  action?: NoticeAction;
+}
+
 /** One side of a compare tab: a snapshot, not a live view of the tab or file. */
 export interface CompareSide {
   label: string;
@@ -143,6 +161,7 @@ interface SessionTab {
   bom: boolean;
   eol: Eol;
   language: string | null;
+  languageChosen?: boolean;
   /** What the file on disk was when the tab was saved: kept for a file that is gone when the session is restored. */
   binary?: boolean;
   lossy?: boolean;
@@ -264,7 +283,7 @@ class Workspace {
   ui = $state({ wordWrap: false, spellCheck: false, grammarCheck: false, zoom: 0 });
   /** Grammar checking of the shown tab, for the status bar. "off": not running for this tab. */
   grammar = $state({ state: "off" as "off" | "checking" | "idle" | "limited" | "error", count: 0, message: "" });
-  notice: { kind: "info" | "error"; text: string } | null = $state(null);
+  notice: Notice | null = $state(null);
   picker: PickerRequest | null = $state(null);
   dialog: DialogRequest | null = $state(null);
 
@@ -418,6 +437,42 @@ class Workspace {
       this.scheduleSession();
     }
     if (update.docChanged || update.selectionSet) this.updateCursor(update.state);
+    // CodeMirror marks pasted text as `input.paste` (a drop of text would be `input.drop`, but Tauri keeps HTML5
+    // drag and drop out of the page, so only pasting reaches the editor).
+    if (update.docChanged && update.startState.doc.length === 0 && update.transactions.some((tr) => tr.isUserEvent("input.paste"))) {
+      this.maybeSwitchToMarkdown(tab, update.state);
+    }
+  }
+
+  /**
+   * The first paste into an empty untitled tab that looks like Markdown switches the tab to Markdown (highlighting and
+   * the preview as the `markdownPreview` setting says) and says so, with a way back. Nothing else is ever switched: not
+   * a file on disk, a tab that has a language or text, or one whose language the user picked. Later pastes find text in
+   * the tab. Undo is untouched: the language is an effect, not a change, so Ctrl+Z removes the pasted text in one step.
+   */
+  private maybeSwitchToMarkdown(tab: Tab, state: EditorState) {
+    const eligible = (t: Tab) => t.kind === "text" && t.path === null && t.language === null && !t.languageChosen;
+    if (!eligible(tab) || !looksLikeMarkdown(state.sliceDoc(0, SNIFF_CHARS + 1))) return;
+    const id = tab.id;
+    // Not inside the update: changing the language reconfigures the view.
+    queueMicrotask(() => {
+      const current = this.tabs.find((t) => t.id === id);
+      if (!current || !eligible(current)) return;
+      this.setLanguage(current, "Markdown");
+      this.showNotice("info", "Pasted text looks like Markdown: switched to Markdown.", {
+        label: "Keep Plain Text",
+        run: () => this.keepPlainText(id),
+      });
+    });
+  }
+
+  /** The "Keep Plain Text" button of the notice: only while the tab is still the Markdown that the paste made. */
+  private keepPlainText(id: string) {
+    const tab = this.tabs.find((t) => t.id === id);
+    if (!tab || tab.kind !== "text" || !isMarkdown(tab.language) || tab.languageChosen) return;
+    this.chooseLanguage(tab, null);
+    // The button took the focus; the editor gets it back unless a palette or dialog opened meanwhile.
+    requestAnimationFrame(() => tab.id === this.activeId && !this.picker && !this.dialog && this.view?.focus());
   }
 
   private isSaved(rt: Runtime, doc: Text): boolean {
@@ -704,6 +759,12 @@ class Workspace {
     }
   }
 
+  /** The user picks a language (status bar, command palette), Plain Text included: no detection overrides it later. */
+  chooseLanguage(tab: Tab, name: string | null) {
+    tab.languageChosen = true;
+    this.setLanguage(tab, name);
+  }
+
   setLanguage(tab: Tab, name: string | null) {
     tab.language = name;
     if (isMarkdown(name) && tab.preview === "off") tab.preview = settings.markdownPreview;
@@ -782,6 +843,7 @@ class Workspace {
       bom: false,
       eol: "CRLF",
       language: null,
+      languageChosen: false,
       mtime: 0,
       size: 0,
       binary: false,
@@ -1246,7 +1308,7 @@ class Workspace {
     if (!tab || (tab.kind !== "text" && tab.kind !== "large")) return false;
     // A text tab is written from its decoded text, even when unchanged: ask before the file dialog.
     if (tab.kind === "text" && !(await this.confirmNonTextWrite(tab))) return false;
-    const defaultPath = tab.path ?? `${tab.title}.txt`;
+    const defaultPath = tab.path ?? saveAsName(tab.title, tab.language);
     const path = await saveDialog({ defaultPath });
     if (!path) return false;
     const other = this.tabs.find((t) => t.id !== tab.id && t.path && samePath(t.path, path));
@@ -1802,11 +1864,20 @@ class Workspace {
 
   // ---------------------------------------------------------------- dialogs
 
-  showNotice(kind: "info" | "error", text: string) {
+  /** An optional action adds a button and keeps the notice longer: there is something to decide, and no focus is moved for it. */
+  showNotice(kind: "info" | "error", text: string, action?: NoticeAction) {
     if (kind === "error") void invoke("frontend_log", { message: text });
-    this.notice = { kind, text };
+    this.notice = { kind, text, action };
     clearTimeout(this.noticeTimer);
-    this.noticeTimer = window.setTimeout(() => (this.notice = null), kind === "error" ? 10_000 : 5_000);
+    this.noticeTimer = window.setTimeout(() => (this.notice = null), action ? 8_000 : kind === "error" ? 10_000 : 5_000);
+  }
+
+  /** The button of the notice: closes it, then runs its action. */
+  runNoticeAction() {
+    const action = this.notice?.action;
+    this.notice = null;
+    clearTimeout(this.noticeTimer);
+    action?.run();
   }
 
   ask(message: string, buttons: DialogRequest["buttons"], detail?: string): Promise<string> {
@@ -1931,6 +2002,7 @@ class Workspace {
           bom: s.tab.bom,
           eol: s.tab.eol,
           language: s.tab.language,
+          languageChosen: s.tab.languageChosen || undefined,
           binary: s.tab.binary || undefined,
           lossy: s.tab.lossy || undefined,
           preview: s.tab.preview,
@@ -2015,6 +2087,7 @@ class Workspace {
       bom: tab.bom,
       eol: tab.eol,
       language: tab.language,
+      languageChosen: tab.languageChosen,
       dirty: text.length > 0,
     });
     const state = this.newState(text);
@@ -2096,6 +2169,7 @@ class Workspace {
     const tab = disk ? this.createText(saved.path!, disk, saved.id) : this.textTab({ id: saved.id, title: saved.title });
     if (saved.path && !disk) Object.assign(tab, { path: saved.path, binary: saved.binary ?? false, lossy: saved.lossy ?? false });
     tab.language = saved.language;
+    tab.languageChosen = saved.languageChosen ?? false;
     tab.preview = saved.preview;
     if (saved.grammarLanguage) this.grammarLanguages.set(tab.id, saved.grammarLanguage);
     if (backup !== null) Object.assign(tab, { encoding: saved.encoding, bom: saved.bom, eol: saved.eol });

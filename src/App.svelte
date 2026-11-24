@@ -296,7 +296,7 @@
       ...languageNames().map((name) => ({ id: name, label: name, detail: name === t.language ? "current" : "" })),
     ];
     const picked = await workspace.pick({ placeholder: "Select language mode", items });
-    if (picked && typeof picked !== "string") workspace.setLanguage(t, picked.id || null);
+    if (picked && typeof picked !== "string") workspace.chooseLanguage(t, picked.id || null);
   }
 
   async function selectEncoding() {
@@ -607,7 +607,10 @@
   {#if workspace.notice}
     <div class="notice" class:error={workspace.notice.kind === "error"} role="status">
       <span>{workspace.notice.text}</span>
-      <button onclick={() => (workspace.notice = null)}>×</button>
+      {#if workspace.notice.action}
+        <button class="action" onclick={() => workspace.runNoticeAction()}>{workspace.notice.action.label}</button>
+      {/if}
+      <button class="close" aria-label="Dismiss" onclick={() => (workspace.notice = null)}>×</button>
     </div>
   {/if}
 
@@ -697,12 +700,23 @@
   .notice.error {
     border-left-color: var(--error);
   }
-  .notice button {
+  .notice .close {
     border: none;
     background: none;
     font-size: 16px;
     line-height: 1;
     color: var(--fg-dim);
+  }
+  /* A notice that asks something: the button stays out of the way until it is wanted, like the banner buttons. */
+  .notice .action {
+    flex: none;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    border-radius: 4px;
+    padding: 2px 10px;
+  }
+  .notice .action:hover {
+    border-color: var(--accent);
   }
   .drop {
     position: absolute;
