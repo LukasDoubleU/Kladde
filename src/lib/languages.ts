@@ -192,3 +192,24 @@ export function extensionOf(path: string): string {
   const name = fileName(path).toLowerCase();
   return name.includes(".") ? name.slice(name.lastIndexOf(".") + 1) : "";
 }
+
+/** Languages whose first extension in language-data is not the one people use (Python lists `BUILD` first). */
+const SAVE_EXTENSIONS: Record<string, string> = {
+  Python: "py",
+  LaTeX: "tex",
+  "Common Lisp": "lisp",
+  Fortran: "f90",
+  Mathematica: "wl",
+};
+
+/**
+ * The file name Save As proposes for an untitled tab: the title with the first extension of the tab's language
+ * (`new 1` + Markdown gives `new 1.md`), `txt` for Plain Text and for languages without extensions. A title that
+ * already ends in an extension (a dot and a letter first, so `v1.2` does not count) is kept as it is.
+ */
+export function saveAsName(title: string, language: string | null): string {
+  if (/\.[A-Za-z][A-Za-z0-9]{0,9}$/.test(title)) return title;
+  const desc = findLanguage(language);
+  const ext = (desc && SAVE_EXTENSIONS[desc.name]) ?? desc?.extensions[0] ?? "txt";
+  return `${title}.${ext}`;
+}
