@@ -155,7 +155,8 @@ Key mechanisms:
 | `lib/workspace.svelte.ts` | The heart: tabs, open/save/close/reload, encodings, external changes, preview rendering, compare tabs, formatting, large-file glue, session (hot exit) |
 | `lib/editor.ts` | CodeMirror extensions and compartments (language, wrap, indentation, gutters, active line, spelling, grammar, read-only), theme, search-panel phrases, keymap filtering |
 | `lib/actions.ts`, `keys.ts`, `keymaps.ts`, `editor-actions.ts`, `shortcut-editor.svelte.ts`, `keyhint.svelte.ts` | Commands and keyboard handling (see below) |
-| `lib/languages.ts` | ~145 languages from `@codemirror/language-data` plus own Batch and Log stream parsers; detection by extension, file name, shebang, first line |
+| `lib/languages.ts` | ~145 languages from `@codemirror/language-data` plus own Batch and Log stream parsers; detection by extension, file name, shebang, first line; `saveAsName` (the extension Save As proposes for an untitled tab) |
+| `lib/markdown-detect.ts` | `looksLikeMarkdown(text)`: the pure, conservative detector behind the Markdown switch of a first paste (see "Tabs and the editor"); rules in the file's header, corpus in `tests/unit/markdown-detect.test.mjs` |
 | `lib/markdown.ts`, `math.ts`, `mermaid.ts` | Preview: markdown-it → DOMPurify; KaTeX rules; Mermaid placeholders drawn after insertion |
 | `lib/native-menu.ts` | Which right clicks may show WebView2's native menu (editable text only) and the selected text for our own Copy menu |
 | `lib/links.ts`, `lib/editor-links.ts` | Links: finding them in a line, what an href means, heading anchors and path helpers (pure, unit-tested); the editor extension for Ctrl+click and the hover hint (see "Links") |
@@ -218,6 +219,25 @@ Key mechanisms:
   skips that routing and opens the file as text; files above `largeFileThresholdMB` (32) in the large viewer; "Open in editor…" loads large files up to 256 MB.
 - Tab history (`Alt+Left`/`Alt+Right`, mouse back/forward) is a browser-like stack of activated tabs, not
   persisted.
+- **Markdown on the first paste** (`maybeSwitchToMarkdown`, called from `onUpdate`): when a transaction of the update
+  is the user event `input.paste`, the document was empty before it, and the tab is a text tab without a path, with
+  language `null` and without `languageChosen`, the first 64 KB are given to `looksLikeMarkdown`; a yes calls
+  `setLanguage(tab, "Markdown")` (so highlighting and the preview follow the usual path) in a microtask, because the
+  update is still running, and shows a notice with the action **Keep Plain Text** (`keepPlainText`: back to `null`, the
+  preview off, the focus back in the editor). Nothing else calls it: not opening files, not later pastes (the
+  document is no longer empty), not drops (Tauri keeps HTML5 drops out of the page). Undo is untouched: switching the
+  language is a reconfiguration effect, so Ctrl+Z removes the pasted text as one step and the language stays.
+  `Tab.languageChosen` is set by `chooseLanguage` (the language picker, and Keep Plain Text) and not by `setLanguage`,
+  which the automatic switch and Save As use. It is saved with the session (optional `languageChosen`), so a tab
+  the user decided about stays so after a restart (an empty untitled tab is not saved at all, so its choice does not
+  outlive a restart; there is nothing in it to lose).
+- **Notices** (`showNotice(kind, text, action?)`, rendered by `App.svelte`) are one at a time and fade after 5 s
+  (errors 10 s). An `action` `{ label, run }` adds a button (`runNoticeAction` closes the notice, then runs it), keeps the
+  notice 8 s and never moves the focus: the button is an ordinary tab stop; the keyboard way to the same decision is
+  "Change language mode…".
+- **Save as** proposes `saveAsName(title, language)` for an untitled tab (`new 1.md`) and the path for a saved one.
+  The language is detected again from the chosen path; for a tab that already has it, nothing changes (a Markdown tab
+  saved as `.md` keeps its preview state).
 
 ### Session and hot exit (zero data loss)
 
@@ -245,7 +265,7 @@ Key mechanisms:
   then session): journals are asked for on restore whatever the session says, so the first session of a save does
   not claim a journal that is not written yet (the restore would report the changes as lost).
 - Data folder layout: `session.json` (tab list, active tab, wrap, spell check, zoom, per-tab language/encoding/eol/
-  preview/cursor/scroll, `hasBackup`, optional `binary`/`lossy` for a file that is gone), `backup/<id>.txt` (current text of dirty or untitled tabs) and
+  preview/cursor/scroll, `hasBackup`, optional `languageChosen` and `binary`/`lossy` for a file that is gone), `backup/<id>.txt` (current text of dirty or untitled tabs) and
   `backup/<id>.<n>.txt` (up to 5 older versions, at least 5 minutes apart; a new version is a copy of
   `<id>.txt`, so the current backup never leaves its place, and restore falls back to the newest version if
   `<id>.txt` is missing), plus marker files

@@ -37,6 +37,10 @@ What Kladde should be, and choices the owner made on purpose. Keep them unless t
   outline and lines remain, which is enough. Regenerate the icon files with
   `npx tauri icon assets/icon.svg -o <temp dir>` and copy only the files already in `src-tauri/icons`.
 - The search panel and every other piece of UI must follow the theme variables (no default browser controls).
+- Pasting Markdown into an empty new tab switches it to Markdown (with a notice and Keep Plain Text), because the usual
+  flow is paste, read. The detector is deliberately conservative: a wrong guess is rare and costs a click, a missed one
+  costs a click too. A plain bulleted or numbered list on its own stays Plain Text, and so do code, data and logs. Only
+  Markdown is detected, only on the first paste into an empty untitled tab, and never over a choice the user made.
 
 ## Keyboard
 

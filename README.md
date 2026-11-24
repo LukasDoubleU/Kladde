@@ -66,6 +66,14 @@ it, but I may decline requests that don't fit how I work, and there is no promis
 - Mermaid diagrams (```` ```mermaid ````) and math with KaTeX (`$inline$`, `$$block$$`, ```` ```math ````), in the
   colors of the current theme. Both load only when a document uses them and work offline.
 - Paste an image from the clipboard and it is saved next to the file (`assets/` by default) and linked.
+- **Paste Markdown into a new tab** (`Ctrl+N`, `Ctrl+V`) and the tab switches to Markdown by itself: highlighting and the
+  preview as `markdownPreview` says. A notice says so and offers **Keep Plain Text**. Only the first paste into an
+  empty untitled tab is looked at, and only text that clearly looks like Markdown (headings with text under them, fenced
+  code, tables, links and images, lists with other signs, bold) counts; code, JSON, XML, logs, diffs, a plain list of
+  bullets and text with a few `#` comments stay Plain Text. A language you picked yourself (also Plain Text), a tab
+  with text and every file on disk are never switched.
+- **Save as** on an untitled tab proposes the extension of its language: `new 1.md` for Markdown, the language's first
+  extension for others, `.txt` for Plain Text.
 
 **Files**
 - Hot exit: closing the window never asks. All tabs, including unsaved changes, come back on the next

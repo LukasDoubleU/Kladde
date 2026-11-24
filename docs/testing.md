@@ -5,7 +5,7 @@
 | Command | What it covers | Needs |
 |---|---|---|
 | `npm run check` | svelte-check (types of all `.ts`/`.svelte`) | — |
-| `npm run test:unit` | Node's test runner on `tests/unit/*.test.mjs`: formatters, keys/presets, grammar text side, themes, settings metadata, update manifest, last-check time format, link finding and heading anchors, the CSP and the asset scope in `tauri.conf.json`, the document viewer's pure parts (container signatures, zoom and fit, the frame's policy, sandbox and starting document, the copies of keyboard, wheel and mouse events, the CSS scan for addresses in declarations, escapes included) | — |
+| `npm run test:unit` | Node's test runner on `tests/unit/*.test.mjs`: formatters, keys/presets, the Markdown detector for pasted text (corpus of positives and negatives) and the Save As file name, grammar text side, themes, settings metadata, update manifest, last-check time format, link finding and heading anchors, the CSP and the asset scope in `tauri.conf.json`, the document viewer's pure parts (container signatures, zoom and fit, the frame's policy, sandbox and starting document, the copies of keyboard, wheel and mouse events, the CSS scan for addresses in declarations, escapes included) | — |
 | `cd src-tauri && cargo test` | file I/O and encodings (binary and lossy flags), safe saving, large viewer (index, search, piece table, editing, streaming save, journal), LanguageTool client (local socket), local LanguageTool (hash check, download, atomic install, version cleanup, routing, idle stop, start/stop/crash of a stand-in process, job object), registry code (throwaway key), updater helpers, the URL classification of the navigation guard and the frame guard's decision (`about:srcdoc` only), the isolated-profile check of the document cleaner hook, the size limit of the document reader | Rust |
 | `npm run test:e2e` | the real app through the DevTools protocol: `tests/e2e/*.test.mjs` | `npx tauri build --debug --no-bundle` first |
 
@@ -61,6 +61,7 @@ Rules:
 | integration | 9347 |
 | keys | 9350–9351, 9384–9386 |
 | links | 9405–9412 |
+| markdown-paste | 9452–9458 |
 | navigation | 9420–9426, 9441–9444 |
 | languagetool-local | 9369–9370, 9374–9375, 9377–9379 |
 | large | 9345, 9391–9393, 9397–9399 (the editing tests reuse earlier ports one app at a time) |
@@ -69,7 +70,7 @@ Rules:
 | theme | 9348, 9381–9383 |
 | update | 9349, 9359–9362, 9366–9368, 9394–9396 |
 
-Free for new files: 9452 and up (9448 is free) (9380 and 9390 are taken by hot-exit now).
+Free for new files: 9459 and up (9448 is free) (9380 and 9390 are taken by hot-exit now).
 
 ## Environment variables
 
@@ -169,6 +170,14 @@ Free for new files: 9452 and up (9448 is free) (9380 and 9390 are taken by hot-e
   over the file and fails when the viewer shows an error instead of reading again. Focus is never set by the tests: they
   click a tab and press PageDown. `Ctrl+O` is not pressed (it opens a native dialog); the other shortcuts go through the
   same window listener. A 51 MB file of zeros is written for the size limit.
+- **Markdown paste (`markdown-paste.test.mjs`):** the paste is a synthetic `ClipboardEvent` with a `DataTransfer`
+  dispatched into `.cm-content`; CodeMirror handles it as `input.paste` and the system clipboard (the user's) is never
+  read or written. Save As cannot be driven through the native dialog, and `__TAURI_INTERNALS__` is frozen, but Tauri
+  sends every command as a `fetch` to its IPC protocol: the test replaces the page's `fetch`, answers
+  `plugin:dialog|save` with a path in the isolated profile (recording the proposed `defaultPath`) and lets everything
+  else through. It first proves with a harmless command that the calls do pass through the wrapper, because a real dialog
+  must never open. `waitFor` with an element as its result fails quietly (the element cannot be sent as a value): write
+  `!!document.querySelector(…)`.
 - **Large files:** lower `largeFileThresholdMB` in the isolated profile's `settings.json` instead of generating
   huge fixtures; delete generated files. Editing tests focus `.large .input` (the hidden textarea), type with
   `type()`/`key()` and check `.large .line .text`; a kill is only safe once the journal in `data/backup`
