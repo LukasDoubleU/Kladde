@@ -117,7 +117,8 @@ test("underlines findings, shows the message and applies a quick fix", async () 
     await app.screenshot(join(profile, "tooltip.png"));
     await app.eval("document.querySelector('.cm-tooltip-lint .cm-diagnosticAction').click()");
     assert.match(await body(app), /and a error here\./);
-    assert.match(await body(app), /`eror`/);
+    // The document, not the display: Live Preview hides the backticks of the code span.
+    assert.match(await app.eval("document.querySelector('.cm-content').cmTile.view.state.doc.toString()"), /`eror`/);
     await app.waitFor("document.querySelectorAll('.cm-lt-spelling').length === 0");
     await app.key("Ctrl+Z");
     assert.match(await body(app), /and a eror here\./);

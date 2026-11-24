@@ -45,6 +45,13 @@ async function session({ port, files, active }, body) {
   try {
     await app.waitFor(`document.querySelector('.tab.active .title')?.textContent === ${JSON.stringify(active)}`, 15000);
     await app.waitFor("!!document.querySelector('.cm-line')");
+    // These tests click on the Markdown source (links in Live Preview are covered by live-preview.test.mjs).
+    if (active.endsWith(".md")) {
+      await app.waitFor("!!document.querySelector('.cm-live-preview')");
+      await app.eval("document.querySelector('.cm-content').focus(), true");
+      await app.key("Ctrl+E");
+      await app.waitFor("!document.querySelector('.cm-live-preview')");
+    }
     await body(app, () => (existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean) : []));
   } finally {
     await app.kill();
