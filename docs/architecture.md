@@ -92,7 +92,9 @@ Key mechanisms:
   The journal is written by `writeSession` for dirty large tabs (throttled like text backups, never debounced);
   `backup_prune` keeps it by tab id, as for `<id>.txt`. On restore the page asks Rust for every large tab,
   not only those with `hasBackup`: a crash between writing the journal and `session.json` leaves an older
-  session file, and the journal must not be pruned unseen. `LargeFile::restore` applies it only if size, mtime
+  session file, and the journal must not be pruned unseen. That older session must list the tab, though, so
+  the first journal of a tab the session on disk does not list yet comes after a session that names it (see
+  "Session and hot exit", write order). `LargeFile::restore` applies it only if size, mtime
   and fingerprint match the file; otherwise the tab shows a banner (Apply anyway / Discard my changes), typing
   is refused until the user decides and the journal stays.
 - **Local LanguageTool (`lt_install.rs`, `lt_server.rs`):** grammar checking works without any setup by downloading
@@ -246,6 +248,13 @@ Key mechanisms:
   at most 3 s), later changes do not push it back, so continuous typing is backed up. Focus loss saves immediately.
 - `writeSession()` snapshots each tab's state and version together before awaiting writes, so edits made during a
   write are not marked as backed up. Writes are serialized through `sessionChain`.
+- **The guarantee: every edit that reached the disk comes back after a crash, whenever the crash happens.** A
+  text backup or a large tab's journal on disk is always named by the `session.json` on disk (a text backup with
+  `hasBackup`, a journal by its tab), so the restore finds it and no pruning deletes it. What a crash can still
+  cost is only what never reached the disk: the last throttle interval (at most 3 s, usually a few hundred ms).
+  (A journal also needs the original it describes: a large file that is gone at the restart is not reopened.)
+  The write order below keeps that true; `tests/e2e/hot-exit.test.mjs` and `large.test.mjs` kill the app inside
+  each window between two writes (`KLADDE_SESSION_DELAY_MS`, `KLADDE_BACKUP_DELAY_MS`).
 - **Write order: the session never lags behind the backups.** The restore only looks for the backups of the tabs
   `session.json` lists, and the pruning after a save deletes every backup it does not list, so a backup written
   before the session that names it is lost by a crash in between (issue #15: a new tab's text was on disk, the
@@ -262,8 +271,13 @@ Key mechanisms:
   file (nor an older version) opens from the file on disk, not dirty, without an error (the text of the last few hundred
   milliseconds never reached the disk, which no order of writes can change); an untitled tab with a missing
   backup is skipped; an older backup is restored as it is (dirty). Large tabs keep their journal order (journal,
-  then session): journals are asked for on restore whatever the session says, so the first session of a save does
-  not claim a journal that is not written yet (the restore would report the changes as lost).
+  then session) once the session lists the tab: journals are asked for on restore whatever `hasBackup` says, so
+  the first session of a save does not claim a journal that is not written yet (the restore would report the
+  changes as lost). A large tab the session on disk does not list at all (opened and edited before the throttle
+  wrote a session) gets step 1 like a text tab, naming it without `hasBackup`; `Workspace.sessionListed` mirrors
+  every tab the session on disk lists. Without that, a crash between such a tab's first journal and the session
+  after it left a journal that no restore asked for and the next save pruned (issue #26: the edits of a large file
+  made right after opening it were lost).
 - Data folder layout: `session.json` (tab list, active tab, wrap, spell check, zoom, per-tab language/encoding/eol/
   preview/cursor/scroll, `hasBackup`, optional `languageChosen` and `binary`/`lossy` for a file that is gone), `backup/<id>.txt` (current text of dirty or untitled tabs) and
   `backup/<id>.<n>.txt` (up to 5 older versions, at least 5 minutes apart; a new version is a copy of

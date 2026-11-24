@@ -319,6 +319,8 @@ class Workspace {
   private sessionChain: Promise<void> = Promise.resolve();
   /** The tabs `session.json` on disk lists with `hasBackup`: what a crash right now would restore backups for. */
   private backupListed = new Set<string>();
+  /** Every tab `session.json` on disk lists: a crash right now restores these, and asks for a large tab's journal. */
+  private sessionListed = new Set<string>();
   private restored = false;
 
   constructor() {
@@ -1962,9 +1964,10 @@ class Workspace {
   /**
    * Order matters: a crash between two writes must never leave a backup that the session does not name,
    * because the restore only looks for the backups of the tabs it lists and the next save prunes the rest.
-   * So `session.json` goes first, naming every tab whose backup is about to be written, then the backups,
-   * then the pruning. A crash in between leaves a session that names a backup which is missing (the restore
-   * opens the file as it is on disk, or skips an untitled tab) or older (restored as it is).
+   * So `session.json` goes first, naming every tab whose backup is about to be written (a large tab's journal:
+   * its tab), then the backups, then the pruning. A crash in between leaves a session that names a backup
+   * which is missing (the restore opens the file as it is on disk, or skips an untitled tab) or older
+   * (restored as it is).
    */
   private async writeSession() {
     if (this.active?.kind === "text" && this.view) {
@@ -2021,18 +2024,26 @@ class Workspace {
         zoom: this.ui.zoom,
         tabs,
       };
-      return { json: JSON.stringify(session), listed: new Set(tabs.filter((t) => t.hasBackup).map((t) => t.id)) };
+      return {
+        json: JSON.stringify(session),
+        tabs: new Set(tabs.map((t) => t.id)),
+        listed: new Set(tabs.filter((t) => t.hasBackup).map((t) => t.id)),
+      };
     };
-    const put = async (written: { json: string; listed: Set<string> }) => {
+    const put = async (written: ReturnType<typeof describe>) => {
       await api.sessionSave(written.json);
+      this.sessionListed = written.tabs;
       this.backupListed = written.listed;
     };
 
-    // Only a text backup that the session on disk does not name yet needs the session first; typing in a
-    // tab that is already listed writes the backup and one session, as before. Journals of large tabs
-    // are asked for on restore whatever the session says, so they keep their order, but the first session
-    // does not claim one that has not been written yet (the restore would report it as lost).
-    const first = snapshot.some((s) => s.write && !s.journal && !this.backupListed.has(s.tab.id));
+    // Only a backup that the session on disk does not name yet needs the session first; typing in a tab that
+    // is already listed writes the backup and one session, as before. A text backup is only read for a tab
+    // listed with `hasBackup`. A large tab's journal is asked for whatever `hasBackup` says, so it keeps its
+    // order (journal, then session) once the session lists the tab at all; but a large tab that is not listed
+    // yet (opened and edited before the throttle wrote a session) would leave a journal that no restore asks
+    // for and the next save prunes. Its first session names it without claiming the journal, which is not
+    // written yet (the restore would report the changes as lost).
+    const first = snapshot.some((s) => s.write && !(s.journal ? this.sessionListed : this.backupListed).has(s.tab.id));
     const before = first ? describe((s) => s.needsBackup && !(s.journal && s.write && !this.backupListed.has(s.tab.id))) : null;
     let listedFirst = false;
     if (before) {
@@ -2111,6 +2122,7 @@ class Workspace {
       this.ui.spellCheck = session.spellCheck ?? settings.spellCheck;
       this.ui.grammarCheck = session.grammarCheck ?? settings.grammarCheck;
       this.ui.zoom = session.zoom ?? 0;
+      this.sessionListed = new Set(session.tabs.map((t) => t.id));
       this.backupListed = new Set(session.tabs.filter((t) => t.hasBackup).map((t) => t.id));
       for (const saved of session.tabs) {
         try {
