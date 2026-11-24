@@ -2,6 +2,36 @@
 
 All notable changes to Kladde. Versions follow [Semantic Versioning](https://semver.org), commit messages
 [Conventional Commits](https://www.conventionalcommits.org).
+## [0.10.0](https://github.com/LukasDoubleU/Kladde/releases/tag/v0.10.0) – 2026-11-24
+
+### 🚀 Features
+
+- **editor:** Detect Markdown in pasted text, name Save As files by language ([9faa403](https://github.com/LukasDoubleU/Kladde/commit/9faa40327220b287643825d037d5781de7d2dfd6))
+- **editor:** Switch an empty untitled tab to Markdown on the first Markdown paste ([435b055](https://github.com/LukasDoubleU/Kladde/commit/435b055cd3cd2799c705fc00d7e32ca8b0f2cf3e))
+- **files:** Move a file to the Recycle Bin and back, never deleting for good ([6468ba4](https://github.com/LukasDoubleU/Kladde/commit/6468ba4e1e56c6e684cd854bcb14d876312922d5))
+- **files:** Move to Recycle Bin for a tab, with Restore ([83d5825](https://github.com/LukasDoubleU/Kladde/commit/83d58257eaaa200bc07edd7da75814b579c05a43))
+
+### 🐛 Bug fixes
+
+- **session:** Name a large tab in the session before its first journal ([056c6b0](https://github.com/LukasDoubleU/Kladde/commit/056c6b0bf2a92344ec009b3b8db9fc6f3a594e4d))
+- **session:** Replace the session, backups and journals in one rename ([4a83f8b](https://github.com/LukasDoubleU/Kladde/commit/4a83f8ba7ccb5b8f629931d7d439bf4858abced0))
+- **files:** Recognize the restored file by its real path ([ee2756f](https://github.com/LukasDoubleU/Kladde/commit/ee2756fb33c27491484f6f36cd9f51775f66ee80))
+
+### ♻️ Refactoring
+
+- **editor:** Split the pasted text only once in the Markdown detector ([bcb9bb3](https://github.com/LukasDoubleU/Kladde/commit/bcb9bb3ed96175b88cd34585eb6c6567f4efc625))
+
+### 📚 Documentation
+
+- Describe the Markdown switch on paste, notice actions and the Save As name ([29653ca](https://github.com/LukasDoubleU/Kladde/commit/29653ca3dd59aec65faca0de7eac3dae39f3826c))
+- Move to Recycle Bin, how it never deletes for good, and its tests ([b70b18a](https://github.com/LukasDoubleU/Kladde/commit/b70b18a0dc96d90ab07c9066648d9c9839219d98))
+
+### 🧪 Tests
+
+- **e2e:** Markdown paste into a new tab, Keep Plain Text, and the Save As name ([702cdcd](https://github.com/LukasDoubleU/Kladde/commit/702cdcd834571b2e2d3d6fce5ce87ef3f8cd03d1))
+- **e2e:** Show the profile, console errors and stderr when a wait times out ([d6a0ccf](https://github.com/LukasDoubleU/Kladde/commit/d6a0ccf563127b174f264989e59343b6275c427b))
+- **e2e:** Crash a large file edited before the first session write ([48eb205](https://github.com/LukasDoubleU/Kladde/commit/48eb205f5d9c4a4ee691219032cbee3aa045569e))
+- **e2e:** Move to the Recycle Bin, Restore and the cases around them ([47c1f13](https://github.com/LukasDoubleU/Kladde/commit/47c1f13b3cb6fdd8259f3385297bc0de75af657a))
 ## [0.9.0](https://github.com/LukasDoubleU/Kladde/releases/tag/v0.9.0) – 2026-11-08
 
 ### 🚀 Features
