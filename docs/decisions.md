@@ -24,6 +24,12 @@ What Kladde should be, and choices the owner made on purpose. Keep them unless t
 - Binary and lossily decoded files (NUL byte, or invalid sequences in the encoding) open read-only with a banner
   and "Edit anyway"; the first save after that asks once. Protecting the bytes beats convenience: a .docx opened
   by mistake must survive `Ctrl+S`.
+- **Deleting a file from a tab only ever recycles** (issue #29, "Move to Recycle Bin"). Never a permanent delete, and
+  never Windows' own "delete permanently?" prompt: when the bin cannot take the file Kladde refuses and says why. The
+  shell has no "recycle or fail" mode (it silently deletes for good once confirmations are off), so the code
+  cancels such a delete itself (architecture.md, "Recycle Bin"). A tab with unsaved changes asks first, Cancel is the
+  default; a clean one moves at once, because Restore (a notice for ten seconds) covers a misclick. The `trash` crate
+  was rejected for exactly that fallback.
 
 ## Look and feel
 
@@ -48,6 +54,8 @@ The default preset contains deliberate choices; presets (Notepad++, VS Code) and
 
 - `Ctrl+D` = delete line (owner's choice; "select next occurrence" moved to `Ctrl+Shift+D`).
 - `Alt+Shift+W` = reveal the current file in Explorer.
+- `Ctrl+Shift+Delete` = move the current file to the Recycle Bin (issue #29). Free in CodeMirror's keymaps (`Delete` and
+  `Ctrl+Delete` are its delete commands) and rebindable like every command (`file.recycle`).
 - Keys sent by the owner's mouse-gesture tool must work: `Ctrl+T` (new tab, besides `Ctrl+N`), `Ctrl+W` (close),
   `F5` (reload from disk), `Alt+Left` / `Alt+Right` (back/forward through recently used tabs, also on the mouse's
   back/forward buttons), `Ctrl+PageDown` / `Ctrl+PageUp` (next/previous tab, sent for right button + wheel), and

@@ -6,7 +6,7 @@
 |---|---|---|
 | `npm run check` | svelte-check (types of all `.ts`/`.svelte`) | — |
 | `npm run test:unit` | Node's test runner on `tests/unit/*.test.mjs`: formatters, keys/presets, the Markdown detector for pasted text (corpus of positives and negatives) and the Save As file name, grammar text side, themes, settings metadata, update manifest, last-check time format, link finding and heading anchors, the CSP and the asset scope in `tauri.conf.json`, the document viewer's pure parts (container signatures, zoom and fit, the frame's policy, sandbox and starting document, the copies of keyboard, wheel and mouse events, the CSS scan for addresses in declarations, escapes included) | — |
-| `cd src-tauri && cargo test` | file I/O and encodings (binary and lossy flags), safe saving, atomic writes of Kladde's own files (a writer killed 30 times must leave the old or the new file), large viewer (index, search, piece table, editing, streaming save, journal), LanguageTool client (local socket), local LanguageTool (hash check, download, atomic install, version cleanup, routing, idle stop, start/stop/crash of a stand-in process, job object), registry code (throwaway key), updater helpers, the URL classification of the navigation guard and the frame guard's decision (`about:srcdoc` only), the isolated-profile check of the document cleaner hook, the size limit of the document reader | Rust |
+| `cd src-tauri && cargo test` | the Recycle Bin module (the test hooks' gating, which locations can have a bin, the test folder's recycle and restore, nothing overwritten, the bin's metadata cleanup), file I/O and encodings (binary and lossy flags), safe saving, atomic writes of Kladde's own files (a writer killed 30 times must leave the old or the new file), large viewer (index, search, piece table, editing, streaming save, journal), LanguageTool client (local socket), local LanguageTool (hash check, download, atomic install, version cleanup, routing, idle stop, start/stop/crash of a stand-in process, job object), registry code (throwaway key), updater helpers, the URL classification of the navigation guard and the frame guard's decision (`about:srcdoc` only), the isolated-profile check of the document cleaner hook, the size limit of the document reader | Rust |
 | `npm run test:e2e` | the real app through the DevTools protocol: `tests/e2e/*.test.mjs` | `npx tauri build --debug --no-bundle` first |
 
 Run all four before merging anything. For e2e prefer `node --test --test-concurrency=1 "tests/e2e/*.test.mjs"`:
@@ -72,11 +72,12 @@ Rules:
 | languagetool-local | 9369–9370, 9374–9375, 9377–9379 |
 | large | 9345, 9391–9393, 9397–9399, 9459–9460 (the editing tests reuse earlier ports one app at a time) |
 | preview | 9346, 9376 |
+| recycle | 9461–9467 (one app at a time; 9461–9463 are reused) |
 | settings | 9352–9353 |
 | theme | 9348, 9381–9383 |
 | update | 9349, 9359–9362, 9366–9368, 9394–9396 |
 
-Free for new files: 9461 and up (9448 is free) (9380 and 9390 are taken by hot-exit now).
+Free for new files: 9468 and up (9448 is free) (9380 and 9390 are taken by hot-exit now).
 
 ## Environment variables
 
@@ -95,6 +96,8 @@ Free for new files: 9461 and up (9448 is free) (9380 and 9390 are taken by hot-e
 | `KLADDE_BACKUP_DELAY_MS` | Waits this many ms before every write of a text backup (isolated profile only); the window between the session naming a tab and its backup being written |
 | `KLADDE_OPEN_URL_LOG` | File that receives every external link (http, https, mailto) one URL per line, instead of the browser starting (isolated profile only); tests assert the URL that would have been opened. "Open in default app" of the document viewer logs the file's path here instead of starting Word |
 | `KLADDE_DOCUMENT_NO_CLEAN` | `1` makes the document viewer skip its cleaning of the rendered document (isolated profile only; any other value or a normal profile is ignored), so a test can prove that the viewer's frame alone keeps a document from the network |
+| `KLADDE_RECYCLE_DIR` | Folder that receives the files "Move to Recycle Bin" moves, instead of the real Recycle Bin (isolated profile only; an isolated profile without it refuses to recycle, so a test can never reach the real bin). The harness sets it to `<profile>/recycle` for every app. Restore moves the file back out of it |
+| `KLADDE_RECYCLE_REFUSE` | `1` makes every recycle fail like a location without a Recycle Bin (isolated profile only) |
 | `KLADDE_E2E_START_TIMEOUT` | Harness: how long to wait for the app to come up (ms, default 20000; CI uses 90000) |
 
 ## Pitfalls we hit (and how the harness handles them)
@@ -184,6 +187,16 @@ Free for new files: 9461 and up (9448 is free) (9380 and 9390 are taken by hot-e
   else through. It first proves with a harmless command that the calls do pass through the wrapper, because a real dialog
   must never open. `waitFor` with an element as its result fails quietly (the element cannot be sent as a value): write
   `!!document.querySelector(…)`.
+- **Recycle Bin (`recycle.test.mjs`):** the move goes into `<profile>/recycle` (`KLADDE_RECYCLE_DIR`), never the real bin;
+  the tests read that folder to see that the file left with the same bytes and came back with the same bytes. The context
+  menu is opened with a synthetic `contextmenu` event on the tab (as in the navigation test). The restart test waits for
+  `session.json` to stop naming the tab and then kills or closes the app, once for each, with an unsaved edit whose
+  backup must be gone afterwards. The real bin is covered by two tests that only run on request, because they touch the
+  bin of whoever runs them: `cargo test real_recycle_and_restore -- --ignored --nocapture` (recycles a temp file,
+  checks that it is gone and that its `$R` and `$I` files are in the bin with the bytes, that a refused restore changes
+  nothing, restores it, checks the bytes and that neither file is left, and a restore onto a path taken meanwhile, which
+  must overwrite nothing; it cleans up after itself) and `cargo test sink_alone -- --ignored --nocapture` (the admin
+  share experiment: the sink alone must cancel a delete that would be permanent).
 - **Large files:** lower `largeFileThresholdMB` in the isolated profile's `settings.json` instead of generating
   huge fixtures; delete generated files. Editing tests focus `.large .input` (the hidden textarea), type with
   `type()`/`key()` and check `.large .line .text`; a kill is only safe once the journal in `data/backup`

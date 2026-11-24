@@ -24,6 +24,7 @@ How Kladde is built and why. For product decisions see [decisions.md](decisions.
 | `files.rs` | Reading with encoding detection (BOM → UTF-8 validity → chardetng), BOM and line-ending handling, writing with `write_safely` (a user's files) and `write_atomic` (Kladde's own); `read_limited` (a document's bytes, refused above 50 MB, errors that say *too large* / *busy* / *gone*) |
 | `large.rs` | The large file viewer backend: index, search, editing, streaming save, hot-exit journal |
 | `pieces.rs` | The piece table behind large-file editing (pure data structure, no I/O, no encodings) |
+| `recycle.rs` | "Move to Recycle Bin" and Restore: `IFileOperation` with a progress sink that makes a permanent delete impossible; the test folder hook (see "Recycle Bin") |
 | `session.rs` | Data/config folders, session JSON, backups and backup versions, config files, the isolated profile |
 | `integration.rs` | Windows registration (ProgID, capabilities, "Open with", context menu) under a passed-in registry root |
 | `update.rs` | Update check/install on top of tauri-plugin-updater |
@@ -318,6 +319,64 @@ Key mechanisms:
   in the large view (`workspace.largeApi.run`) when a large tab is active. Other editor commands are disabled there.
 - Browser accelerators of WebView2 (F5 reload, Ctrl+P print, Ctrl+J, Ctrl+U, F7 caret browsing, find bar) are
   swallowed in `onKeydown`; the WebView's own zoom is replaced by Kladde's font-size zoom (Ctrl+wheel/Plus/Minus).
+
+### Recycle Bin
+
+`Move to Recycle Bin` (tab context menu after "Reveal in Explorer", command `file.recycle`, `Ctrl+Shift+Delete`)
+deletes the file of a text, large, image or document tab. `workspace.canRecycle` is false for untitled and compare
+tabs, the settings tab and a tab whose file is gone (`external === "deleted"`, `rt.gone`): the item is disabled and
+the command is neither in the palette nor bound.
+
+- **Page (`Workspace.recycleTab`):** a tab with unsaved changes (`dirty` or a large journal) asks first
+  ("<name> has unsaved changes. Move the file to the Recycle Bin anyway?", detail "The unsaved changes are lost.",
+  Cancel is the default). Then `api.recycleFile(path)`; on an error the tab stays, nothing was deleted, and an error
+  notice gives Rust's reason. On success every tab of that path is removed (`removeTab`, not `close`: the path does not
+  go to "Reopen closed tab"), and `saveSession()` runs at once instead of waiting for the throttle, so a crash right
+  after cannot restore a tab (or a backup of its unsaved text) of a file that is gone. (A text or large tab whose file
+  is missing is skipped by the restore anyway, except a text tab with a backup, which comes back as "deleted".) The
+  notice "Moved <name> to the Recycle Bin." offers **Restore** for 10 s (`showNotice`'s `ms`). Restore calls
+  `recycle_restore`, reopens the path with `openPath` and moves the new tab to the old index (clamped), activating it.
+  The external-change watcher cannot show "deleted or moved" for the tab: it is removed in the same turn in which the
+  move returns.
+- **Rust (`recycle.rs`), never permanent.** The shell has no "recycle or fail": with `FOF_NOCONFIRMATION` (needed, or
+  Windows asks) a file that cannot go to the bin (a network share, a drive without one, too big for it) is deleted for
+  good. Three layers keep that from happening, each enough on its own for what it knows:
+  1. `classify_location`: only `X:\` paths on a fixed or removable drive (`GetDriveTypeW`) go on; UNC, `\\?\UNC`,
+     network, optical and unknown drives are refused before the shell is asked.
+  2. `IFileOperation` with `FOFX_RECYCLEONDELETE | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI` and a progress sink
+     (`Advise`). `PreDeleteItem` gets the transfer flags the shell has decided on: without
+     `TSF_DELETE_RECYCLE_IF_POSSIBLE` (0x80) the delete would be permanent, and the sink returns `E_ABORT`, which
+     cancels it before anything happens. This is the layer that knows what the shell will really do.
+  3. `PostDeleteItem` delivers `psiNewlyCreated`, the item now in the bin. A delete that succeeded without one is an
+     error ("left its folder, but Windows did not say where it went"), never a success.
+
+  Proven by experiment (`cargo test sink_alone -- --ignored --nocapture`): a temp file reached through the admin
+  share (`\\localhost\C$\...`, a network path) with layer 1 skipped is cancelled by the sink (the shell's flags are
+  `0x202`, without the recycle flag) and still exists afterwards. As a control (done once by hand, not kept) the sink's
+  check was switched off: the same file was deleted for good and the shell delivered no bin item. A file larger than the
+  bin's capacity is the other case the shell decides on; it is covered by the same flag in `PreDeleteItem` but was not
+  tried (it would need a bin of a few kB on a test volume).
+- **Threads and COM:** the shell work runs on a thread of its own with an apartment-threaded `CoInitializeEx`, so
+  Tauri's threads and the blocking pool never carry a COM apartment. `recycle_file` and `recycle_restore` are async
+  commands that wait for it on the blocking pool.
+- **Restore:** the recycled item is remembered in `Recycler` (managed state, the last 32) under an id that the page
+  keeps: its path inside the bin, `C:\$Recycle.Bin\<sid>\$R…`. `psiNewlyCreated` is a plain file there: its context
+  menu has no "undelete" verb (tried: "no application is associated"), and moving that file would not be a restore.
+  Restore therefore enumerates the Recycle Bin folder (`FOLDERID_RecycleBinFolder`, `BHID_EnumItems`), finds the item by
+  that path and moves it into its original folder with `IFileOperation::MoveItem` and a sink, with
+  `FOF_RENAMEONCOLLISION`. Before that Rust refuses a path where anything exists (file, folder, link) and a folder that
+  is gone; those refusals keep the id (retry after clearing the way), an attempt spends it. A race after the check
+  cannot overwrite either: the shell then gives the file another name, `PostMoveItem` says which, and Restore reports it
+  as an error that names the other file. Checked by hand: the shell's own "undelete" verb (`Shell.Application`'s
+  `InvokeVerb`) and `MoveItem` both leave the `$I<id>` metadata file behind (about 200 bytes, with no `$R` any more).
+  An orphan is harmless to the bin, but Kladde removes exactly that file after a successful move
+  (`remove_orphan_metadata`: same directory, the `$R` name with the letter changed, a small regular file, `$R` gone), so
+  a restore leaves nothing in the bin. "The bin was emptied meanwhile" shows as the item not being found: "no longer in
+  the Recycle Bin".
+- **Test hook** (isolated profile only, `backend_for`, unit-tested): `KLADDE_RECYCLE_DIR=<folder>` moves the file into
+  that folder (named `<nanos>-<name>`) and Restore moves it back; `KLADDE_RECYCLE_REFUSE=1` simulates a location
+  without a bin. An isolated profile with neither refuses to recycle: it can never reach the real bin. A normal
+  profile ignores both variables. The e2e harness sets `KLADDE_RECYCLE_DIR=<profile>/recycle` for every app.
 
 ### Settings page
 

@@ -84,6 +84,12 @@ it, but I may decline requests that don't fit how I work, and there is no promis
 - Crash-safe saving: a save writes a temporary file and replaces the original in one step, keeping its
   attributes and permissions, so a crash or a full disk never leaves a half-written file. The session
   and the backups are written the same way.
+- **Move to Recycle Bin** (tab context menu, command palette, `Ctrl+Shift+Delete`) deletes the tab's file safely:
+  it only ever goes to the Windows Recycle Bin, never deleted for good. When Windows cannot recycle it (a network
+  share, a drive without a bin, a file too big for it), nothing is deleted and a notice says why. The tab closes
+  and a notice offers **Restore** for ten seconds, which puts the file back where it was (never over something that
+  is there now) and reopens it in its old place. A tab with unsaved changes asks first, with Cancel as the default.
+  Works for text, large, image and Word document tabs.
 - Backup versions: up to five older backups per unsaved tab (at least five minutes apart). **Restore an
   older backup of this tab** in the command palette lists them and opens the chosen one in a new tab; it
   never overwrites the current tab. Backups of tabs you saved or closed are deleted.
@@ -188,6 +194,7 @@ Kladde refreshes an existing registration silently at the next start.
 | `Alt+Left` / `Alt+Right`, mouse back / forward | Back / forward through recently used tabs |
 | `F5` | Reload the file from disk |
 | `Alt+Shift+W` | Reveal the file in Explorer |
+| `Ctrl+Shift+Delete` | Move the file to the Recycle Bin (with a Restore notice) |
 | `Ctrl+F` / `Ctrl+H` / `F3` | Find, replace, find next |
 | `Ctrl+G` | Go to line |
 | `Ctrl`+click | Open the link under the mouse (elsewhere: add a cursor); **Open link at cursor** has no key by default |
