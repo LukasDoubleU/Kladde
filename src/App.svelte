@@ -157,6 +157,13 @@
       run: () => workspace.togglePreview(),
       enabled: textTab,
     },
+    {
+      id: "view.toggleLivePreview",
+      label: "Toggle Live Preview (Markdown)",
+      keys: ["Ctrl+E"],
+      run: () => workspace.toggleLivePreview(),
+      enabled: textTab,
+    },
     { id: "view.toggleWrap", label: "Toggle word wrap", keys: ["Alt+Z"], run: () => workspace.toggleWrap() },
     { id: "view.toggleSpellCheck", label: "Toggle spell checking", run: () => workspace.toggleSpellCheck() },
     {

@@ -19,6 +19,7 @@ import {
   indentation,
   indentationExtension,
   language,
+  liveView,
   readOnly,
   spellCheckExtension,
   spelling,
@@ -32,6 +33,7 @@ import { localLanguageTool as localLt } from "./languagetool-local.svelte";
 import { isDocumentPath } from "./documents";
 import { allLanguages, detectLanguage, extensionOf, findLanguage, IMAGE_EXTENSIONS, isMarkdown, saveAsName } from "./languages";
 import { linkAtPos, linkExtension } from "./editor-links";
+import { livePreview } from "./live-preview";
 import { classifyHref, dirname, headingAnchors, resolvePath } from "./links";
 import { looksLikeMarkdown, SNIFF_CHARS } from "./markdown-detect";
 import { renderMarkdown, renderSvg, setLanguageLoadedHandler } from "./markdown";
@@ -60,6 +62,11 @@ export interface Tab {
    * paste into an empty untitled tab leaves such a tab alone. Saved with the session.
    */
   languageChosen: boolean;
+  /**
+   * A Markdown tab shown as plain source instead of Live Preview (the default for Markdown is Live Preview, so only
+   * the exception is stored). Saved with the session; reset when the language stops being Markdown.
+   */
+  markdownSource: boolean;
   mtime: number;
   size: number;
   /** NUL bytes in the file: probably not text. */
@@ -162,6 +169,7 @@ interface SessionTab {
   eol: Eol;
   language: string | null;
   languageChosen?: boolean;
+  markdownSource?: boolean;
   /** What the file on disk was when the tab was saved: kept for a file that is gone when the session is restored. */
   binary?: boolean;
   lossy?: boolean;
@@ -748,13 +756,14 @@ class Workspace {
   private async loadLanguage(tab: Tab) {
     const desc = findLanguage(tab.language);
     if (!desc) {
-      this.reconfigure(tab, language.reconfigure([]));
+      this.reconfigure(tab, [language.reconfigure([]), liveView.reconfigure([])]);
       return;
     }
     try {
       const support = await this.languageSupport(desc);
       if (this.tabs.some((t) => t.id === tab.id) && tab.language === desc.name) {
-        this.reconfigure(tab, language.reconfigure(support));
+        // Together with the language: Live Preview reads the Markdown syntax tree.
+        this.reconfigure(tab, [language.reconfigure(support), liveView.reconfigure(this.liveViewExtension(tab))]);
       }
     } catch (e) {
       this.showNotice("error", `Could not load highlighting for ${desc.name}: ${e}`);
@@ -767,8 +776,36 @@ class Workspace {
     this.setLanguage(tab, name);
   }
 
+  /** Live Preview is on in a Markdown text tab unless the user switched that tab to Source. */
+  livePreviewAvailable(tab: Tab | undefined): boolean {
+    return !!tab && tab.kind === "text" && isMarkdown(tab.language);
+  }
+
+  private liveViewExtension(tab: Tab) {
+    return this.livePreviewAvailable(tab) && !tab.markdownSource ? livePreview(tab.path ? dirname(tab.path) : null) : [];
+  }
+
+  /** Brings Live Preview of a tab in line with its language, mode and folder. */
+  private applyLivePreview(tab: Tab) {
+    if (tab.kind === "text") this.reconfigure(tab, liveView.reconfigure(this.liveViewExtension(tab)));
+  }
+
+  /** Switches the shown Markdown tab between Live Preview and Source. Only the view changes, never the text. */
+  toggleLivePreview() {
+    const tab = this.active;
+    if (!tab || !this.livePreviewAvailable(tab)) {
+      this.showNotice("info", "Live Preview is available for Markdown files.");
+      return;
+    }
+    tab.markdownSource = !tab.markdownSource;
+    this.applyLivePreview(tab);
+    requestAnimationFrame(() => !this.picker && !this.dialog && this.view?.focus());
+    this.scheduleSession();
+  }
+
   setLanguage(tab: Tab, name: string | null) {
     tab.language = name;
+    if (!isMarkdown(name)) tab.markdownSource = false;
     if (isMarkdown(name) && tab.preview === "off") tab.preview = settings.markdownPreview;
     if (!this.previewAvailable(tab)) tab.preview = "off";
     void this.loadLanguage(tab);
@@ -846,6 +883,7 @@ class Workspace {
       eol: "CRLF",
       language: null,
       languageChosen: false,
+      markdownSource: false,
       mtime: 0,
       size: 0,
       binary: false,
@@ -1401,6 +1439,8 @@ class Workspace {
     tab.title = basename(path);
     const detected = detectLanguage(path, this.textOf(tab).slice(0, 300).split("\n")[0])?.name ?? null;
     if (detected && detected !== tab.language) this.setLanguage(tab, detected);
+    // The folder that relative image addresses of Live Preview start from changed.
+    else this.applyLivePreview(tab);
     return this.writeText(tab, true);
   }
 
@@ -2085,6 +2125,7 @@ class Workspace {
           eol: s.tab.eol,
           language: s.tab.language,
           languageChosen: s.tab.languageChosen || undefined,
+          markdownSource: s.tab.markdownSource || undefined,
           binary: s.tab.binary || undefined,
           lossy: s.tab.lossy || undefined,
           preview: s.tab.preview,
@@ -2261,6 +2302,7 @@ class Workspace {
     if (saved.path && !disk) Object.assign(tab, { path: saved.path, binary: saved.binary ?? false, lossy: saved.lossy ?? false });
     tab.language = saved.language;
     tab.languageChosen = saved.languageChosen ?? false;
+    tab.markdownSource = saved.markdownSource ?? false;
     tab.preview = saved.preview;
     if (saved.grammarLanguage) this.grammarLanguages.set(tab.id, saved.grammarLanguage);
     if (backup !== null) Object.assign(tab, { encoding: saved.encoding, bom: saved.bom, eol: saved.eol });

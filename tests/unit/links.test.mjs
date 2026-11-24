@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 
-const { classifyHref, createSlugger, findUrls, headingAnchors, linkAt, resolvePath, dirname } = await import(
+const { classifyHref, createSlugger, findUrls, headingAnchors, linkAt, localImagePath, resolvePath, dirname } = await import(
   pathToFileURL(resolve(import.meta.dirname, "../../src/lib/links.ts")).href
 );
 
@@ -228,4 +228,14 @@ test("heading anchors follow the slug rule of the preview", () => {
       ["", 20],
     ],
   );
+});
+
+test("localImagePath: a file next to the document, nothing for web addresses or an untitled document", () => {
+  assert.equal(localImagePath("pics/a%20b.png?x=1#y", String.raw`C:\docs`), String.raw`C:\docs\pics\a b.png`);
+  assert.equal(localImagePath("../a.png", String.raw`C:\docs\sub`), String.raw`C:\docs\a.png`);
+  assert.equal(localImagePath("C:/img/a.png", String.raw`C:\docs`), String.raw`C:\img\a.png`);
+  assert.equal(localImagePath("100%.png", String.raw`C:\docs`), String.raw`C:\docs\100%.png`, "a stray % is part of the name");
+  assert.equal(localImagePath("https://example.com/a.png", String.raw`C:\docs`), null);
+  assert.equal(localImagePath("data:image/png;base64,AAAA", String.raw`C:\docs`), null);
+  assert.equal(localImagePath("a.png", null), null);
 });

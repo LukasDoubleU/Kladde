@@ -13,7 +13,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import DOMPurify from "dompurify";
 import MarkdownIt, { type StateCore } from "markdown-it";
 import { allLanguages } from "./languages";
-import { createSlugger, resolvePath } from "./links";
+import { createSlugger, localImagePath } from "./links";
 import { mathPlugin, renderMathFence } from "./math";
 
 const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -97,15 +97,11 @@ md.renderer.rules.fence = (tokens, idx) => {
 
 let currentBaseDir: string | null = null;
 
-const isExternal = (url: string) => /^(https?:|data:|blob:|mailto:|asset:|#)/i.test(url);
-
 DOMPurify.addHook("afterSanitizeAttributes", (node) => {
   if (node.tagName === "IMG") {
     const src = node.getAttribute("src");
-    if (src && !isExternal(src) && currentBaseDir) {
-      const path = resolvePath(currentBaseDir, decodeURIComponent(src.split(/[?#]/)[0]));
-      node.setAttribute("src", convertFileSrc(path));
-    }
+    const path = src ? localImagePath(src, currentBaseDir) : null;
+    if (path) node.setAttribute("src", convertFileSrc(path));
     node.setAttribute("loading", "lazy");
   }
 });

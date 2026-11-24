@@ -105,6 +105,11 @@
                 : `Grammar: ${g.count} ${g.count === 1 ? "issue" : "issues"}`}
       </button>
     {/if}
+    {#if workspace.livePreviewAvailable(tab)}
+      <button title="Live Preview shows Markdown formatted while you edit it; Source shows the plain text (Ctrl+E)" onclick={() => workspace.toggleLivePreview()}>
+        {tab.markdownSource ? "Source" : "Live Preview"}
+      </button>
+    {/if}
     {#if workspace.previewAvailable(tab)}
       <button title="Toggle preview (Ctrl+Shift+V)" onclick={() => workspace.togglePreview()}>
         Preview: {tab.preview === "off" ? "off" : tab.preview === "split" ? "side by side" : "only"}

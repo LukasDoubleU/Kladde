@@ -16,6 +16,22 @@ export function resolvePath(baseDir: string, relative: string): string {
   return parts.join("\\");
 }
 
+/**
+ * The file an image address points to: relative to the folder of the Markdown file, `?query` and `#fragment` dropped,
+ * `%XX` decoded. Null for addresses that are not local files (web, `data:`, …) and for an untitled file (no folder).
+ * One rule for the preview and for the editor's Live Preview.
+ */
+export function localImagePath(src: string, baseDir: string | null): string | null {
+  if (!baseDir || /^(https?:|data:|blob:|mailto:|asset:|#)/i.test(src)) return null;
+  let path = src.split(/[?#]/)[0];
+  try {
+    path = decodeURIComponent(path);
+  } catch {
+    /* a stray % is part of the name */
+  }
+  return resolvePath(baseDir, path);
+}
+
 export function dirname(path: string): string {
   const i = Math.max(path.lastIndexOf("\\"), path.lastIndexOf("/"));
   return i > 0 ? path.slice(0, i) : path;

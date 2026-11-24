@@ -37,6 +37,8 @@ export const gutters = new Compartment();
 export const activeLine = new Compartment();
 export const spelling = new Compartment();
 export const grammar = new Compartment();
+/** Live Preview of a Markdown tab (live-preview.ts); empty for other languages and in Source mode. */
+export const liveView = new Compartment();
 
 export interface EditorOptions {
   wordWrap: boolean;
@@ -223,6 +225,7 @@ export function createEditorState(doc: string, options: EditorOptions, extra: Ex
       readOnly.of(EditorState.readOnly.of(options.readOnly)),
       spelling.of(spellCheckExtension(options.spellCheck)),
       grammar.of([]),
+      liveView.of([]),
       theme,
       phrases,
       extra,
