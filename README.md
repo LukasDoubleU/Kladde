@@ -62,13 +62,14 @@ it, but I may decline requests that don't fit how I work, and there is no promis
 - Live preview side by side or full size (`Ctrl+Shift+V`), following the editor as you scroll. Links work in the
   preview and, with `Ctrl`+click, in the editor.
 - **Live Preview** (`Ctrl+E`, or the status bar item): Markdown tabs are edited formatted, like in Obsidian. The text stays
-  the raw Markdown that is saved, but headings are sized, bold, italic, strikethrough and code are styled, links show only
+  the raw Markdown that is saved, but headings are sized and colored per level (Catppuccin red, peach, yellow, green, sapphire, lavender), bold, italic, strikethrough and code are styled, links show only
   their text, images are drawn, bullets, task boxes, quotes, rules and code blocks look like in the preview, and the
   markup characters appear only where the cursor or a selection touches. A click on a task box toggles it (one undo
   step). Formulas (`$x$`, `$$…$$`, ```` ```math ````) and Mermaid diagrams are drawn too, and their source shows when
   the cursor is in them. `Ctrl+E` switches the tab to **Source** and back; the choice is remembered per tab. It only changes the view:
   never the text, never the unsaved state.
-- GitHub-flavoured: tables, task lists, autolinks, heading anchors, highlighted code blocks; local images
+- GitHub-flavoured: tables, task lists, strikethrough with `~one~` or `~~two~~` tildes, autolinks, heading anchors,
+  highlighted code blocks; local images
   resolve relative to the file.
 - Mermaid diagrams (```` ```mermaid ````) and math with KaTeX (`$inline$`, `$$block$$`, ```` ```math ````), in the
   colors of the current theme. Both load only when a document uses them and work offline.

@@ -34,6 +34,7 @@ import { isDocumentPath } from "./documents";
 import { allLanguages, detectLanguage, extensionOf, findLanguage, IMAGE_EXTENSIONS, isMarkdown, saveAsName } from "./languages";
 import { linkAtPos, linkExtension } from "./editor-links";
 import { livePreview } from "./live-preview";
+import { tildeStrikethrough } from "./strikethrough";
 import { classifyHref, dirname, headingAnchors, resolvePath } from "./links";
 import { looksLikeMarkdown, SNIFF_CHARS } from "./markdown-detect";
 import { renderMarkdown, renderSvg, setLanguageLoadedHandler } from "./markdown";
@@ -266,7 +267,8 @@ function minimalChange(a: string, b: string) {
 /** GitHub-flavoured Markdown with highlighted fenced code blocks. */
 async function markdownSupport() {
   const { markdown, markdownLanguage } = await import("@codemirror/lang-markdown");
-  return markdown({ base: markdownLanguage, codeLanguages: allLanguages });
+  // `~one~` strikes through like `~~two~~` (GFM), in the highlighting and in Live Preview.
+  return markdown({ base: markdownLanguage, codeLanguages: allLanguages, extensions: [tildeStrikethrough] });
 }
 
 function blobToBase64(blob: Blob): Promise<string> {

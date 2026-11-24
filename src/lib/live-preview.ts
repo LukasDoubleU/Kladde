@@ -306,13 +306,14 @@ const livePreviewPlugin = ViewPlugin.fromClass(
 // ---------------------------------------------------------------- the look
 
 const theme = EditorView.theme({
-  // Headings: em sizes, so the editor zoom scales them.
-  ".cm-line.cm-lp-h1": { fontSize: "1.8em", fontWeight: "700", lineHeight: "1.3" },
-  ".cm-line.cm-lp-h2": { fontSize: "1.5em", fontWeight: "700", lineHeight: "1.3" },
-  ".cm-line.cm-lp-h3": { fontSize: "1.25em", fontWeight: "700", lineHeight: "1.35" },
-  ".cm-line.cm-lp-h4": { fontSize: "1.1em", fontWeight: "700" },
-  ".cm-line.cm-lp-h5": { fontSize: "1em", fontWeight: "700" },
-  ".cm-line.cm-lp-h6": { fontSize: "0.9em", fontWeight: "700", color: "var(--fg-dim)" },
+  // Headings: em sizes, so the editor zoom scales them, and Catppuccin's colors for Markdown headings (from its
+  // style guide), one per level.
+  ".cm-line.cm-lp-h1": { fontSize: "1.8em", fontWeight: "700", lineHeight: "1.3", color: "var(--ctp-red)" },
+  ".cm-line.cm-lp-h2": { fontSize: "1.5em", fontWeight: "700", lineHeight: "1.3", color: "var(--ctp-peach)" },
+  ".cm-line.cm-lp-h3": { fontSize: "1.25em", fontWeight: "700", lineHeight: "1.35", color: "var(--ctp-yellow)" },
+  ".cm-line.cm-lp-h4": { fontSize: "1.1em", fontWeight: "700", color: "var(--ctp-green)" },
+  ".cm-line.cm-lp-h5": { fontSize: "1em", fontWeight: "700", color: "var(--ctp-sapphire)" },
+  ".cm-line.cm-lp-h6": { fontSize: "0.9em", fontWeight: "700", color: "var(--ctp-lavender)" },
   ".cm-line.cm-lp-h1, .cm-line.cm-lp-h2": { borderBottom: "1px solid var(--bg-hover)", paddingBottom: "0.1em" },
   ".cm-line[class*='cm-lp-h'] .tok-heading": { color: "inherit" },
   ".cm-lp-strong": { fontWeight: "700" },
@@ -324,7 +325,8 @@ const theme = EditorView.theme({
     padding: "0.1em 0.25em",
   },
   ".cm-lp-link": { color: "var(--link)" },
-  ".cm-lp-list-num": { color: "var(--fg-dim)" },
+  // The syntax highlighting colors the list mark in a span of its own, inside this one.
+  ".cm-lp-list-num, .cm-lp-list-num *": { color: "var(--accent)" },
   ".cm-lp-task-done": { color: "var(--fg-dim)" },
   ".cm-lp-bullet": {
     display: "inline-block",
@@ -332,7 +334,7 @@ const theme = EditorView.theme({
     textAlign: "center",
     fontSize: "1.3em",
     lineHeight: "1",
-    color: "var(--fg-dim)",
+    color: "var(--accent)",
   },
   ".cm-lp-task": {
     display: "inline-block",

@@ -15,6 +15,7 @@ import MarkdownIt, { type StateCore } from "markdown-it";
 import { allLanguages } from "./languages";
 import { createSlugger, localImagePath } from "./links";
 import { mathPlugin, renderMathFence } from "./math";
+import { singleTildePlugin } from "./strikethrough";
 
 const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
@@ -78,6 +79,8 @@ function annotate(state: StateCore) {
 
 const md = new MarkdownIt({ html: true, linkify: true, typographer: false, highlight });
 md.use(mathPlugin, () => onLanguageLoaded?.());
+// `~one~` strikes through like `~~two~~` (GFM), as in the editor.
+md.use(singleTildePlugin);
 md.core.ruler.push("kladde_annotate", annotate);
 
 // Fenced code: keep the data-line attribute, which the default renderer drops.

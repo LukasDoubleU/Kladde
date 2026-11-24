@@ -171,7 +171,7 @@ Key mechanisms:
 | `lib/actions.ts`, `keys.ts`, `keymaps.ts`, `editor-actions.ts`, `shortcut-editor.svelte.ts`, `keyhint.svelte.ts` | Commands and keyboard handling (see below) |
 | `lib/languages.ts` | ~145 languages from `@codemirror/language-data` plus own Batch and Log stream parsers; detection by extension, file name, shebang, first line; `saveAsName` (the extension Save As proposes for an untitled tab) |
 | `lib/markdown-detect.ts` | `looksLikeMarkdown(text)`: the pure, conservative detector behind the Markdown switch of a first paste (see "Tabs and the editor"); rules in the file's header, corpus in `tests/unit/markdown-detect.test.mjs` |
-| `lib/markdown.ts`, `math.ts`, `mermaid.ts` | Preview: markdown-it → DOMPurify; KaTeX rules; Mermaid placeholders drawn after insertion |
+| `lib/markdown.ts`, `math.ts`, `mermaid.ts`, `strikethrough.ts` | Preview: markdown-it → DOMPurify; KaTeX rules; Mermaid placeholders drawn after insertion; strikethrough with one tilde (also for the editor's parser) |
 | `lib/live-preview-core.ts`, `lib/live-preview.ts`, `lib/live-preview-math.ts`, `lib/live-preview-blocks.ts`, `lib/math-scan.ts` | Live Preview of Markdown tabs: the pure decision (which ranges are hidden, styled or drawn instead, from the tree and the selection; unit-tested) and the extension that draws it (see "Live Preview") |
 | `lib/native-menu.ts` | Which right clicks may show WebView2's native menu (editable text only) and the selected text for our own Copy menu |
 | `lib/links.ts`, `lib/editor-links.ts` | Links: finding them in a line, what an href means, heading anchors and path helpers (pure, unit-tested); the editor extension for Ctrl+click and the hover hint (see "Links") |
@@ -455,7 +455,9 @@ spell check and the grammar marks work on the raw text.
   keeps the decorations of the selection at the button press (`frozen`) and refreshes on release (a `setTimeout(0)`
   after the window's `mouseup`, so CodeMirror's own last selection change comes first), because text that shifts under
   the pointer breaks drag selection.
-- **Elements.** Headings (ATX and setext) sized `1.8/1.5/1.25/1.1/1/0.9em`; bold, italic, strikethrough, inline code;
+- **Elements.** Headings (ATX and setext) sized `1.8/1.5/1.25/1.1/1/0.9em` in Catppuccin's heading colors (its
+  style guide: `--ctp-red`, `-peach`, `-yellow`, `-green`, `-sapphire`, `-lavender`; list bullets and numbers take
+  the accent, `--accent`); bold, italic, strikethrough (`~one~` or `~~two~~`, see below), inline code;
   links `[text](url "title")` and `<url>` show the text in the link color (reference links `[a][b]` and links with an
   empty label stay raw); images are a widget (the address by the rules of the preview, `localImagePath` in `links.ts`:
   relative to the file through the asset protocol, https as it is, `data:` images; nothing for other schemes or in an
@@ -506,6 +508,12 @@ spell check and the grammar marks work on the raw text.
   empty line while not under the cursor; an image whose markup is touched shows a thumbnail behind the markup (an
   inline widget: a block widget would need a state field); a syntax tree that is not parsed yet (a big file just
   opened) shows the raw text until it is; the text keeps the editor's monospace font.
+- **Strikethrough with one tilde.** GFM strikes through `~one~` as well as `~~two~~` (an opener closes only with a
+  closer of the same length; three or more tildes are none). Both parsers only know `~~` out of the box, so
+  `strikethrough.ts` adds the single tilde to both: `tildeStrikethrough` replaces the GFM `Strikethrough` inline parser
+  of @lezer/markdown (two delimiter types, one per length, so they never pair with each other; the node names stay
+  `Strikethrough`/`StrikethroughMark`, so highlighting and Live Preview need nothing else), and `singleTildePlugin`
+  adds a rule after markdown-it's own `~~` rule with a delimiter marker of its own for the single tilde.
 
 ### Links
 
