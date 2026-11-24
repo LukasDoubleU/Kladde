@@ -11,7 +11,9 @@
 import { syntaxTree } from "@codemirror/language";
 import { type Extension, type Range, StateEffect, StateField, type Text } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
+import DOMPurify from "dompurify";
 import { frontMatterEnd, type Span, touches } from "./live-preview-core.ts";
+import { FORBID_ATTR, FORBID_TAGS } from "./markdown";
 import { findMathBlocks, type MathBlock } from "./live-preview-math.ts";
 import { drawDiagram, renderDiagram } from "./mermaid";
 import { texToHtml } from "./math";
@@ -67,7 +69,8 @@ export class MathWidget extends DrawnWidget {
     el.removeAttribute("title");
     if (result.kind === "ok") {
       el.className = base;
-      el.innerHTML = result.html;
+      // Sanitized like the preview's HTML (which passes KaTeX's output through the same DOMPurify settings).
+      el.innerHTML = DOMPurify.sanitize(result.html, { FORBID_TAGS, FORBID_ATTR });
     } else if (result.kind === "error") {
       el.className = `${base} math-error`;
       el.title = result.message;
