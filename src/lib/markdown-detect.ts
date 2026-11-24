@@ -140,10 +140,9 @@ export function looksLikeMarkdown(text: string): boolean {
   const cut = head.length < text.length;
   let lines = head.split(/\r?\n/);
   if (cut) lines.pop(); // the last line is probably cut in the middle
-  if (lines.length > MAX_LINES) {
-    lines = lines.slice(0, MAX_LINES);
-  }
-  const complete = !cut && lines.length === head.split(/\r?\n/).length;
+  // Only a text that is read to its end can be tested as a whole (JSON).
+  const complete = !cut && lines.length <= MAX_LINES;
+  if (lines.length > MAX_LINES) lines = lines.slice(0, MAX_LINES);
   if (!lines.some((l) => l.trim() !== "")) return false;
   // Front matter (`---`, YAML, `---`) is blanked out before the other rules look at the text, and counts as a weak signal.
   let frontMatter = false;
