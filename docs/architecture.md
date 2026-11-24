@@ -21,7 +21,7 @@ How Kladde is built and why. For product decisions see [decisions.md](decisions.
 |---|---|
 | `lib.rs` | Tauri commands, plugins, startup (single instance, `--unregister-integration` CLI flag); `read_document` (raw bytes as a binary IPC response) and `open_in_default_app` for the document viewer |
 | `navigation.rs` | What the main webview may navigate to (own origin; web and mail links go to the system; the rest is cancelled) and what a new-window request does: pure URL classification, unit-tested (see "Security and Tauri configuration") |
-| `files.rs` | Reading with encoding detection (BOM → UTF-8 validity → chardetng), BOM and line-ending handling, writing with `write_safely`; `read_limited` (a document's bytes, refused above 50 MB, errors that say *too large* / *busy* / *gone*) |
+| `files.rs` | Reading with encoding detection (BOM → UTF-8 validity → chardetng), BOM and line-ending handling, writing with `write_safely` (a user's files) and `write_atomic` (Kladde's own); `read_limited` (a document's bytes, refused above 50 MB, errors that say *too large* / *busy* / *gone*) |
 | `large.rs` | The large file viewer backend: index, search, editing, streaming save, hot-exit journal |
 | `pieces.rs` | The piece table behind large-file editing (pure data structure, no I/O, no encodings) |
 | `session.rs` | Data/config folders, session JSON, backups and backup versions, config files, the isolated profile |
@@ -43,7 +43,18 @@ Key mechanisms:
   decode so a character cut by the end of the sample is not counted).
 - **Crash-safe saving (`write_safely`):** write a temporary `.<name>.kladde-save` next to the file, `fsync`, then
   `ReplaceFileW`, which keeps attributes, ACLs and creation time (a hidden file stays hidden). Symlinks are resolved
-  first. If no temp file can be created, it falls back to writing in place. Session files and backups use it too.
+  first. If no temp file can be created, it falls back to writing in place. `ReplaceFileW` is not one step, though:
+  it moves the old file to `<name>~RF<hex>.TMP` before it renames the new one in, so a process killed in between
+  leaves nothing under the name (both contents stay on disk, under the other two names). For a user's file that is
+  a known gap, kept for the metadata: a text tab still has its backup (the restart shows the file as deleted, with
+  the backed-up text), a large tab is not reopened (its journal needs the original).
+- **Kladde's own files (`write_atomic`):** `session.json`, text backups and large journals are written to
+  `.<name>.kladde-save`, `fsync`ed and renamed over the old file (`MoveFileExW`/`FILE_RENAME_INFO` with replace:
+  one step, the name always holds the old or the new content). They have no attributes worth keeping, and there
+  is no fallback to writing in place: the rename is retried a few times (a scanner holding the file), then the
+  error is reported and the old file stays. A session that vanished inside `ReplaceFileW` restored nothing, and
+  the next save pruned every backup it no longer named (issue #26); `files::tests::atomic_write_survives_a_kill`
+  kills a writer 30 times and fails with `ReplaceFileW`.
 - **Large file viewer (`large.rs`):** never reads the whole file. A background thread builds a line-start index
   (8 MB chunks, `memchr`; 2-byte units for UTF-16), reads are positional (`seek_read`, no memory map, so other
   programs can keep appending), lines are cut at 64 KB for display. Search runs on the blocking pool in ~8 MB chunks
@@ -85,7 +96,7 @@ Key mechanisms:
   above is the safety net then. The page only warns (banner) about changes on disk, it never reloads a dirty
   large tab.
 - **Hot-exit journal for large tabs:** `backup/<tab>.large.json` holds the piece list (written atomically with
-  `write_safely`), the original's size, mtime and the same head/tail fingerprint the viewer uses to detect
+  `write_atomic`), the original's size, mtime and the same head/tail fingerprint the viewer uses to detect
   rewrites, and the name of the add buffer file `backup/<tab>.<generation>.add`, which is appended to (it only
   grows) and `fsync`ed before the piece list that refers to it, so a crash in between leaves the previous,
   still valid journal. Disk I/O happens without the lock on the document, so typing never waits for a flush.
@@ -250,7 +261,8 @@ Key mechanisms:
   write are not marked as backed up. Writes are serialized through `sessionChain`.
 - **The guarantee: every edit that reached the disk comes back after a crash, whenever the crash happens.** A
   text backup or a large tab's journal on disk is always named by the `session.json` on disk (a text backup with
-  `hasBackup`, a journal by its tab), so the restore finds it and no pruning deletes it. What a crash can still
+  `hasBackup`, a journal by its tab), so the restore finds it and no pruning deletes it, and each of these files
+  is replaced in one step (`write_atomic`), so a crash never leaves one of them missing. What a crash can still
   cost is only what never reached the disk: the last throttle interval (at most 3 s, usually a few hundred ms).
   (A journal also needs the original it describes: a large file that is gone at the restart is not reopened.)
   The write order below keeps that true; `tests/e2e/hot-exit.test.mjs` and `large.test.mjs` kill the app inside

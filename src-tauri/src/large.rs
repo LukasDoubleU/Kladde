@@ -29,7 +29,7 @@
 //!
 //! Lines: a file that ends with a line break has an empty last line, like in the editor.
 
-use crate::files::{detect_eol, encode_text, guess_encoding, mtime_ms, replace_file, sniff_bom, sniff_flags, write_safely, SNIFF_LEN};
+use crate::files::{detect_eol, encode_text, guess_encoding, mtime_ms, replace_file, sniff_bom, sniff_flags, write_atomic, SNIFF_LEN};
 use crate::pieces::{EditKind, PieceTable, Replace, Source};
 use base64::Engine;
 use encoding_rs::{Encoding, UTF_16BE, UTF_16LE, UTF_8};
@@ -1147,7 +1147,7 @@ impl LargeFile {
             }
         };
         let json = serde_json::to_vec(&journal).map_err(|e| e.to_string())?;
-        write_safely(&journal_path(dir, tab), &json).map_err(|e| e.to_string())?;
+        write_atomic(&journal_path(dir, tab), &json).map_err(|e| e.to_string())?;
         // Buffers of earlier documents of this tab (before a save or a reload).
         remove_added(dir, tab, path.file_name().and_then(|n| n.to_str()));
         Ok(())

@@ -88,8 +88,9 @@ pub fn check_name(name: &str) -> Result<&str, String> {
     }
 }
 
+/// Kladde's own files are replaced in one step, never through `ReplaceFileW` (see `files::write_atomic`).
 fn write_atomic(path: &Path, contents: &[u8]) -> Result<(), String> {
-    crate::files::write_safely(path, contents).map_err(|e| e.to_string())
+    crate::files::write_atomic(path, contents).map_err(|e| e.to_string())
 }
 
 fn read_optional(path: &Path) -> Result<Option<String>, String> {

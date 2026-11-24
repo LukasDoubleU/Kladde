@@ -68,6 +68,13 @@ export function profileState(profile) {
   } catch (e) {
     lines.push(`session.json: ${e.code === "ENOENT" ? "none" : e.message}`);
   }
+  // Leftovers of an interrupted write (`.session.json.kladde-save`, `session.json~RF….TMP` of ReplaceFileW).
+  try {
+    const stray = readdirSync(data).filter((n) => n.startsWith("session.json~") || n.endsWith(".kladde-save"));
+    if (stray.length) lines.push(`also in data: ${stray.join(", ")}`);
+  } catch {
+    /* no data folder */
+  }
   const folder = join(data, "backup");
   let names = [];
   try {

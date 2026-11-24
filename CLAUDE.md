@@ -22,7 +22,7 @@ anything employer-related out of code, commits, issues, release notes and docs.
 
 ## Layout (short)
 
-- `src-tauri/src/`: `files.rs` (encodings, `write_safely`), `large.rs` (large file viewer: index, search, editing,
+- `src-tauri/src/`: `files.rs` (encodings, `write_safely`, `write_atomic`), `large.rs` (large file viewer: index, search, editing,
   streaming save, journal), `pieces.rs` (piece table), `session.rs` (session, backups, config, isolated profile),
   `integration.rs` (Windows registration), `update.rs` (updater), `languagetool.rs` (HTTP client),
   `lt_install.rs` / `lt_server.rs` (download and run the local LanguageTool), `navigation.rs` (what the main webview may navigate to: its own page once, nothing else), `lib.rs` (commands, plugins).
@@ -60,6 +60,8 @@ Run check, unit, cargo and e2e tests before merging anything.
 - **Zero data loss.** Backups are throttled, never debounced (`Workspace.scheduleSession`). Saving goes through
   `write_safely` (large files: `LargeFile::write_to`, which streams the piece table into a temporary file and never
   writes the original in place; their unsaved edits live in a journal that is only valid for an unchanged original).
+  Kladde's own files (session, backups, journals) go through `write_atomic` (one rename, never `ReplaceFileW`), and
+  the session on disk always names every backup and journal on disk (`writeSession`, docs/architecture.md).
   Any change to saving, backups or the session must be verified by killing the app with unsaved changes and
   checking the restore (`tests/e2e/hot-exit.test.mjs`, for large files `tests/e2e/large.test.mjs`). Saving a tab
   without changes writes nothing, and binary or lossily decoded files open read-only (`tests/e2e/binary-save.test.mjs`).

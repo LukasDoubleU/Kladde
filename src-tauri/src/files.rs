@@ -308,6 +308,46 @@ pub fn write_safely(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Writes one of Kladde's own files (the session, a backup, a journal) so that a crash at any moment leaves
+/// either the old or the new content under its name: the bytes go to a temporary file next to it, which is
+/// flushed and then renamed over it in one step.
+///
+/// Not `ReplaceFileW` (`write_safely`): it first moves the old file away (to `<name>~RF<hex>.TMP`) and only then
+/// renames the new one in, so a process killed in between leaves no file under the name at all. A session that
+/// vanished like this restored nothing, and the next save pruned every backup it no longer named (issue #26).
+/// Kladde's own files have no attributes, permissions or creation time worth keeping, and there is no fallback
+/// to writing in place: an error is reported instead (the caller keeps the old file and tries again later).
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "not a file path"));
+    };
+    let tmp = dir.join(format!(".{}.kladde-save", name.to_string_lossy()));
+    let written = fs::File::create(&tmp).and_then(|mut file| {
+        file.write_all(bytes)?;
+        file.sync_all()
+    });
+    if let Err(e) = written {
+        let _ = fs::remove_file(&tmp);
+        return Err(e);
+    }
+    // A virus scanner or indexer may hold the old file for a moment: try the rename a few times.
+    let mut attempt = 0;
+    loop {
+        match fs::rename(&tmp, path) {
+            Ok(()) => return Ok(()),
+            Err(_) if attempt < 5 => {
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(20 * attempt));
+            }
+            Err(e) => {
+                let _ = fs::remove_file(&tmp);
+                return Err(e);
+            }
+        }
+    }
+}
+
 #[cfg(windows)]
 pub fn replace_file(target: &Path, replacement: &Path) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
@@ -410,6 +450,58 @@ mod tests {
         let _ = fs::remove_file(&fresh);
         write_safely(&fresh, b"x").unwrap();
         assert_eq!(fs::read(&fresh).unwrap(), b"x");
+    }
+
+    #[test]
+    fn atomic_write_replaces_content_and_leaves_no_temp_file() {
+        let path = temp_file("atomic.json", b"old content that is longer");
+        write_atomic(&path, b"new").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"new");
+        assert!(!path.parent().unwrap().join(".atomic.json.kladde-save").exists());
+    }
+
+    /// The writer half of `atomic_write_survives_a_kill`: rewrites the file until it is killed.
+    #[test]
+    #[ignore]
+    fn atomic_write_loop() {
+        let Some(path) = std::env::var_os("KLADDE_TEST_ATOMIC_LOOP") else { return };
+        for n in 0u64.. {
+            write_atomic(Path::new(&path), format!("version {n} {}", "x".repeat(4096)).as_bytes()).unwrap();
+        }
+    }
+
+    /// A process killed while it replaces one of Kladde's files leaves the old or the new content under the
+    /// name, never nothing. `ReplaceFileW` fails this about every fifth kill: it moves the old file away
+    /// before it renames the new one in (issue #26).
+    #[test]
+    fn atomic_write_survives_a_kill() {
+        use std::time::{Duration, Instant};
+        let dir = std::env::temp_dir().join(format!("kladde-tests-atomic-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("session.json");
+        for round in 0..30u64 {
+            fs::write(&path, b"start").unwrap();
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["files::tests::atomic_write_loop", "--exact", "--ignored", "--test-threads=1"])
+                .env("KLADDE_TEST_ATOMIC_LOOP", &path)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap();
+            // Kill the writer once it runs, at a different point of its loop each round.
+            let started = Instant::now();
+            while fs::read(&path).map_or(true, |bytes| bytes == b"start") {
+                assert!(started.elapsed() < Duration::from_secs(30), "the writer did not start");
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            std::thread::sleep(Duration::from_millis(5 + round * 7 % 60));
+            let _ = child.kill();
+            child.wait().unwrap();
+            let left: Vec<_> = fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name()).collect();
+            let bytes = fs::read(&path).unwrap_or_else(|e| panic!("round {round}: no file after the kill ({e}), the folder has {left:?}"));
+            assert!(bytes.starts_with(b"version ") && bytes.ends_with(b"x"), "round {round}: a partial file");
+        }
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[cfg(windows)]

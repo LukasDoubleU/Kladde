@@ -78,6 +78,8 @@
 - `Emulation.setFocusEmulationEnabled` and other CDP tricks only exist for tests; production code must not rely on
   them.
 - `ReplaceFileW` fails on some file systems or locked files; `write_safely` then writes in place.
+- `ReplaceFileW` is not one step: killed inside it, a process leaves the old file as `<name>~RF<hex>.TMP` and
+  nothing under the name. Kladde's own files therefore use `write_atomic` (a plain rename over the old file).
 - Renaming a folder right after writing many files into it fails with "access denied" while a virus scanner still
   holds them (it happened on the first real install of the local LanguageTool): extract in place and write a marker
   last instead (`lt_install.rs`), and retry deletions.
