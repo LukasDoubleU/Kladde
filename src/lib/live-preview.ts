@@ -308,8 +308,6 @@ const theme = EditorView.theme({
   ".cm-line.cm-lp-h6": { fontSize: "0.9em", fontWeight: "700", color: "var(--fg-dim)" },
   ".cm-line.cm-lp-h1, .cm-line.cm-lp-h2": { borderBottom: "1px solid var(--bg-hover)", paddingBottom: "0.1em" },
   ".cm-line[class*='cm-lp-h'] .tok-heading": { color: "inherit" },
-  // The underline of a setext heading, while it is not under the cursor: a thin empty line.
-  ".cm-line.cm-lp-setext-mark": { fontSize: "0.55em", lineHeight: "1" },
   ".cm-lp-strong": { fontWeight: "700" },
   ".cm-lp-em": { fontStyle: "italic" },
   ".cm-lp-strike": { textDecoration: "line-through", color: "var(--fg-dim)" },
@@ -391,7 +389,15 @@ const theme = EditorView.theme({
   ".cm-line.cm-lp-codeblock-last": { borderBottomLeftRadius: "6px", borderBottomRightRadius: "6px" },
   ".cm-line.cm-lp-fence": { color: "var(--fg-dim)", opacity: "0.6", fontSize: "0.85em" },
   ".cm-lp-img": { display: "inline-block", maxWidth: "100%", verticalAlign: "bottom" },
-  ".cm-lp-img img": { display: "block", maxWidth: "100%", maxHeight: "24em", objectFit: "contain", borderRadius: "3px" },
+  // A picture scaled down by the height limit keeps its box width: drawn at the left of it, not centered in a gap.
+  ".cm-lp-img img": {
+    display: "block",
+    maxWidth: "100%",
+    maxHeight: "24em",
+    objectFit: "contain",
+    objectPosition: "left center",
+    borderRadius: "3px",
+  },
   ".cm-lp-img-editing": { marginLeft: "0.6em", verticalAlign: "middle" },
   ".cm-lp-img-editing img": { maxHeight: "4em", opacity: "0.85" },
   ".cm-lp-img-broken": { color: "var(--fg-dim)", fontStyle: "italic" },

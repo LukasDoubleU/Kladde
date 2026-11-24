@@ -112,6 +112,22 @@ test("headings: sized by level, the marks hidden while the cursor is on another 
   assert.deepEqual(empty.hidden, ["#"]);
 });
 
+test("tables stay raw, inline markup in their cells included", () => {
+  // Built directly: the `specs` helper reads `|` as a cursor.
+  const doc = "| a | b |\n|---|---|\n| 1 | **2** |\n\nafter";
+  const state = EditorState.create({ doc, extensions: [markdown({ base: markdownLanguage })] });
+  const tree = ensureSyntaxTree(state, state.doc.length, 5000);
+  assert.equal(tree.topNode.firstChild?.name, "Table");
+  const list = buildLivePreview({
+    doc: state.doc,
+    tree,
+    selection: [{ from: doc.length, to: doc.length }],
+    visible: [{ from: 0, to: doc.length }],
+    editable: true,
+  });
+  assert.deepEqual(list, []);
+});
+
 test("setext headings: text lines sized, the underline hidden until the cursor is on it", () => {
   const away = specs("Title\n=====\n\nafter|");
   assert.equal(away.lineClasses(1), "cm-lp-h1");

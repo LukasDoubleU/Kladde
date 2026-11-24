@@ -310,6 +310,8 @@ export function buildLivePreview({ doc, tree, selection, visible, editable }: Li
             });
             return false;
           }
+          // Tables stay raw Markdown, cells included: hiding `**` in a cell would shift the pipes out of line.
+          case "Table":
           case "HTMLBlock":
           case "CommentBlock":
           case "ProcessingInstructionBlock":

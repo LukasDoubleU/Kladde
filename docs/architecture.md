@@ -462,7 +462,7 @@ spell check and the grammar marks work on the raw text.
   untitled tab, where the alt text is shown) and, while the markup is touched, the markup plus a small picture behind
   it; bullets `-`, `*`, `+` as dots by nesting depth, numbers styled; task items as boxes; quotes with a bar per level
   (a line decoration); rules; fenced and indented code as one shaded block with the nested highlighting of the editor;
-  escapes without the backslash. Tables, HTML blocks, math and Mermaid are untouched (step 2). A YAML front matter at the
+  escapes without the backslash. Tables (their cells included, so the pipes stay in line), HTML blocks, math and Mermaid are untouched (math and Mermaid are step 2). A YAML front matter at the
   top (`---` … `---`) is skipped, because Lezer reads it as a rule and a heading.
 - **Task boxes.** A click on a box (its own `mousedown`/`click` handlers; the widget tells CodeMirror to ignore the
   event) changes the one character in the brackets as its own history event (`isolateHistory`) without a selection, so
@@ -471,7 +471,7 @@ spell check and the grammar marks work on the raw text.
 - **Links.** `editor-links.ts` is unchanged: it searches the raw line, so Ctrl+click and the Ctrl-hover underline work
   on the rendered text (the hover mark is a decoration over the hidden ranges too). A plain click only places the cursor,
   which reveals the markup.
-- **Known limits.** Per-element revealing is complete for the inline elements above; the setext underline is a thin
+- **Known limits.** Per-element revealing is complete for the inline elements above; the setext underline is an
   empty line while not under the cursor; an image whose markup is touched shows a thumbnail behind the markup (an
   inline widget: a block widget would need a state field); a syntax tree that is not parsed yet (a big file just
   opened) shows the raw text until it is; the text keeps the editor's monospace font.
