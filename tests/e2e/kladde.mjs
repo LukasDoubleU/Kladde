@@ -12,7 +12,7 @@
 // kill/close, so a second launch with the same `profile` restores the session.
 
 import { spawn, execFileSync } from "node:child_process";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -53,6 +53,45 @@ async function portReleased(port, timeout = 15000) {
   return true;
 }
 
+/**
+ * What a profile holds for hot exit: the tabs `session.json` lists and the files of the backup folder (with the
+ * `addedLen` of a large tab's journal). Failure messages show it, so a restore that came back without the edits
+ * tells whether they were on disk at all.
+ */
+export function profileState(profile) {
+  const data = join(profile, "data");
+  const lines = [];
+  try {
+    const session = JSON.parse(readFileSync(join(data, "session.json"), "utf8"));
+    lines.push(`session.json: ${session.tabs.length} tab(s), active ${session.activeId}`);
+    for (const t of session.tabs) lines.push(`  ${t.id} ${t.kind} ${JSON.stringify(t.title)}${t.hasBackup ? " hasBackup" : ""}`);
+  } catch (e) {
+    lines.push(`session.json: ${e.code === "ENOENT" ? "none" : e.message}`);
+  }
+  const folder = join(data, "backup");
+  let names = [];
+  try {
+    names = readdirSync(folder);
+    lines.push(`backup: ${names.length} file(s)`);
+  } catch (e) {
+    lines.push(`backup: ${e.code === "ENOENT" ? "none" : e.message}`);
+  }
+  for (const name of names) {
+    let about;
+    try {
+      about = `${statSync(join(folder, name)).size} bytes`;
+      if (name.endsWith(".large.json")) about += `, addedLen ${JSON.parse(readFileSync(join(folder, name), "utf8")).addedLen}`;
+    } catch (e) {
+      about = e.code ?? e.message;
+    }
+    lines.push(`  ${name} (${about})`);
+  }
+  return lines.join("\n");
+}
+
+/** The profile state when the last app of a profile was killed or closed, for the failure messages of the next one. */
+const ended = new Map();
+
 /** Writes a file into a folder and returns its path. */
 export function writeFixture(dir, name, content) {
   mkdirSync(dir, { recursive: true });
@@ -75,12 +114,14 @@ class Cdp {
     this.ws = ws;
     this.nextId = 1;
     this.pending = new Map();
+    /** Called with every event (a message with a `method`). */
+    this.onEvent = () => {};
     ws.onmessage = (m) => {
       const msg = JSON.parse(m.data);
       if (msg.id && this.pending.has(msg.id)) {
         this.pending.get(msg.id)(msg);
         this.pending.delete(msg.id);
-      }
+      } else if (msg.method) this.onEvent(msg);
     };
   }
 
@@ -136,15 +177,38 @@ export async function launch({ exe = DEBUG_EXE, port = 9341, profile = tempProfi
   const ws = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((r, j) => ((ws.onopen = r), (ws.onerror = j)));
   const cdp = new Cdp(ws);
+  // Errors the page only logs to its console (a tab that could not be restored, a rejected promise) do not
+  // reach stderr; failure messages show them. Enabling the domain also reports what was logged before.
+  const consoleErrors = [];
+  cdp.onEvent = ({ method, params }) => {
+    if (method === "Runtime.consoleAPICalled" && params.type === "error") {
+      consoleErrors.push(params.args.map((a) => a.value ?? a.description ?? a.type).join(" "));
+    } else if (method === "Runtime.exceptionThrown") {
+      consoleErrors.push(params.exceptionDetails.exception?.description ?? params.exceptionDetails.text);
+    }
+  };
+  await cdp.send("Runtime.enable");
   // The page behaves as if its window had the focus, whatever else is in front on the desktop: Kladde
   // only checks for changed files while focused, and tests must not depend on the desktop.
   await cdp.send("Emulation.setFocusEmulationEnabled", { enabled: true });
+  const previous = ended.get(profile);
+
+  /** What a failure message adds: the profile when the previous app ended and now, console errors, stderr. */
+  const diagnostics = () => {
+    const parts = [];
+    if (previous) parts.push(`profile when the previous app ${previous}`);
+    parts.push(`profile now:\n${profileState(profile)}`);
+    if (consoleErrors.length) parts.push(`console errors:\n${consoleErrors.join("\n").slice(-4000)}`);
+    if (stderr.trim()) parts.push(`stderr:\n${stderr.slice(-4000)}`);
+    return parts.join("\n");
+  };
 
   const app = {
     child,
     cdp,
     profile,
     stderr: () => stderr,
+    diagnostics,
 
     /** Evaluates an expression in the page (awaits promises) and returns its value. */
     async eval(expression) {
@@ -165,7 +229,7 @@ export async function launch({ exe = DEBUG_EXE, port = 9341, profile = tempProfi
         if (await app.eval(expression).catch(() => false)) return;
         await sleep(50);
       }
-      throw new Error(`Timed out waiting for: ${expression}`);
+      throw new Error(`Timed out waiting for: ${expression}\n${diagnostics()}`);
     },
 
     /** Presses a key combination, e.g. "Ctrl+Shift+P", "Alt+Left", "F5", "Enter". */
@@ -241,6 +305,7 @@ export async function launch({ exe = DEBUG_EXE, port = 9341, profile = tempProfi
         /* already gone */
       }
       await exited(child, 10000);
+      ended.set(profile, `was closed:\n${profileState(profile)}`);
     },
 
     /** Kills the process without warning, like a crash. */
@@ -248,6 +313,7 @@ export async function launch({ exe = DEBUG_EXE, port = 9341, profile = tempProfi
       ws.close();
       child.kill("SIGKILL");
       await exited(child, 10000);
+      ended.set(profile, `was killed:\n${profileState(profile)}`);
     },
   };
   // The page can come up long before the app has mounted (slow CI runners), so the start timeout applies
@@ -257,8 +323,8 @@ export async function launch({ exe = DEBUG_EXE, port = 9341, profile = tempProfi
     await app.waitFor("document.documentElement.dataset.ready !== undefined && document.querySelector('.tab')", Math.max(10000, startTimeout - (Date.now() - started)));
   } catch (e) {
     await app.kill();
-    throw new Error(`${e.message} (port ${port}). stderr:
-${stderr}`);
+    // The message of waitFor ends with the diagnostics, stderr included.
+    throw new Error(`Kladde did not get ready (port ${port}). ${e.message}`);
   }
   return app;
 }

@@ -42,6 +42,12 @@ It connects over CDP and returns helpers: `key("Ctrl+Shift+P")`, `type(text)`, `
 relaunching with the same `profile` tests restore. `tempProfile()`, `writeFixture()`, `removeProfile()` help with
 folders.
 
+When `waitFor` times out, its message carries `app.diagnostics()`: what the profile held when the previous app of
+that profile was killed or closed and what it holds now (`profileState()`: the tabs `session.json` lists, with
+`hasBackup`, and the backup files, with a large journal's `addedLen`), errors the page logged to its console (the
+harness enables `Runtime` for that) and the tail of the app's stderr. A restore that came back without the edits
+thus shows whether they were on disk at the crash, and whether the session named them.
+
 Rules:
 
 - Never send input to the desktop (no SendKeys, no real mouse); the harness only talks to Kladde's page.
