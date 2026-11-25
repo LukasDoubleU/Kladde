@@ -2,9 +2,18 @@
   export type MenuItem =
     | { label: string; run: () => unknown; disabled?: boolean; separator?: never }
     | { separator: true; label?: never; run?: never; disabled?: never };
+
+  let open = 0;
+
+  /** Whether a context menu is shown. Focus moved into a frame (a document) blurs the window, which closes the menu. */
+  export function menuOpen() {
+    return open > 0;
+  }
 </script>
 
 <script lang="ts">
+  import { onMount } from "svelte";
+
   let { x, y, items, onclose }: { x: number; y: number; items: MenuItem[]; onclose: () => void } = $props();
 
   let menu: HTMLDivElement;
@@ -16,6 +25,11 @@
     const r = menu.getBoundingClientRect();
     left = Math.min(x, window.innerWidth - r.width - 4);
     top = Math.min(y, window.innerHeight - r.height - 4);
+  });
+
+  onMount(() => {
+    open++;
+    return () => open--;
   });
 
   function run(item: MenuItem) {

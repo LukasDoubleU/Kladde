@@ -680,8 +680,9 @@ nothing is read or loaded at startup.
   `theme.css`) dispatch. The host's font defaults (Calibri, Carlito, Segoe UI, 11 pt) are the frame's own CSS.
 - **Focus and keys:** the viewer takes the focus (the iframe element and its window) when its tab becomes active, after a
   palette or dialog closed (`workspace.registerDocument`, `refocusDocument`, called by the palette, the dialogs, the
-  Windows registration dialog and the key capture dialog) and after an error is shown, never while one of them is open,
-  so PageDown and the arrows scroll without a click. Events do not leave a frame, so the page's window listeners
+  Windows registration dialog and the key capture dialog) and after an error is shown, never while one of them or a
+  context menu is open (the focus moving into the frame blurs the page's window, which closes a menu: `menuOpen()` of
+  `ContextMenu.svelte`), so PageDown and the arrows scroll without a click. Events do not leave a frame, so the page's window listeners
   (`App.svelte`: shortcuts, zoom, mouse buttons) never see what happens inside it. The viewer bridges them from the
   frame's window by dispatching a **copy of the event on the iframe element** in the page (`forward`, with
   `keyboardInit`/`wheelInit`/`mouseInit` carrying the fields over and moving pointer coordinates by the frame's box):

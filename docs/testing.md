@@ -60,7 +60,7 @@ Rules:
 | smoke | 9340 |
 | compare | 9371–9373 |
 | format | 9343, 9363–9365 |
-| document | 9427–9440, 9445–9447, 9449–9451 |
+| document | 9427–9440, 9445–9447, 9449–9451, 9472 |
 | grammar | 9387–9389 |
 | binary-save | 9413–9419 (one app at a time; every port is reused once or twice) |
 | hot-exit | 9344, 9354–9358, 9380, 9390, 9400–9404 |

@@ -55,7 +55,7 @@
   import { settings } from "../lib/settings.svelte";
   import { keyCapture } from "../lib/shortcut-editor.svelte";
   import { workspace, type Tab } from "../lib/workspace.svelte";
-  import ContextMenu, { type MenuItem } from "./ContextMenu.svelte";
+  import ContextMenu, { menuOpen, type MenuItem } from "./ContextMenu.svelte";
 
   let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -305,8 +305,9 @@
   }
 
   function focusViewer() {
-    // Not while a dialog of the app is open (a reload finishing behind it must not take its keyboard).
-    if (workspace.picker || workspace.dialog || integration.setup || keyCapture.request) return;
+    // Not while a dialog of the app is open (a reload finishing behind it must not take its keyboard), nor while a
+    // context menu is (the focus moving into the frame would close it).
+    if (workspace.picker || workspace.dialog || integration.setup || keyCapture.request || menuOpen()) return;
     if (problem) {
       problemBox?.focus({ preventScroll: true });
     } else {

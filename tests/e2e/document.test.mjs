@@ -1,6 +1,7 @@
-// The read-only document viewer (tab kind "document", Word documents): opening, focus and keys, scroll position,
-// reloading while a program saves, selection and copy, links, zoom, the errors, "Open as text", session restore, and
-// that a hostile document can neither reach the network nor draw over the app. Needs a debug build:
+// The read-only document viewer (tab kind "document", Word documents): opening, focus and keys (and leaving the focus
+// alone while a context menu is open), scroll position, reloading while a program saves, selection and copy, links,
+// zoom, the errors, "Open as text", session restore, and that a hostile document can neither reach the network nor
+// draw over the app. Needs a debug build:
 //   npx tauri build --debug --no-bundle && npm run test:e2e
 //
 // The documents are generated here with the `docx` package (docx-fixtures.mjs); nothing is committed as a binary.
@@ -291,6 +292,32 @@ test("the focus is in the viewer, so PageDown scrolls; it returns after the pale
     await sleep(300);
     assert.ok(Math.abs((await scrollTop(app)) - kept) < 3);
     assert.equal(await app.eval(`!!${VIEW}?.querySelector('.problem')`), false);
+  });
+});
+
+test("a context menu stays open while the document renders again behind it", async () => {
+  const doc = put("menu.docx", await makeDocx({ pages: 2 }));
+  await session({ port: 9472, paths: [doc] }, async (app) => {
+    await app.waitFor(shows("Kladde viewer test document"), 20000);
+    await app.waitFor(FOCUSED);
+    // A real right click on the tab: the main window takes the focus back from the frame, and the tab's menu opens.
+    const { x, y } = await app.eval(`(() => {
+      const r = document.querySelector('.tab.active').getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    })()`);
+    await app.cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "none" });
+    for (const type of ["mousePressed", "mouseReleased"]) {
+      await app.cdp.send("Input.dispatchMouseEvent", { type, x, y, button: "right", clickCount: 1 });
+    }
+    await app.waitFor("!!document.querySelector('.menu')");
+    assert.equal(await app.eval(FOCUSED), false, "the right click took the focus from the frame");
+
+    // The file changes on disk while the menu is open: the viewer renders it again, and the menu stays.
+    writeFileSync(doc, await makeDocx({ pages: 2, marker: "Written while the menu was open" }));
+    await app.waitFor(shows("Written while the menu was open"), 15000);
+    await sleep(500);
+    assert.equal(await app.eval("!!document.querySelector('.menu')"), true, "the menu is still open");
+    assert.equal(await app.eval(FOCUSED), false, "the frame left the focus alone");
   });
 });
 
