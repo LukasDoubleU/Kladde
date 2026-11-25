@@ -607,3 +607,106 @@ test("a large file that moves while it has unsaved edits is not touched", async 
     await removeProfile(dir);
   }
 });
+
+// ---------------------------------------------------------------- the file is missing at the restart
+
+const clickButton = (app, area, label) =>
+  app.eval(`[...document.querySelectorAll(${JSON.stringify(area + " button")})].find((b) => b.textContent === ${JSON.stringify(label)}).click()`);
+
+test("a large file that is missing at the restart keeps its edits until it is back", async () => {
+  const dir = tempProfile("kladde-large-missing");
+  settingsFor(dir);
+  const file = writeFixture(dir, "missing.txt", fixture());
+  const away = join(dir, "away.txt");
+  await editAndCrash(9473, dir, file);
+  // Renamed while Kladde is not running (or a drive that is not connected yet).
+  renameSync(file, away);
+  const journal = journalFiles(dir);
+  assert.ok(journal.length > 0);
+
+  // The tab comes back, dirty, with a message in place of the view.
+  let app = await launch({ port: 9474, profile: dir });
+  try {
+    await app.waitFor(`document.querySelector('.missing')`, 10000);
+    assert.deepEqual((await app.state()).tabs, ["missing.txt"]);
+    assert.deepEqual(await dirtyTabs(app), ["missing.txt"]);
+    const text = await app.eval(`document.querySelector('.missing').textContent`);
+    assert.ok(text.includes("This file is missing."), text);
+    assert.ok(text.includes("missing.txt"), text);
+    assert.equal(await app.eval(`!!document.querySelector('.large')`), false);
+    // Nothing that needs the content works: Save does nothing, and nothing is written for the tab.
+    await app.key("Ctrl+S");
+    assert.equal(existsSync(file), false);
+    // Wait for the session writes of the restart (they prune what the session does not name).
+    await sleep(1500);
+    assert.deepEqual(journalFiles(dir).sort(), journal.sort(), `the journal is kept\n${profileState(dir)}`);
+    assert.deepEqual(sessionTitles(dir), ["missing.txt"]);
+  } finally {
+    await app.kill();
+  }
+
+  // Still missing at the next restart: the tab and its journal are still there.
+  app = await launch({ port: 9475, profile: dir });
+  try {
+    await app.waitFor(`document.querySelector('.missing')`, 10000);
+    assert.deepEqual(await dirtyTabs(app), ["missing.txt"]);
+    // Try again with the file still missing: a notice, the tab stays.
+    await clickButton(app, ".missing", "Try again");
+    await app.waitFor(`document.querySelector('.notice')?.textContent.includes('still missing')`);
+    assert.ok(await app.eval(`!!document.querySelector('.missing')`));
+    await sleep(1500);
+    assert.deepEqual(journalFiles(dir).sort(), journal.sort(), `the journal is kept\n${profileState(dir)}`);
+
+    // The file is back: Try again opens it and applies the edits.
+    renameSync(away, file);
+    await clickButton(app, ".missing", "Try again");
+    await app.waitFor(`document.querySelector('.large .line') && !document.querySelector('.missing')`, 10000);
+    await app.waitFor(`document.querySelector('.tab.dirty') && !document.querySelector('footer').textContent.includes('Restoring')`, 10000);
+    await waitIndexed(app);
+    assert.equal(await app.eval(`!!document.querySelector('.banner')`), false);
+    await shownIs(app, editedLines().slice(0, 7));
+    assert.deepEqual(await dirtyTabs(app), ["missing.txt"]);
+
+    // Saving writes the edits and removes the journal.
+    await focusView(app);
+    await app.key("Ctrl+S");
+    await saved(app);
+    assert.equal(readFileSync(file, "utf8"), editedLines().join("\r\n"));
+    await until(() => journalFiles(dir).length === 0, "the journal to be removed");
+  } finally {
+    await app.kill();
+    await removeProfile(dir);
+  }
+});
+
+test("discarding the edits of a missing large file closes the tab and deletes the journal", async () => {
+  const dir = tempProfile("kladde-large-missing-discard");
+  settingsFor(dir);
+  const file = writeFixture(dir, "discard.txt", fixture());
+  await editAndCrash(9476, dir, file);
+  renameSync(file, join(dir, "away.txt"));
+
+  const app = await launch({ port: 9477, profile: dir });
+  try {
+    await app.waitFor(`document.querySelector('.missing')`, 10000);
+    // Like closing any tab with unsaved changes, it asks first; Cancel keeps everything.
+    await clickButton(app, ".missing", "Discard edits");
+    await app.waitFor(`document.querySelector('.dialog .message')`);
+    assert.match(await app.eval(`document.querySelector('.dialog .message').textContent`), /Discard the unsaved changes to discard\.txt/);
+    await clickButton(app, ".dialog", "Cancel");
+    await app.waitFor(`!document.querySelector('.dialog')`);
+    assert.ok(await app.eval(`!!document.querySelector('.missing')`));
+    assert.ok(journalFiles(dir).length > 0);
+
+    await clickButton(app, ".missing", "Discard edits");
+    await app.waitFor(`document.querySelector('.dialog .message')`);
+    await clickButton(app, ".dialog", "Discard");
+    await app.waitFor(`!document.querySelector('.missing')`);
+    // The next session write prunes the journal and its add buffer.
+    await until(() => journalFiles(dir).length === 0, "the journal to be pruned", 10000);
+    assert.deepEqual(sessionTitles(dir), []);
+  } finally {
+    await app.kill();
+    await removeProfile(dir);
+  }
+});

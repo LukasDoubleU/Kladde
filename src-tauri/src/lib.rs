@@ -184,6 +184,22 @@ async fn stat_files(paths: Vec<String>) -> Vec<files::FileStat> {
     paths.iter().map(|p| files::stat(Path::new(p))).collect()
 }
 
+/// Resolves what a Kladde killed inside a save left next to the files of the session (`files::finish_interrupted_save`).
+/// Called once before the tabs are restored, so that a tab finds its file. Best effort: a path that cannot be
+/// recovered (permissions, a drive that is not connected) is skipped and tried again at the next start.
+#[tauri::command]
+async fn finish_interrupted_saves(paths: Vec<String>) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        for path in paths {
+            if let Err(e) = files::finish_interrupted_save(Path::new(&path)) {
+                eprintln!("Could not finish an interrupted save of {path}: {e}");
+            }
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 async fn large_open(path: String, state: State<'_, large::LargeFiles>) -> Result<large::LargeOpened, String> {
     state.open(Path::new(&path))
@@ -300,6 +316,13 @@ async fn large_restore(
     let tab = session::check_name(&tab)?.to_string();
     let file = state.get(id)?;
     tauri::async_runtime::spawn_blocking(move || file.restore(&dir, &tab, force)).await.map_err(|e| e.to_string())?
+}
+
+/// Whether a large tab has a journal on disk (asked for a tab whose file is missing at the restore).
+#[tauri::command]
+async fn large_journal_exists(app: AppHandle, tab: String) -> Result<bool, String> {
+    let dir = session::backup_dir(&app)?;
+    Ok(large::journal_exists(&dir, session::check_name(&tab)?))
 }
 
 #[tauri::command]
@@ -775,6 +798,7 @@ pub fn run() {
             recycle_restore,
             stat_file,
             stat_files,
+            finish_interrupted_saves,
             large_open,
             large_info,
             large_lines,
@@ -788,6 +812,7 @@ pub fn run() {
             large_save,
             large_backup,
             large_restore,
+            large_journal_exists,
             session_load,
             session_save,
             backup_write,

@@ -39,6 +39,8 @@
     <span class="dim">{workspace.cursor.lines.toLocaleString()} lines</span>
     {#if tab.binary}<span class="warn" title="The file contains NUL bytes">binary</span>{:else if tab.lossy}<span class="warn" title="Some bytes are not valid in this encoding">invalid bytes</span>{/if}
     {#if workspace.isReadOnly(tab)}<span class="warn" title="Not a text file: Edit anyway lifts this">read-only</span>{/if}
+  {:else if tab?.kind === "large" && tab.largeId === null}
+    <span class="warn" title="Its unsaved changes are kept until the file is there again">file missing</span>
   {:else if tab?.kind === "large"}
     <span>Ln {workspace.cursor.line.toLocaleString()}, Col {workspace.cursor.col}</span>
     <span>
@@ -121,7 +123,7 @@
     <button title="Select language" onclick={() => runAction("language.select")}>{tab.language ?? "Plain Text"}</button>
     <button title="Line endings" onclick={() => runAction("eol.select")}>{tab.eol}</button>
     <button title="Encoding" onclick={() => runAction("encoding.select")}>{encodingLabel(tab.encoding, tab.bom)}</button>
-  {:else if tab?.kind === "large"}
+  {:else if tab?.kind === "large" && tab.largeId !== null}
     <span title="New lines get the line ending the file uses most">{tab.eol}</span>
     <span>{encodingLabel(tab.encoding, tab.bom)}</span>
   {/if}

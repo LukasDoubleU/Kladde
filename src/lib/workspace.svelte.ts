@@ -88,8 +88,11 @@ export interface Tab {
    * tab has to be rendered again (the file changed on disk, F5).
    */
   revision: number;
-  /** A large tab's hot-exit journal: being applied, or made for a file that has changed since. */
-  journal: "restoring" | "conflict" | null;
+  /**
+   * A large tab's hot-exit journal: being applied, made for a file that has changed since, or kept for a file
+   * that is missing (the tab has no `largeId` then; `retryMissing` opens the file when it is back).
+   */
+  journal: "restoring" | "conflict" | "missing" | null;
 }
 
 interface Runtime {
@@ -1128,6 +1131,47 @@ class Workspace {
     }
   }
 
+  private retryingMissing = new Set<string>();
+
+  /**
+   * Opens the file of a large tab that was restored without it (`journal === "missing"`) once it is there, in this
+   * tab, and applies the journal like at a restore (a file that changed meanwhile gets the conflict banner). Nothing
+   * happens while the file is missing; `manual` (the button, F5) says so, the check on focus stays quiet.
+   */
+  async retryMissing(tab: Tab, manual = true) {
+    if (tab.journal !== "missing" || !tab.path || this.retryingMissing.has(tab.id)) return;
+    this.retryingMissing.add(tab.id);
+    try {
+      const stat = await api.statFile(tab.path);
+      if (!stat.exists || !stat.isFile) {
+        if (manual) this.showNotice("info", `${tab.title} is still missing. Your unsaved changes are kept.`);
+        return;
+      }
+      const opened = await api.largeOpen(tab.path);
+      if (!this.tabs.includes(tab)) {
+        void api.largeClose(opened.id);
+        return;
+      }
+      Object.assign(tab, {
+        largeId: opened.id,
+        encoding: opened.encoding,
+        bom: opened.bom,
+        eol: opened.eol,
+        mtime: opened.mtime,
+        size: opened.size,
+        binary: opened.binary,
+        lossy: opened.lossy,
+        journal: "restoring",
+      });
+      await this.restoreLargeJournal(tab);
+    } catch (e) {
+      // The check on focus runs every 2 s for the active tab: only the button and F5 report a failure.
+      if (manual) this.showNotice("error", `Could not open ${tab.title}: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      this.retryingMissing.delete(tab.id);
+    }
+  }
+
   /** Drops a large tab's journal that could not be applied; the next session save deletes it. */
   discardLargeJournal(tab: Tab) {
     tab.journal = null;
@@ -1249,8 +1293,8 @@ class Workspace {
   /** Whether the tab's file can be moved to the Recycle Bin: a tab of a file that is still there. */
   canRecycle(tab: Tab | undefined = this.active): boolean {
     if (!tab?.path || !(tab.kind === "text" || tab.kind === "large" || tab.kind === "image" || tab.kind === "document")) return false;
-    // A file that is gone (the "deleted or moved" banner) has nothing to move.
-    return tab.external !== "deleted" && !this.runtime.get(tab.id)?.gone;
+    // A file that is gone (the "deleted or moved" banner, a large tab restored without its file) has nothing to move.
+    return tab.external !== "deleted" && tab.journal !== "missing" && !this.runtime.get(tab.id)?.gone;
   }
 
   /**
@@ -1459,7 +1503,8 @@ class Workspace {
   async reload(tab: Tab | undefined = this.active, encoding?: string) {
     if (!tab?.path) return;
     if (tab.kind === "large") {
-      await this.reopenLarge(tab);
+      if (tab.journal === "missing") await this.retryMissing(tab);
+      else await this.reopenLarge(tab);
       return;
     }
     if (tab.kind === "image" || tab.kind === "document") {
@@ -1568,6 +1613,11 @@ class Workspace {
     tabs.forEach((tab, i) => {
       const stat = stats[i];
       if (!this.tabs.includes(tab)) return;
+      if (tab.journal === "missing") {
+        // A large tab kept for its journal: open it as soon as its file is back.
+        if (stat.exists && stat.isFile) void this.retryMissing(tab, false);
+        return;
+      }
       if (tab.kind === "large" && (tab.dirty || tab.journal)) {
         // Unsaved edits refer to the file as it was: never follow or reopen it, only warn (once per
         // state of the file, so "Keep my version" sticks).
@@ -1708,6 +1758,7 @@ class Workspace {
   async gotoLine() {
     const tab = this.active;
     if (!tab || tab.kind === "image" || tab.kind === "document" || tab.kind === "compare" || tab.kind === "settings") return;
+    if (tab.kind === "large" && tab.largeId === null) return;
     const max = tab.kind === "large" ? this.largeStatus.lines : this.cursor.lines;
     const answer = await this.pick({ placeholder: `Go to line (1 – ${max})`, items: [], freeText: true });
     const line = typeof answer === "string" ? parseInt(answer, 10) : NaN;
@@ -2246,6 +2297,13 @@ class Workspace {
       this.ui.zoom = session.zoom ?? 0;
       this.sessionListed = new Set(session.tabs.map((t) => t.id));
       this.backupListed = new Set(session.tabs.filter((t) => t.hasBackup).map((t) => t.id));
+      // A Kladde killed inside a save of one of these files may have left it under another name: put it back
+      // together first, so that the tabs below find their files.
+      try {
+        await api.finishInterruptedSaves(session.tabs.flatMap((t) => (t.path ? [t.path] : [])));
+      } catch (e) {
+        console.error("Could not finish interrupted saves", e);
+      }
       for (const saved of session.tabs) {
         try {
           await this.restoreTab(saved);
@@ -2263,7 +2321,29 @@ class Workspace {
   private async restoreTab(saved: SessionTab) {
     if (saved.kind === "compare" || saved.kind === "settings") return;
     if (saved.kind === "large" && saved.path) {
-      if (!(await api.statFile(saved.path)).exists) return;
+      if (!(await api.statFile(saved.path)).exists) {
+        // The journal only describes edits on top of the file, so it is kept with the tab until the file is back
+        // (renamed, a drive that is not connected yet, a save that was killed): `retryMissing`. A tab without a
+        // journal has nothing to keep.
+        if (saved.hasBackup || (await api.largeJournalExists(saved.id))) {
+          const tab = this.textTab({
+            id: saved.id,
+            kind: "large",
+            path: saved.path,
+            title: basename(saved.path),
+            encoding: saved.encoding,
+            bom: saved.bom,
+            eol: saved.eol,
+            dirty: true,
+            journal: "missing",
+          });
+          // The runtime entry makes `writeSession` keep naming the tab, so the journal is not pruned. Nothing
+          // writes a journal for it: that needs a `largeId`.
+          this.runtime.set(tab.id, { state: null, saved: Text.empty, metaDirty: false, scrollTop: 0, version: 0, backedUp: -1 });
+          this.tabs.push(tab);
+        }
+        return;
+      }
       await this.openLarge(saved.path, saved.id);
       const tab = this.tabs.find((t) => t.id === saved.id);
       if (tab) {

@@ -195,6 +195,8 @@ export const api = {
   recycleRestore: (id: number) => invoke<string>("recycle_restore", { id }),
   statFile: (path: string) => invoke<FileStat>("stat_file", { path }),
   statFiles: (paths: string[]) => invoke<FileStat[]>("stat_files", { paths }),
+  /** Finishes the saves that a killed Kladde left unfinished next to these files (the old file renamed back, the finished new one swapped in); call before opening them. */
+  finishInterruptedSaves: (paths: string[]) => invoke<void>("finish_interrupted_saves", { paths }),
 
   largeOpen: (path: string) => invoke<LargeOpened>("large_open", { path }),
   largeInfo: (id: number) => invoke<LargeInfo>("large_info", { id }),
@@ -221,6 +223,8 @@ export const api = {
   largeSave: (id: number, path: string | null, tab: string) => invoke<LargeOpened>("large_save", { id, path, tab }),
   /** Writes the hot-exit journal of the edits. */
   largeBackup: (id: number, tab: string) => invoke<void>("large_backup", { id, tab }),
+  /** Whether the tab has a journal on disk (to keep a large tab whose file is missing at the restore). */
+  largeJournalExists: (tab: string) => invoke<boolean>("large_journal_exists", { tab }),
   largeRestore: (id: number, tab: string, force: boolean) =>
     invoke<LargeRestored>("large_restore", { id, tab, force }),
 

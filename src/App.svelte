@@ -13,6 +13,7 @@
   import ImageView from "./components/ImageView.svelte";
   import KeyCapture from "./components/KeyCapture.svelte";
   import LargeFileView from "./components/LargeFileView.svelte";
+  import LargeMissing from "./components/LargeMissing.svelte";
   import Picker from "./components/Picker.svelte";
   import Preview from "./components/Preview.svelte";
   import StatusBar from "./components/StatusBar.svelte";
@@ -80,7 +81,8 @@
   }
 
   const textTab = () => workspace.active?.kind === "text";
-  const largeTab = () => workspace.active?.kind === "large";
+  /** A large tab with its file open; one restored without its file (`journal === "missing"`) has no content to work on. */
+  const largeTab = () => workspace.active?.kind === "large" && workspace.active.largeId !== null;
   const compareTab = () => workspace.active?.kind === "compare";
   const documentTab = () => workspace.active?.kind === "document";
   /** Tabs whose document can be edited and saved. */
@@ -112,6 +114,10 @@
       run: async () => {
         const t = workspace.active;
         if (!t) return;
+        if (t.journal === "missing") {
+          await workspace.retryMissing(t);
+          return;
+        }
         if (t.dirty) {
           const choice = await workspace.ask(`Reloading ${t.title} discards your unsaved changes.`, [
             { id: "reload", label: "Reload", primary: true },
@@ -206,7 +212,7 @@
       label: "Find and replace",
       keys: ["Ctrl+H"],
       run: () => {
-        if (workspace.active?.kind === "large") workspace.largeApi?.focusSearch();
+        if (largeTab()) workspace.largeApi?.focusSearch();
         else if (workspace.active?.kind === "text" && workspace.view) openSearchPanel(workspace.view);
       },
     },
@@ -214,7 +220,7 @@
       id: "file.openLargeInEditor",
       label: "Open large file in the editor",
       run: () => workspace.openLargeInEditor(),
-      enabled: () => workspace.active?.kind === "large",
+      enabled: largeTab,
     },
     {
       id: "document.openAsText",
@@ -606,7 +612,9 @@
         {/await}
       </div>
     {/each}
-    {#if tab?.kind === "large"}
+    {#if tab?.kind === "large" && tab.largeId === null}
+      <div class="fill"><LargeMissing {tab} /></div>
+    {:else if tab?.kind === "large"}
       {#key tab.id}
         <div class="fill"><LargeFileView {tab} /></div>
       {/key}

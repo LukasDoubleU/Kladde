@@ -90,8 +90,8 @@ it, but I may decline requests that don't fit how I work, and there is no promis
   while you keep typing (large documents wait up to 3 seconds between writes), and whenever the window
   loses focus. After a crash at most the last fraction of a second is missing.
 - Crash-safe saving: a save writes a temporary file and replaces the original in one step, keeping its
-  attributes and permissions, so a crash or a full disk never leaves a half-written file. The session
-  and the backups are written the same way.
+  attributes and permissions, so a crash or a full disk never leaves a half-written file; a save that was
+  killed half way is finished at the next start. The session and the backups are written the same way.
 - **Move to Recycle Bin** (tab context menu, command palette, `Ctrl+Shift+Delete`) deletes the tab's file safely:
   it only ever goes to the Windows Recycle Bin, never deleted for good. When Windows cannot recycle it (a network
   share, a drive without a bin, a file too big for it), nothing is deleted and a notice says why. The tab closes
@@ -120,7 +120,10 @@ it, but I may decline requests that don't fit how I work, and there is no promis
   to edit as a small one. Saving streams the document into a temporary file next to the original and
   replaces it in one step, keeping encoding, BOM and line endings (new line breaks use the file's most
   common one). Unsaved edits are part of hot exit: they are backed up as a journal of the changes, and a
-  crash restores them. If the file changed on disk in the meantime, Kladde asks instead of applying them.
+  crash restores them. If the file changed on disk in the meantime, Kladde asks instead of applying them. If the
+  file is missing at the next start (renamed, a drive that is not connected yet), the tab stays with its edits and
+  a message instead of the text, and they come back when the file is there again (Try again, or when the window gets
+  focus); Discard edits drops them.
   While a large file has unsaved edits, Kladde does not follow it any more and other programs cannot write
   to it (they can still read it).
 - External changes: unmodified tabs reload when the file changes on disk, and the active tab follows a

@@ -25,8 +25,8 @@ copy of the signed `kladde.exe`). The updater's minisign `.sig` must be created 
     document.
   - While a large tab has unsaved edits, other programs cannot write the file (a logger writing to it would
     fail); if one has the file open already, the handle cannot be taken and the save-time check applies.
-  - A journal whose file has vanished is not restored (the edits need the original); the next session save
-    prunes it.
+  - A journal whose file is missing at the restart is kept with a tab that has no content (the edits need the
+    original) until the file is back or the user discards the edits; the tab only checks on focus, F5 and its button.
   - The undo history is lost when the tab is saved (the viewer continues on a new file) and is not part of
     the journal.
   - Search limits: a match cannot span chunks (~8 MB, 64 KB overlap inside very long lines); a regex match

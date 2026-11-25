@@ -42,13 +42,29 @@ Key mechanisms:
   except in UTF-16) and `lossy` are how the page learns to protect such files (see "Files that are not text").
   The large viewer reports both for the first megabyte it reads anyway (`files::sniff_flags`, a streaming
   decode so a character cut by the end of the sample is not counted).
-- **Crash-safe saving (`write_safely`):** write a temporary `.<name>.kladde-save` next to the file, `fsync`, then
-  `ReplaceFileW`, which keeps attributes, ACLs and creation time (a hidden file stays hidden). Symlinks are resolved
-  first. If no temp file can be created, it falls back to writing in place. `ReplaceFileW` is not one step, though:
-  it moves the old file to `<name>~RF<hex>.TMP` before it renames the new one in, so a process killed in between
-  leaves nothing under the name (both contents stay on disk, under the other two names). For a user's file that is
-  a known gap, kept for the metadata: a text tab still has its backup (the restart shows the file as deleted, with
-  the backed-up text), a large tab is not reopened (its journal needs the original).
+- **Crash-safe saving (`write_safely`, `files::swap_in`):** write a temporary `.<name>.kladde-save` next to the file,
+  `fsync`, then `ReplaceFileW`, which keeps attributes, ACLs and creation time (a hidden file stays hidden).
+  Symlinks are resolved first. `ReplaceFileW` is not one step, though: it moves the old file away before it renames
+  the new one in, so a process killed in between leaves nothing under the name (issue #28; one kill in five in a
+  tight loop). `swap_in` therefore gives it a backup name of Kladde's own, `.<name>.kladde-old` in the same folder,
+  instead of the `<name>~RF<hex>.TMP` that nobody owns, and deletes that backup after a successful swap (a stale one
+  is removed before). Errors keep the user's content: `ERROR_UNABLE_TO_REMOVE_REPLACED` (1175) and
+  `ERROR_UNABLE_TO_MOVE_REPLACEMENT` (1176, with a backup name) leave both files under their names;
+  `ERROR_UNABLE_TO_MOVE_REPLACEMENT_2` (1177) leaves the old file under the backup name, which `swap_in` renames back.
+  After a failed swap `write_safely` writes the bytes in place (the old last resort, which gives up atomicity and
+  metadata); so it does where no temp file can be created. The large save renames the finished temporary file over
+  the target instead (it cannot write in place, see below).
+- **Finishing a killed save (`files::finish_interrupted_save`, command `finish_interrupted_saves`):** at the start,
+  `restoreSession` calls it for every path of the session before any tab is restored, so a text or large tab finds its
+  file. For one path (a symlink is followed to its target, also when that is missing): the file is there and
+  `.kladde-old` too: the save completed, the backup is deleted; `.kladde-save` too: killed before the swap, the
+  temporary file may be partial, it is deleted. The file is missing and both leftovers are there: killed inside the
+  swap, the temporary file is complete (flushed before the swap starts), so the old file is renamed back and the swap
+  is done again (same attributes, ACL and creation time; if that fails, a plain rename of the new file). Only
+  `.kladde-old`: it is renamed back. No `.kladde-old`: nothing is touched, because a lone `.kladde-save` may be partial
+  or the start of a file that never existed. Not covered: a link whose target is missing as well, and the leftovers of
+  a Save as under another path than the tab's. `files::tests::a_save_survives_a_kill` kills a writer 60 times and
+  recovers every time (the file is missing before the recovery after about one kill in eight).
 - **Kladde's own files (`write_atomic`):** `session.json`, text backups and large journals are written to
   `.<name>.kladde-save`, `fsync`ed and renamed over the old file (`MoveFileExW`/`FILE_RENAME_INFO` with replace:
   one step, the name always holds the old or the new content). They have no attributes worth keeping, and there
@@ -83,8 +99,9 @@ Key mechanisms:
   has an empty last line, like in the editor, so the caret has a place after the final break.
 - **Saving a large file:** `LargeFile::write_to` streams the pieces (8 MB chunks from the original, the add
   buffer for inserted text) into `.<name>.kladde-save` next to the target, `fsync`s it and swaps it in with
-  `ReplaceFileW` like `write_safely`, but without its in-place fallback: the document is partly read from the
-  very file that would be overwritten. The viewer then continues on the new file, with a line index derived
+  `ReplaceFileW` (`swap_in`, with `.<name>.kladde-old` during the swap) like `write_safely`, but without its in-place
+  fallback: the document is partly read from the very file that would be overwritten (a failed swap renames the
+  finished temporary file over the target). The viewer then continues on the new file, with a line index derived
   from the piece table instead of a rescan, and the journal is removed after the swap. Save as writes a new
   file and leaves the original untouched. Before streaming, the original is checked against the fingerprint
   taken when editing began: if it was rewritten or became shorter, nothing is written (the edits describe
@@ -108,7 +125,9 @@ Key mechanisms:
   the first journal of a tab the session on disk does not list yet comes after a session that names it (see
   "Session and hot exit", write order). `LargeFile::restore` applies it only if size, mtime
   and fingerprint match the file; otherwise the tab shows a banner (Apply anyway / Discard my changes), typing
-  is refused until the user decides and the journal stays.
+  is refused until the user decides and the journal stays. A journal needs its file: when the file is missing at
+  the restart (renamed, a drive not connected yet), the tab comes back without it (see "Large tab without its
+  file" under "Session and hot exit").
 - **Local LanguageTool (`lt_install.rs`, `lt_server.rs`):** grammar checking works without any setup by downloading
   LanguageTool and a Java runtime on request (see decisions.md for why, the sources and the hashes).
   - *Layout:* `<data>/languagetool/<version>/` and `<data>/jre/<version>/`. A version folder counts as installed
@@ -266,7 +285,8 @@ Key mechanisms:
   `hasBackup`, a journal by its tab), so the restore finds it and no pruning deletes it, and each of these files
   is replaced in one step (`write_atomic`), so a crash never leaves one of them missing. What a crash can still
   cost is only what never reached the disk: the last throttle interval (at most 3 s, usually a few hundred ms).
-  (A journal also needs the original it describes: a large file that is gone at the restart is not reopened.)
+  (A journal also needs the original it describes: a large tab whose file is missing at the restart is kept without
+  the file, see "Large tab without its file" below, until the file is back or the user discards the edits.)
   The write order below keeps that true; `tests/e2e/hot-exit.test.mjs` and `large.test.mjs` kill the app inside
   each window between two writes (`KLADDE_SESSION_DELAY_MS`, `KLADDE_BACKUP_DELAY_MS`).
 - **Write order: the session never lags behind the backups.** The restore only looks for the backups of the tabs
@@ -299,7 +319,22 @@ Key mechanisms:
   `<id>.txt` is missing), plus marker files
   (`no-default-editor-offer`, `last-update-check`) and the downloaded local LanguageTool (`languagetool/`, `jre/`). Config folder: `settings.json`, `keybindings.json`, `theme.css`.
 - Restore reads disk + backup: a tab with a backup is dirty if it differs from disk; a vanished file stays as a
-  dirty tab marked "deleted". Compare tabs are snapshots and are not restored.
+  dirty tab marked "deleted". Compare tabs are snapshots and are not restored. Before any tab, `restoreSession`
+  finishes the saves a kill interrupted (`finish_interrupted_saves` for every path of the session, see "Crash-safe
+  saving"): a file that was missing only because the app was killed inside a save is back by the time its tab opens.
+- **Large tab without its file:** a large tab whose file is missing at the restore is not dropped (the next session
+  save would prune its journal and add buffer). `restoreTab` makes it a `large` tab with the same id, no `largeId`,
+  `journal = "missing"` and `dirty`, if the session says `hasBackup` or `large_journal_exists` finds a journal (the
+  crash window of "Restore after a crash between the writes"); a tab with neither has nothing to keep and is dropped
+  as before. It has a runtime entry, so `writeSession` keeps naming it (`needsBackup` puts its id on the
+  `backup_prune` list) and writes no journal for it (that needs a `largeId`). `LargeMissing.svelte` takes the place of
+  the large view: the file's path, that the edits are kept, **Try again** and **Discard edits** (the latter is
+  `close`, which asks like for any tab with a journal; the next session save then prunes the journal). The status bar
+  says "file missing". `retryMissing` opens the file in this tab (`largeOpen`, then the usual `restoreLargeJournal`, so
+  a file that changed gets the conflict banner) when it exists; it runs from the button, F5 and the external-change
+  check (window focus and every 2 s for the active tab: `checkExternalChanges` stats the path anyway), quietly there.
+  Save, Save as, find, the line commands, go to line, "Open in editor" and Recycle are disabled for such a tab
+  (`largeTab()` in `App.svelte`, `canRecycle`), and Save all skips it (it has a `journal`).
 - External changes are checked on window focus and every 2 s for the active tab while focused: unmodified text tabs
   reload silently, dirty ones get a banner (Reload / Compare / Keep my version), large tabs follow growth. A dirty
   large tab is never followed or reloaded silently (see "Editing large files"): the banner offers Reload (which
@@ -333,8 +368,9 @@ the command is neither in the palette nor bound.
   Cancel is the default). Then `api.recycleFile(path)`; on an error the tab stays, nothing was deleted, and an error
   notice gives Rust's reason. On success every tab of that path is removed (`removeTab`, not `close`: the path does not
   go to "Reopen closed tab"), and `saveSession()` runs at once instead of waiting for the throttle, so a crash right
-  after cannot restore a tab (or a backup of its unsaved text) of a file that is gone. (A text or large tab whose file
-  is missing is skipped by the restore anyway, except a text tab with a backup, which comes back as "deleted".) The
+  after cannot restore a tab (or a backup of its unsaved text) of a file that is gone. (A text tab whose file
+  is missing is skipped by the restore anyway, except one with a backup, which comes back as "deleted"; a large tab
+  with a journal comes back without its file.) The
   notice "Moved <name> to the Recycle Bin." offers **Restore** for 10 s (`showNotice`'s `ms`). Restore calls
   `recycle_restore`, reopens the path with `openPath` and moves the new tab to the old index (clamped), activating it.
   The external-change watcher cannot show "deleted or moved" for the tab: it is removed in the same turn in which the

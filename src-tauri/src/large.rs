@@ -29,7 +29,7 @@
 //!
 //! Lines: a file that ends with a line break has an empty last line, like in the editor.
 
-use crate::files::{detect_eol, encode_text, guess_encoding, mtime_ms, replace_file, sniff_bom, sniff_flags, write_atomic, SNIFF_LEN};
+use crate::files::{detect_eol, encode_text, guess_encoding, mtime_ms, sniff_bom, sniff_flags, swap_in, write_atomic, SNIFF_LEN};
 use crate::pieces::{EditKind, PieceTable, Replace, Source};
 use base64::Engine;
 use encoding_rs::{Encoding, UTF_16BE, UTF_16LE, UTF_8};
@@ -212,6 +212,11 @@ fn journal_path(dir: &Path, tab: &str) -> PathBuf {
 
 fn added_path(dir: &Path, tab: &str, generation: &str) -> PathBuf {
     dir.join(format!("{tab}.{generation}.add"))
+}
+
+/// Whether a tab has a journal: its file is missing at the restore, and the tab is only kept for the journal.
+pub fn journal_exists(dir: &Path, tab: &str) -> bool {
+    journal_path(dir, tab).exists()
 }
 
 /// Removes the journal and add buffers of a tab, e.g. after its edits were saved.
@@ -1055,7 +1060,8 @@ impl LargeFile {
     }
 
     /// Saves the document to `target` like `write_safely`: a temporary file next to it, flushed to
-    /// disk, then swapped in with ReplaceFileW (keeping attributes and permissions). Unlike
+    /// disk, then swapped in with `swap_in` (ReplaceFileW, keeping attributes and permissions, with the old
+    /// file under `.<name>.kladde-old` meanwhile). Unlike
     /// `write_safely` there is no fallback to writing in place, because the document is partly read
     /// from the very file that would be overwritten. Returns the line index of the written file.
     fn write_to(&self, target: &Path) -> Result<Vec<u64>, String> {
@@ -1081,11 +1087,9 @@ impl LargeFile {
         drop(edits);
         // The guard denies writing, which the replacement needs.
         *self.guard.lock().unwrap() = None;
-        let swapped = if target.exists() {
-            replace_file(target, &tmp).or_else(|_| fs::rename(&tmp, target))
-        } else {
-            fs::rename(&tmp, target)
-        };
+        // Like `write_safely`, but when the swap fails the finished temporary file is renamed over the target
+        // (without the old file's metadata) instead of being written again.
+        let swapped = swap_in(target, &tmp).or_else(|e| if tmp.exists() { fs::rename(&tmp, target) } else { Err(e) });
         if let Err(e) = swapped {
             let _ = fs::remove_file(&tmp);
             self.update_guard(dirty);
@@ -1740,6 +1744,7 @@ mod tests {
         let saved = files.save(id, None, None).unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
         assert!(!path.with_file_name(".edit-crlf.txt.kladde-save").exists());
+        assert!(!path.with_file_name(".edit-crlf.txt.kladde-old").exists());
         // The viewer continues on the saved file, with the index it already knew.
         assert!(files.get(id).is_err());
         let info = files.info(saved.id).unwrap();
@@ -1944,6 +1949,7 @@ c
 ");
         assert!(files.info(saved.id).unwrap().dirty);
         assert!(!path.with_file_name(".appended.log.kladde-save").exists());
+        assert!(!path.with_file_name(".appended.log.kladde-old").exists());
         std::fs::write(&path, "A").unwrap();
         assert!(files.save(saved.id, None, None).is_err());
         assert_eq!(std::fs::read(&path).unwrap(), b"A");

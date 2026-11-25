@@ -6,7 +6,7 @@
 |---|---|---|
 | `npm run check` | svelte-check (types of all `.ts`/`.svelte`) | — |
 | `npm run test:unit` | Node's test runner on `tests/unit/*.test.mjs`: formatters, keys/presets, the Markdown detector for pasted text (corpus of positives and negatives) and the Save As file name, grammar text side, themes, settings metadata, update manifest, last-check time format, link finding and heading anchors, the pure part of Live Preview (hidden, styled and drawn ranges for a Markdown document, by cursor, selection and visible range; which text is a formula or a diagram block, checked against markdown-it), strikethrough with one or two tildes in both Markdown parsers, the CSP and the asset scope in `tauri.conf.json`, the document viewer's pure parts (container signatures, zoom and fit, the frame's policy, sandbox and starting document, the copies of keyboard, wheel and mouse events, the CSS scan for addresses in declarations, escapes included) | — |
-| `cd src-tauri && cargo test` | the Recycle Bin module (the test hooks' gating, which locations can have a bin, the test folder's recycle and restore, nothing overwritten, the bin's metadata cleanup), file I/O and encodings (binary and lossy flags), safe saving, atomic writes of Kladde's own files (a writer killed 30 times must leave the old or the new file), large viewer (index, search, piece table, editing, streaming save, journal), LanguageTool client (local socket), local LanguageTool (hash check, download, atomic install, version cleanup, routing, idle stop, start/stop/crash of a stand-in process, job object), registry code (throwaway key), updater helpers, the URL classification of the navigation guard and the frame guard's decision (`about:srcdoc` only), the isolated-profile check of the document cleaner hook, the size limit of the document reader | Rust |
+| `cd src-tauri && cargo test` | the Recycle Bin module (the test hooks' gating, which locations can have a bin, the test folder's recycle and restore, nothing overwritten, the bin's metadata cleanup), file I/O and encodings (binary and lossy flags), safe saving (the leftovers of a killed save in each state, a failed swap, a symlink; a writer killed 60 times inside `write_safely` must leave a complete old or new file after `finish_interrupted_save`, with no `.kladde-old`), atomic writes of Kladde's own files (a writer killed 30 times must leave the old or the new file), large viewer (index, search, piece table, editing, streaming save, journal), LanguageTool client (local socket), local LanguageTool (hash check, download, atomic install, version cleanup, routing, idle stop, start/stop/crash of a stand-in process, job object), registry code (throwaway key), updater helpers, the URL classification of the navigation guard and the frame guard's decision (`about:srcdoc` only), the isolated-profile check of the document cleaner hook, the size limit of the document reader | Rust |
 | `npm run test:e2e` | the real app through the DevTools protocol: `tests/e2e/*.test.mjs` | `npx tauri build --debug --no-bundle` first |
 
 Run all four before merging anything. For e2e prefer `node --test --test-concurrency=1 "tests/e2e/*.test.mjs"`:
@@ -63,7 +63,7 @@ Rules:
 | document | 9427–9440, 9445–9447, 9449–9451, 9472 |
 | grammar | 9387–9389 |
 | binary-save | 9413–9419 (one app at a time; every port is reused once or twice) |
-| hot-exit | 9344, 9354–9358, 9380, 9390, 9400–9404 |
+| hot-exit | 9344, 9354–9358, 9380, 9390, 9400–9404, 9478–9479 |
 | integration | 9347 |
 | keys | 9350–9351, 9384–9386 |
 | links | 9405–9412 |
@@ -72,14 +72,14 @@ Rules:
 | markdown-paste | 9452–9458 |
 | navigation | 9420–9426, 9441–9444 |
 | languagetool-local | 9369–9370, 9374–9375, 9377–9379 |
-| large | 9345, 9391–9393, 9397–9399, 9459–9460 (the editing tests reuse earlier ports one app at a time) |
+| large | 9345, 9391–9393, 9397–9399, 9459–9460, 9473–9477 (the editing tests reuse earlier ports one app at a time) |
 | preview | 9346, 9376 |
 | recycle | 9461–9467 (one app at a time; 9461–9463 are reused) |
 | settings | 9352–9353 |
 | theme | 9348, 9381–9383 |
 | update | 9349, 9359–9362, 9366–9368, 9394–9396 |
 
-Free for new files: 9472 and up (9448 is free) (9380 and 9390 are taken by hot-exit now).
+Free for new files: 9480 and up (9448 is free) (9380 and 9390 are taken by hot-exit now).
 
 ## Environment variables
 
@@ -235,6 +235,16 @@ Free for new files: 9472 and up (9448 is free) (9380 and 9390 are taken by hot-e
   throttle to 2.1 s, edits the large file before the first session write and holds every session write back
   (`KLADDE_SESSION_DELAY_MS`). When the first journal of a tab that the session does not list yet is written
   before a session that names it, the kill leaves no session at all and the restart comes back without the edit.
+- **A missing file at the restart (issue #28):** `large.test.mjs` kills a large tab with unsaved edits, renames its
+  file away and restarts twice: the tab is there (dirty, the "file is missing" message in place of the view) and
+  the journal survives the session writes of both restarts; "Try again" while the file is still missing only says
+  so, after the file is renamed back it opens the file and the edits are there (a save writes them and removes the
+  journal). A second test discards: the dialog asks (Cancel keeps the tab), "Discard" closes it and the journal and its
+  add buffer are pruned. `hot-exit.test.mjs` writes a profile whose session names a text file that is missing, with
+  `.<name>.kladde-old` and `.<name>.kladde-save` next to it, as a kill inside `ReplaceFileW` leaves them: the tab shows
+  the new text and both leftovers are gone; a second one has only the `.kladde-old` (put back) and a lone
+  `.kladde-save` of another missing file (left alone). The window focus check that retries a missing tab is not
+  tested: test windows never take focus.
 
 ## Known flakiness
 

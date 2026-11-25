@@ -281,17 +281,16 @@ pub fn write(path: &Path, text: &str, encoding: &str, bom: bool, eol: &str) -> R
 }
 
 /// Writes a file so that a crash or power loss never leaves it half-written: the bytes go to a
-/// temporary file next to it, which then replaces the original. On Windows, ReplaceFileW keeps the
+/// temporary file next to it, which then replaces the original (`swap_in`). On Windows, ReplaceFileW keeps the
 /// original's attributes, permissions and creation time. Where no temporary file can be created
-/// (e.g. a folder that only allows writing existing files), it falls back to writing in place.
+/// (e.g. a folder that only allows writing existing files) or the swap fails, it falls back to writing in place.
 pub fn write_safely(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     // Follow symlinks, so the link stays a link and its target gets the new content.
     let target = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    let (Some(dir), Some(name)) = (target.parent(), target.file_name()) else {
+    let Some(tmp) = sibling(&target, SAVE_SUFFIX) else {
         return fs::write(&target, bytes);
     };
-    let tmp = dir.join(format!(".{}.kladde-save", name.to_string_lossy()));
     let written = fs::File::create(&tmp).and_then(|mut file| {
         file.write_all(bytes)?;
         file.sync_all()
@@ -300,10 +299,132 @@ pub fn write_safely(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         let _ = fs::remove_file(&tmp);
         return fs::write(&target, bytes);
     }
-    let swapped = if target.exists() { replace_file(&target, &tmp) } else { fs::rename(&tmp, &target) };
-    if swapped.is_err() {
+    // A failed swap leaves the target with its old content (or absent, when even the old file could not be put
+    // back), so the bytes are written once more, in place: the user's text is worth more than the metadata
+    // and the atomicity that this last resort gives up.
+    if swap_in(&target, &tmp).is_err() {
         let _ = fs::remove_file(&tmp);
         return fs::write(&target, bytes);
+    }
+    Ok(())
+}
+
+/// The suffixes of the two files that a save of a user's file leaves next to it while it runs (see `swap_in`).
+const SAVE_SUFFIX: &str = ".kladde-save";
+const OLD_SUFFIX: &str = ".kladde-old";
+
+/// `.<name><suffix>` in the folder of `path`.
+fn sibling(path: &Path, suffix: &str) -> Option<std::path::PathBuf> {
+    Some(path.parent()?.join(format!(".{}{suffix}", path.file_name()?.to_string_lossy())))
+}
+
+/// Puts the finished temporary file `tmp` (`.<name>.kladde-save`, flushed) in the place of `target`. A file
+/// that is not there yet gets a plain rename; an existing one goes through `replace_file`, which keeps its
+/// attributes, ACL and creation time, with the old file moved to `.<name>.kladde-old` first.
+///
+/// `ReplaceFileW` is not one step: it moves the old file away and then renames the new one in, so a process
+/// killed in between leaves nothing under the name (issue #28; `write_atomic` has one rename, but loses the
+/// metadata that a user's file should keep). With a backup name of Kladde's own, the old content sits under a
+/// name that `finish_interrupted_save` knows during the swap, and the next start puts the file back together.
+///
+/// On success the backup is deleted (when that fails, the leftover is harmless and removed by the next start).
+/// An error leaves the user with their content: `ReplaceFileW` reports `ERROR_UNABLE_TO_REMOVE_REPLACED` (1175,
+/// nothing moved) and `ERROR_UNABLE_TO_MOVE_REPLACEMENT` (1176, with a backup name both files keep their names)
+/// without touching the target. `ERROR_UNABLE_TO_MOVE_REPLACEMENT_2` (1177) means that the old file already moved
+/// to the backup name and the new one stays under its temporary name, so the old file is renamed back here.
+/// The temporary file is left for the caller, who decides what to do (`write_safely` writes in place, the large
+/// save renames it over the target).
+pub fn swap_in(target: &Path, tmp: &Path) -> std::io::Result<()> {
+    if !target.exists() {
+        return fs::rename(tmp, target);
+    }
+    let Some(old) = sibling(target, OLD_SUFFIX) else {
+        return replace_file(target, tmp, None);
+    };
+    // The target exists, so a backup that is still there belongs to a save that completed.
+    let _ = fs::remove_file(&old);
+    match replace_file(target, tmp, Some(&old)) {
+        Ok(()) => {
+            let _ = fs::remove_file(&old);
+            Ok(())
+        }
+        Err(e) => {
+            if !target.exists() && old.exists() {
+                let _ = fs::rename(&old, target);
+            }
+            Err(e)
+        }
+    }
+}
+
+/// Follows a symlink (also in the folders of the path) to the file that a save writes: `write_safely` and the
+/// large save put their temporary files next to the link's target, so that is where a killed save left them.
+/// `canonicalize` fails when the target is missing (killed inside the swap), so the links are followed by hand.
+fn save_target(path: &Path) -> std::path::PathBuf {
+    if let Ok(real) = fs::canonicalize(path) {
+        return real;
+    }
+    let mut at = path.to_path_buf();
+    for _ in 0..8 {
+        if !fs::symlink_metadata(&at).is_ok_and(|m| m.file_type().is_symlink()) {
+            break;
+        }
+        let Ok(link) = fs::read_link(&at) else { break };
+        at = if link.is_absolute() { link } else { at.parent().map_or(link.clone(), |dir| dir.join(&link)) };
+    }
+    match (at.parent().and_then(|dir| fs::canonicalize(dir).ok()), at.file_name()) {
+        (Some(dir), Some(name)) => dir.join(name),
+        _ => at,
+    }
+}
+
+/// Resolves what a killed save of `path` left behind, so that the user's file is back under its name before a
+/// tab opens it. A save leaves `.<name>.kladde-save` (the new content, complete once it was flushed) and, during
+/// the swap, `.<name>.kladde-old` (the old content), see `swap_in`:
+///
+/// - the file is there and `.kladde-old` too: the save completed and only the delete was missed, the backup goes;
+///   `.kladde-save` too: killed before the swap, the temporary file may be partial, it goes;
+/// - the file is missing, `.kladde-old` and `.kladde-save` are there: killed inside the swap. The old file is put
+///   back and the save is finished with the new content (the same swap, so attributes and ACL are kept; when that
+///   fails, a plain rename of the new file; when that fails as well, the old file stays and the new content
+///   under `.kladde-save`);
+/// - the file is missing, only `.kladde-old` is there: it is put back;
+/// - the file is missing and there is no `.kladde-old`: nothing is touched (a lone `.kladde-save` may be partial,
+///   or the start of a file that never existed).
+///
+/// A symlink is followed to its target. Not found: a link whose target is missing as well as the leftovers of a
+/// Save as under another name than the path asked for. Best effort: an error stops the recovery of this path;
+/// what is left is found by the next start.
+pub fn finish_interrupted_save(path: &Path) -> std::io::Result<()> {
+    // Runs for every file of the session before the first tab opens: a path that cannot be looked up (a network
+    // share that does not answer, no permission) or whose folder is not there is left alone after one or two
+    // lookups, instead of waiting for the same timeout in every check below.
+    match fs::symlink_metadata(path) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) if !path.parent().is_some_and(|dir| dir.is_dir()) => return Ok(()),
+        _ => {}
+    }
+    let target = save_target(path);
+    let (Some(old), Some(tmp)) = (sibling(&target, OLD_SUFFIX), sibling(&target, SAVE_SUFFIX)) else {
+        return Ok(());
+    };
+    let remove = |p: &Path| match fs::remove_file(p) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    };
+    if target.exists() {
+        remove(&old)?;
+        return remove(&tmp);
+    }
+    if !old.exists() {
+        return Ok(());
+    }
+    fs::rename(&old, &target)?;
+    if tmp.exists() {
+        if let Err(e) = swap_in(&target, &tmp) {
+            // The new content is what the user saved: keep it even without the old file's metadata.
+            fs::rename(&tmp, &target).map_err(|_| e)?;
+        }
     }
     Ok(())
 }
@@ -348,21 +469,25 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     }
 }
 
+/// ReplaceFileW: `replacement` takes the place of `target` and keeps its attributes, ACL, streams and creation
+/// time. With `backup`, the old file ends up under that name instead of in a `<name>~RF<hex>.TMP` that nobody
+/// owns.
 #[cfg(windows)]
-pub fn replace_file(target: &Path, replacement: &Path) -> std::io::Result<()> {
+fn replace_file(target: &Path, replacement: &Path, backup: Option<&Path>) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::{
         ReplaceFileW, REPLACEFILE_IGNORE_ACL_ERRORS, REPLACEFILE_IGNORE_MERGE_ERRORS,
     };
     let wide = |p: &Path| p.as_os_str().encode_wide().chain(Some(0)).collect::<Vec<u16>>();
     let (target, replacement) = (wide(target), wide(replacement));
+    let backup = backup.map(wide);
     let flags = REPLACEFILE_IGNORE_MERGE_ERRORS | REPLACEFILE_IGNORE_ACL_ERRORS;
-    // SAFETY: both paths are NUL-terminated UTF-16 strings that outlive the call.
+    // SAFETY: all paths are NUL-terminated UTF-16 strings that outlive the call.
     let ok = unsafe {
         ReplaceFileW(
             target.as_ptr(),
             replacement.as_ptr(),
-            std::ptr::null(),
+            backup.as_ref().map_or(std::ptr::null(), |b| b.as_ptr()),
             flags,
             std::ptr::null(),
             std::ptr::null(),
@@ -376,7 +501,7 @@ pub fn replace_file(target: &Path, replacement: &Path) -> std::io::Result<()> {
 }
 
 #[cfg(not(windows))]
-pub fn replace_file(target: &Path, replacement: &Path) -> std::io::Result<()> {
+fn replace_file(target: &Path, replacement: &Path, _backup: Option<&Path>) -> std::io::Result<()> {
     fs::rename(replacement, target)
 }
 
@@ -450,6 +575,212 @@ mod tests {
         let _ = fs::remove_file(&fresh);
         write_safely(&fresh, b"x").unwrap();
         assert_eq!(fs::read(&fresh).unwrap(), b"x");
+    }
+
+    /// The files in a folder, to say what a test found.
+    fn names(dir: &Path) -> Vec<String> {
+        let mut names: Vec<_> = fs::read_dir(dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        names.sort();
+        names
+    }
+
+    fn save_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("kladde-tests-save-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_normal_save_leaves_no_leftovers() {
+        let dir = save_dir("normal");
+        let path = dir.join("doc.txt");
+        fs::write(&path, b"old").unwrap();
+        write_safely(&path, b"new").unwrap();
+        write_safely(&path, b"newer").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"newer");
+        assert_eq!(names(&dir), ["doc.txt"]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_save_that_completed_loses_its_old_file() {
+        // The file is there and so is the backup: only the delete was missed.
+        let dir = save_dir("completed");
+        let path = dir.join("doc.txt");
+        fs::write(&path, b"new").unwrap();
+        fs::write(dir.join(".doc.txt.kladde-old"), b"old").unwrap();
+        finish_interrupted_save(&path).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"new");
+        assert_eq!(names(&dir), ["doc.txt"]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_save_killed_before_the_swap_loses_its_partial_temp_file() {
+        let dir = save_dir("before");
+        let path = dir.join("doc.txt");
+        fs::write(&path, b"old").unwrap();
+        fs::write(dir.join(".doc.txt.kladde-save"), b"ne").unwrap();
+        finish_interrupted_save(&path).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"old");
+        assert_eq!(names(&dir), ["doc.txt"]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_save_killed_inside_the_swap_is_finished() {
+        let dir = save_dir("inside");
+        let path = dir.join("doc.txt");
+        fs::write(dir.join(".doc.txt.kladde-old"), b"old").unwrap();
+        fs::write(dir.join(".doc.txt.kladde-save"), b"new").unwrap();
+        finish_interrupted_save(&path).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"new");
+        assert_eq!(names(&dir), ["doc.txt"]);
+        // Asking again changes nothing.
+        finish_interrupted_save(&path).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"new");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_file_with_only_its_backup_is_put_back() {
+        let dir = save_dir("only-old");
+        let path = dir.join("doc.txt");
+        fs::write(dir.join(".doc.txt.kladde-old"), b"old").unwrap();
+        finish_interrupted_save(&path).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"old");
+        assert_eq!(names(&dir), ["doc.txt"]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_missing_file_without_a_backup_is_left_alone() {
+        // A lone temporary file may be partial or the start of a file that never existed.
+        let dir = save_dir("lone-save");
+        let path = dir.join("doc.txt");
+        fs::write(dir.join(".doc.txt.kladde-save"), b"maybe partial").unwrap();
+        finish_interrupted_save(&path).unwrap();
+        assert!(!path.exists());
+        assert_eq!(names(&dir), [".doc.txt.kladde-save"]);
+        // Nothing at all is fine too.
+        finish_interrupted_save(&dir.join("other.txt")).unwrap();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn finishing_a_save_keeps_the_attributes() {
+        use std::os::windows::fs::MetadataExt;
+        let dir = save_dir("inside-hidden");
+        let path = dir.join("doc.txt");
+        fs::write(dir.join(".doc.txt.kladde-old"), b"old").unwrap();
+        std::process::Command::new("attrib").arg("+h").arg(dir.join(".doc.txt.kladde-old")).status().unwrap();
+        fs::write(dir.join(".doc.txt.kladde-save"), b"new").unwrap();
+        finish_interrupted_save(&path).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"new");
+        // The old file's attributes moved to the new one with the swap.
+        assert_ne!(fs::metadata(&path).unwrap().file_attributes() & 0x2, 0);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_symlink_is_followed_to_its_target() {
+        let dir = save_dir("link");
+        let real = dir.join("real");
+        fs::create_dir_all(&real).unwrap();
+        let link = dir.join("doc.txt");
+        let target = real.join("target.txt");
+        fs::write(&target, b"x").unwrap();
+        #[cfg(windows)]
+        let linked = std::os::windows::fs::symlink_file(&target, &link);
+        #[cfg(not(windows))]
+        let linked = std::os::unix::fs::symlink(&target, &link);
+        if linked.is_err() {
+            // Windows only allows symlinks with the developer mode or as an administrator.
+            eprintln!("symlinks are not allowed here, the test checked nothing");
+            let _ = fs::remove_dir_all(&dir);
+            return;
+        }
+        // Killed inside the swap of the target: it is missing, the link dangles.
+        fs::remove_file(&target).unwrap();
+        fs::write(real.join(".target.txt.kladde-old"), b"old").unwrap();
+        fs::write(real.join(".target.txt.kladde-save"), b"new").unwrap();
+        finish_interrupted_save(&link).unwrap();
+        assert_eq!(fs::read(&target).unwrap(), b"new");
+        assert_eq!(fs::read(&link).unwrap(), b"new");
+        assert_eq!(names(&real), ["target.txt"]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A swap that cannot happen leaves the user with their content and reports an error; `write_safely` then has
+    /// nothing better to do than the same in place, which fails as well while another program holds the file.
+    #[cfg(windows)]
+    #[test]
+    fn a_failed_swap_keeps_the_old_content() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = save_dir("locked");
+        let path = dir.join("doc.txt");
+        fs::write(&path, b"old").unwrap();
+        // Another program holds the file without sharing.
+        let held = fs::OpenOptions::new().read(true).share_mode(0).open(&path).unwrap();
+        fs::write(dir.join(".doc.txt.kladde-save"), b"new").unwrap();
+        assert!(swap_in(&path, &dir.join(".doc.txt.kladde-save")).is_err());
+        assert!(write_safely(&path, b"new").is_err());
+        drop(held);
+        assert_eq!(fs::read(&path).unwrap(), b"old");
+        assert!(!dir.join(".doc.txt.kladde-old").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The writer half of `a_save_survives_a_kill`: saves a user's file again and again until it is killed.
+    #[test]
+    #[ignore]
+    fn safe_write_loop() {
+        let Some(path) = std::env::var_os("KLADDE_TEST_SAFE_LOOP") else { return };
+        for n in 0u64.. {
+            write_safely(Path::new(&path), format!("version {n} {}", "x".repeat(4096)).as_bytes()).unwrap();
+        }
+    }
+
+    /// A process killed while it saves a user's file leaves nothing under the name for about every fifth kill with
+    /// a plain `ReplaceFileW` (issue #28); with the backup name and `finish_interrupted_save` the file is there
+    /// afterwards, complete (the old or the new version), and no `.kladde-old` is left.
+    #[test]
+    fn a_save_survives_a_kill() {
+        use std::time::{Duration, Instant};
+        let dir = save_dir("kill");
+        let path = dir.join("doc.txt");
+        let mut missing = 0;
+        for round in 0..60u64 {
+            let _ = fs::remove_file(dir.join(".doc.txt.kladde-save"));
+            fs::write(&path, b"start").unwrap();
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["files::tests::safe_write_loop", "--exact", "--ignored", "--test-threads=1"])
+                .env("KLADDE_TEST_SAFE_LOOP", &path)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap();
+            let started = Instant::now();
+            while fs::read(&path).map_or(true, |bytes| bytes == b"start") {
+                assert!(started.elapsed() < Duration::from_secs(30), "the writer did not start");
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            std::thread::sleep(Duration::from_millis(5 + round * 7 % 60));
+            let _ = child.kill();
+            child.wait().unwrap();
+            if !path.exists() {
+                missing += 1;
+            }
+            let before = names(&dir);
+            finish_interrupted_save(&path).unwrap();
+            let bytes = fs::read(&path).unwrap_or_else(|e| panic!("round {round}: no file after the recovery ({e}), the folder had {before:?}"));
+            assert!(bytes.starts_with(b"version ") && bytes.ends_with(b"x") && bytes.len() > 4000, "round {round}: a partial file");
+            assert!(!dir.join(".doc.txt.kladde-old").exists(), "round {round}: the backup is left, the folder had {before:?}");
+        }
+        eprintln!("the file was missing after {missing} of 60 kills, before the recovery");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

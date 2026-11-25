@@ -391,3 +391,78 @@ test("restoring an older backup without versions shows a notice", async () => {
     await removeProfile(app.profile);
   }
 });
+
+// ReplaceFileW moves the old file away before it renames the new one in, so a Kladde killed inside a save of the
+// user's file leaves no file under its name (issue #28). The save puts the old content under `.<name>.kladde-old`
+// meanwhile, and the next start finishes the save before it restores the tab.
+test("a save that was killed inside the swap is finished at the next start", async () => {
+  const dir = tempProfile("kladde-interrupted-save");
+  const folder = join(dir, "files");
+  mkdirSync(folder, { recursive: true });
+  const path = join(folder, "report.txt");
+  // What the killed save left: the file is missing, the old content and the complete new content are next to it.
+  writeFileSync(join(folder, ".report.txt.kladde-old"), "old text\n");
+  writeFileSync(join(folder, ".report.txt.kladde-save"), "new text that was being saved\n");
+  mkdirSync(join(dir, "data"), { recursive: true });
+  writeFileSync(
+    join(dir, "data", "session.json"),
+    JSON.stringify({
+      version: 1,
+      activeId: "report",
+      wordWrap: true,
+      zoom: 0,
+      tabs: [
+        { id: "report", kind: "text", path, title: "report.txt", encoding: "UTF-8", bom: false, eol: "LF", language: null, preview: "off", hasBackup: false, cursor: 0, scrollTop: 0 },
+      ],
+    }),
+  );
+  const app = await launch({ port: 9478, profile: dir });
+  try {
+    const state = await app.state();
+    assert.deepEqual(state.tabs, ["report.txt"]);
+    assert.deepEqual(state.dirty, []);
+    assert.equal(state.dialog, null);
+    assert.equal(state.notice, null);
+    assert.match(state.text, /new text that was being saved/);
+    assert.equal(await app.eval(`!!document.querySelector('.banner')`), false);
+    assert.equal(readFileSync(path, "utf8"), "new text that was being saved\n");
+    assert.deepEqual(readdirSync(folder), ["report.txt"]);
+  } finally {
+    await app.kill();
+    await removeProfile(dir);
+  }
+});
+
+test("a file that only has its backup left is put back at the next start", async () => {
+  const dir = tempProfile("kladde-interrupted-save-old");
+  const folder = join(dir, "files");
+  mkdirSync(folder, { recursive: true });
+  const path = join(folder, "letter.txt");
+  writeFileSync(join(folder, ".letter.txt.kladde-old"), "the old letter\n");
+  // A lone temporary file of a file that is gone is not touched: it may be partial.
+  writeFileSync(join(folder, ".other.txt.kladde-save"), "partial");
+  mkdirSync(join(dir, "data"), { recursive: true });
+  writeFileSync(
+    join(dir, "data", "session.json"),
+    JSON.stringify({
+      version: 1,
+      activeId: "letter",
+      wordWrap: true,
+      zoom: 0,
+      tabs: [
+        { id: "letter", kind: "text", path, title: "letter.txt", encoding: "UTF-8", bom: false, eol: "LF", language: null, preview: "off", hasBackup: false, cursor: 0, scrollTop: 0 },
+        { id: "other", kind: "text", path: join(folder, "other.txt"), title: "other.txt", encoding: "UTF-8", bom: false, eol: "LF", language: null, preview: "off", hasBackup: false, cursor: 0, scrollTop: 0 },
+      ],
+    }),
+  );
+  const app = await launch({ port: 9479, profile: dir });
+  try {
+    const state = await app.state();
+    assert.deepEqual(state.tabs, ["letter.txt"]);
+    assert.match(state.text, /the old letter/);
+    assert.deepEqual(readdirSync(folder).sort(), [".other.txt.kladde-save", "letter.txt"]);
+  } finally {
+    await app.kill();
+    await removeProfile(dir);
+  }
+});
