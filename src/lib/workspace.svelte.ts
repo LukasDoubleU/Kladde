@@ -798,6 +798,10 @@ class Workspace {
   /** Switches the shown Markdown tab between Live Preview and Source. Only the view changes, never the text. */
   toggleLivePreview() {
     const tab = this.active;
+    if (tab && this.plainText(tab)) {
+      this.shortcutToMarkdown(tab);
+      return;
+    }
     if (!tab || !this.livePreviewAvailable(tab)) {
       this.showNotice("info", "Live Preview is available for Markdown files.");
       return;
@@ -806,6 +810,36 @@ class Workspace {
     this.applyLivePreview(tab);
     requestAnimationFrame(() => !this.picker && !this.dialog && this.view?.focus());
     this.scheduleSession();
+  }
+
+  /** A text tab in Plain Text, where the shortcut of a Markdown view means "this is Markdown" (`shortcutToMarkdown`). */
+  private plainText(tab: Tab): boolean {
+    return tab.kind === "text" && tab.language === null;
+  }
+
+  /**
+   * Ctrl+E or Ctrl+Shift+V in a Plain Text tab: Markdown typed by hand is never detected (only a paste is, see
+   * `maybeSwitchToMarkdown`), and the shortcut of the view the user wants is the clearest sign. The tab switches to
+   * Markdown as if it was picked in the status bar, with Live Preview on, the preview as the `markdownPreview` setting
+   * says (`withPreview`: at least side by side), and a notice with the way back.
+   */
+  private shortcutToMarkdown(tab: Tab, withPreview = false) {
+    this.chooseLanguage(tab, "Markdown");
+    if (withPreview && tab.preview === "off") {
+      tab.preview = "split";
+      this.renderPreview();
+    }
+    const id = tab.id;
+    this.showNotice("info", "Switched to Markdown.", { label: "Back to Plain Text", run: () => this.backToPlainText(id) });
+    requestAnimationFrame(() => !this.picker && !this.dialog && this.view?.focus());
+  }
+
+  /** The "Back to Plain Text" button of `shortcutToMarkdown`'s notice: only while the tab is still Markdown. */
+  private backToPlainText(id: string) {
+    const tab = this.tabs.find((t) => t.id === id);
+    if (!tab || tab.kind !== "text" || !isMarkdown(tab.language)) return;
+    this.chooseLanguage(tab, null);
+    requestAnimationFrame(() => tab.id === this.activeId && !this.picker && !this.dialog && this.view?.focus());
   }
 
   setLanguage(tab: Tab, name: string | null) {
@@ -1900,6 +1934,10 @@ class Workspace {
 
   togglePreview() {
     const tab = this.active;
+    if (tab && this.plainText(tab)) {
+      this.shortcutToMarkdown(tab, true);
+      return;
+    }
     if (!tab || !this.previewAvailable(tab)) {
       this.showNotice("info", "The preview is available for Markdown and SVG files.");
       return;

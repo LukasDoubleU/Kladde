@@ -1,5 +1,6 @@
 // Markdown pasted into an empty untitled tab: the tab switches to Markdown (with a way back), nothing else is
-// ever switched, and Save As suggests the extension of the language. Needs a debug build:
+// ever switched, and Save As suggests the extension of the language. Ctrl+E and Ctrl+Shift+V switch a Plain Text
+// tab to Markdown. Needs a debug build:
 //   npx tauri build --debug --no-bundle && npm run test:e2e
 //
 // The paste is a synthetic ClipboardEvent with a DataTransfer, dispatched into CodeMirror's content element:
@@ -339,6 +340,73 @@ test("Save As suggests the extension of the language, and a Markdown tab stays M
     assert.equal(s.language, "Markdown", "detected again from the path: unchanged");
     assert.equal(s.previewButton, "Preview: only", "the preview state is intact");
     assert.equal(s.preview, true);
+  } finally {
+    await app.kill();
+  }
+});
+
+test("Ctrl+E in a Plain Text tab switches it to Markdown with Live Preview, with a way back", async () => {
+  // The preview off, so that only Live Preview shows the switch.
+  const app = await launch({ port: 9480, profile: freshProfile({ markdownPreview: "off" }) });
+  try {
+    await newTab(app);
+    await app.type("# Typed by hand");
+    await app.key("Enter");
+    await app.key("Enter");
+    await app.type("Some **bold** text");
+    await expectPlain(app, "Markdown typed by hand is not detected");
+
+    await app.key("Ctrl+E");
+    await expectSwitched(app);
+    const s = await look(app);
+    assert.equal(s.notice, "Switched to Markdown.");
+    assert.equal(s.action, "Back to Plain Text");
+    assert.equal(s.preview, false, "the preview as the setting says");
+    // Live Preview is on: the heading is drawn as one.
+    await app.waitFor("!!document.querySelector('.cm-live-preview .cm-lp-h1')");
+    await app.waitFor("!!document.activeElement?.closest('.cm-content')");
+
+    // The way back: Plain Text, the text as it was.
+    await app.click(".notice .action");
+    await app.waitFor("document.querySelector('footer button[title=\"Select language\"]')?.textContent.trim() === 'Plain Text'");
+    await app.waitFor("!document.querySelector('.cm-live-preview')");
+    await app.waitFor("!!document.activeElement?.closest('.cm-content')");
+    assert.match((await look(app)).text, /# Typed by hand[\s\S]*Some \*\*bold\*\* text/);
+
+    // The shortcut is a choice of its own: it switches again, and from then on it is the usual toggle.
+    await app.key("Ctrl+E");
+    await expectSwitched(app);
+    await app.waitFor("!!document.querySelector('.cm-live-preview')");
+    await app.key("Ctrl+E");
+    await app.waitFor("!document.querySelector('.cm-live-preview')");
+    assert.equal((await look(app)).language, "Markdown", "Source view, still Markdown");
+  } finally {
+    await app.kill();
+  }
+});
+
+test("Ctrl+Shift+V in a Plain Text tab switches it to Markdown with the preview; other languages stay", async () => {
+  const app = await launch({ port: 9481, profile: freshProfile({ markdownPreview: "off" }) });
+  try {
+    await newTab(app);
+    await app.type("- a list typed by hand");
+    await app.key("Ctrl+Shift+V");
+    await expectSwitched(app);
+    await app.waitFor("!!document.querySelector('.preview-pane')");
+    await app.waitFor("!!document.querySelector('.cm-live-preview')");
+    assert.equal((await look(app)).notice, "Switched to Markdown.");
+
+    // A tab of another language keeps it: both shortcuts only say what they are for.
+    await newTab(app);
+    await pickLanguage(app, "JSON");
+    await app.type('{ "a": 1 }');
+    await app.key("Ctrl+E");
+    await app.waitFor("document.querySelector('.notice span')?.textContent === 'Live Preview is available for Markdown files.'");
+    await app.key("Ctrl+Shift+V");
+    await app.waitFor("document.querySelector('.notice span')?.textContent === 'The preview is available for Markdown and SVG files.'");
+    const s = await look(app);
+    assert.equal(s.language, "JSON");
+    assert.equal(s.preview, false);
   } finally {
     await app.kill();
   }

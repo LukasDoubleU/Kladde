@@ -80,6 +80,9 @@ it, but I may decline requests that don't fit how I work, and there is no promis
   code, tables, links and images, lists with other signs, bold) counts; code, JSON, XML, logs, diffs, a plain list of
   bullets and text with a few `#` comments stay Plain Text. A language you picked yourself (also Plain Text), a tab
   with text and every file on disk are never switched.
+- **Typed Markdown by hand?** Press `Ctrl+E` (Live Preview) or `Ctrl+Shift+V` (preview) in a Plain Text tab, new or a
+  file: it switches to Markdown and shows that view, with **Back to Plain Text** in the notice. Tabs of other languages
+  stay as they are.
 - **Save as** on an untitled tab proposes the extension of its language: `new 1.md` for Markdown, the language's first
   extension for others, `.txt` for Plain Text.
 
@@ -218,8 +221,8 @@ Kladde refreshes an existing registration silently at the next start.
 | `Ctrl+]` / `Ctrl+[` | Indent / outdent |
 | `Ctrl+Shift+[` / `Ctrl+Shift+]` / `Ctrl+Alt+[` / `Ctrl+Alt+]` | Fold, unfold, fold all, unfold all |
 | `F7` / `Shift+F7` | In a compare tab: next / previous change |
-| `Ctrl+Shift+V` | Markdown preview: side by side, preview only, off |
-| `Ctrl+E` | Markdown: Live Preview or Source for the tab |
+| `Ctrl+Shift+V` | Markdown preview: side by side, preview only, off (a Plain Text tab switches to Markdown first) |
+| `Ctrl+E` | Markdown: Live Preview or Source for the tab (a Plain Text tab switches to Markdown first) |
 | `Shift+Alt+F` | Format document or selection |
 | `Alt+Z` | Toggle word wrap |
 | `Ctrl+Plus` / `Ctrl+Minus` / `Ctrl+0` | Zoom in, out, reset |

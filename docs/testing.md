@@ -69,7 +69,7 @@ Rules:
 | links | 9405–9412 |
 | live-preview | 9468–9470 |
 | live-math | 9471 |
-| markdown-paste | 9452–9458 |
+| markdown-paste | 9452–9458, 9480–9481 |
 | navigation | 9420–9426, 9441–9444 |
 | languagetool-local | 9369–9370, 9374–9375, 9377–9379 |
 | large | 9345, 9391–9393, 9397–9399, 9459–9460, 9473–9477 (the editing tests reuse earlier ports one app at a time) |

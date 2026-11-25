@@ -265,6 +265,14 @@ Key mechanisms:
   which the automatic switch and Save As use. It is saved with the session (optional `languageChosen`), so a tab
   the user decided about stays so after a restart (an empty untitled tab is not saved at all, so its choice does not
   outlive a restart; there is nothing in it to lose).
+- **Markdown by shortcut** (`shortcutToMarkdown`, issue #33): Markdown typed by hand is never detected, so the
+  shortcut of a Markdown view is taken as the sign. `toggleLivePreview` (`Ctrl+E`) and `togglePreview`
+  (`Ctrl+Shift+V`) in a text tab with language `null` (untitled or a file, `languageChosen` or not) call
+  `chooseLanguage(tab, "Markdown")` instead of saying that the view is for Markdown only: Live Preview is on (a tab
+  that was not Markdown has no `markdownSource`), the preview follows `markdownPreview` (`Ctrl+Shift+V`: at least side
+  by side), and a notice offers **Back to Plain Text** (`backToPlainText`: `chooseLanguage(tab, null)` while the tab is
+  still Markdown). From then on both keys are the usual toggles. A tab of any other language keeps it and gets the
+  old message. No detection while typing: a wrong guess would hide markup under the cursor.
 - **Notices** (`showNotice(kind, text, action?)`, rendered by `App.svelte`) are one at a time and fade after 5 s
   (errors 10 s). An `action` `{ label, run }` adds a button (`runNoticeAction` closes the notice, then runs it), keeps the
   notice 8 s and never moves the focus: the button is an ordinary tab stop; the keyboard way to the same decision is
@@ -463,7 +471,7 @@ the text, never make the tab dirty and never add an undo step; saving writes the
 spell check and the grammar marks work on the raw text.
 
 - **On by default** in every Markdown text tab (opened `.md` files, untitled tabs that become Markdown through the
-  language picker or the paste detection), off for other languages, and not in compare tabs, the large file view or the
+  language picker, the paste detection or `Ctrl+E`/`Ctrl+Shift+V` in Plain Text), off for other languages, and not in compare tabs, the large file view or the
   document viewer. `Ctrl+E` (`view.toggleLivePreview`, "Toggle Live Preview (Markdown)") and the status bar item
   ("Live Preview" / "Source") switch the shown tab. The side-by-side preview (`Ctrl+Shift+V`) and its scroll sync are
   independent and work alongside.
