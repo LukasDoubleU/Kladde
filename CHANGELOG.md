@@ -2,6 +2,16 @@
 
 All notable changes to Kladde. Versions follow [Semantic Versioning](https://semver.org), commit messages
 [Conventional Commits](https://www.conventionalcommits.org).
+## [0.12.0](https://github.com/LukasDoubleU/Kladde/releases/tag/v0.12.0) – 2026-11-25
+
+### 🚀 Features
+
+- **markdown:** Colored headings in Live Preview, strikethrough with one tilde ([abe120d](https://github.com/LukasDoubleU/Kladde/commit/abe120db45cd61fc4d67e0f13c0d2fe2aabbf7c3))
+
+### 🐛 Bug fixes
+
+- **document:** Keep a context menu open while a document renders behind it ([31d84d0](https://github.com/LukasDoubleU/Kladde/commit/31d84d07f72ac7fb0012daba9c2fdc02ef2d50a5))
+- **hot-exit:** Keep a large tab's journal when its file is missing, and survive a kill inside a save ([2442db0](https://github.com/LukasDoubleU/Kladde/commit/2442db02db3426d110fe926b93dc4a8521cc4d05))
 ## [0.11.0](https://github.com/LukasDoubleU/Kladde/releases/tag/v0.11.0) – 2026-11-24
 
 ### 🚀 Features
